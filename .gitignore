@@ -1,0 +1,7 @@
+node_modules/
+*.tgz
+*.log
+*.bak*
+_patch_*.py
+.DS_Store
+Thumbs.db
