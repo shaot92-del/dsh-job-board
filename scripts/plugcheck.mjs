@@ -12,7 +12,8 @@
  *   8. v1.1：Host 调度器会 /api/take → remote-agent /dispatch → /api/attach；
  *   9. v1.1：终态 aborted/interrupted/rejected 也回写成 failed；
  *  10. v1.1：board_list 取全量（>200 条不被截断）；
- *  11. v1.1：dispose 真的清掉 caps/live/dispatch/sync 四个定时器。
+ *  11. v1.1：dispose 真的清掉 caps/live/dispatch/sync 四个定时器；
+ *  12. v1.1.1：调度器先换会话 cookie（launch token），401 后重试，nodeId 别名能对上机器名。
  *
  * 跑法：node scripts/plugcheck.mjs
  * 退出码：0 全过 / 1 有失败
@@ -41,8 +42,18 @@ function stubFetch(impl) {
 }
 
 // 假 fetch 的返回：call() 用 res.text()，Host 调度器用 res.json()
-function reply(payload) {
-  return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) }
+function reply(payload, opts) {
+  const status = (opts && opts.status) || 200
+  const setCookie = (opts && opts.setCookie) || []
+  const headers = new Headers()
+  for (const c of setCookie) headers.append('set-cookie', c)
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers,
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  }
 }
 
 function pick(map, url, fallback) {
@@ -86,6 +97,17 @@ const ctx = {
   on(event, fn) {
     if (event === 'agent/created') createdHandler = fn
     return () => {}
+  },
+  // 宿主 connection 服务：真实 DSH 用它把本进程 launch token 拼进 URL 换会话 cookie
+  get(name) {
+    if (name !== 'connection') return undefined
+    return {
+      authenticatedUrl(baseUrl) {
+        const u = new URL(baseUrl)
+        u.searchParams.set('token', 'test-launch-token')
+        return u.href
+      },
+    }
   },
   logger: { info() {}, warn() {}, error() {} },
 }
@@ -281,6 +303,52 @@ const dispatchBoard = {
   assert.equal(marked.body.task_id, 'r-1')
   assert.equal(marked.body.status, 'failed', 'aborted 应折成 failed')
   assert.match(String(marked.body.note || ''), /aborted/, '备注要说明远程终态')
+}
+
+// ── v1.1.1：Host 调度器要穿过 DSH 的浏览器鉴权围栏换会话 cookie ─────────
+// v1.1.0 就是死在这里：remote-agent 的 UI 路由每请求都问 connection.requestRejection，
+// 后台 fetch 不带 cookie 一律 401，dispatch 永远到不了副机。
+{
+  const board = {
+    now: 0,
+    updated: 0,
+    counts: {},
+    machines: { host: { online: true, last_seen: 0 }, MB14: { online: true, last_seen: 0 } },
+    tasks: { 'c-1': { status: 'queued', dispatch: 'auto', machine: 'MB14', goal: '别名机器', mode: 'agent', updated_at: 0 } },
+    events: [],
+  }
+  const calls = []
+  let nodesHits = 0
+  globalThis.fetch = async (url, init) => {
+    const pathname = String(url).replace(/^https?:\/\/[^/]+/, '')
+    const headers = (init && init.headers) || {}
+    calls.push({ path: pathname, headers, body: init && init.body ? JSON.parse(String(init.body)) : null })
+    if (pathname === '/api/board') return reply(board)
+    if (pathname.startsWith('/?')) return reply({}, { status: 302, setCookie: ['dsh_session=signed; Path=/; HttpOnly'] })
+    if (pathname === '/api/remote-agent/ui/nodes') {
+      nodesHits += 1
+      if (nodesHits === 1) return reply({ error: 'unauthorized' }, { status: 401 })
+      return reply({ nodes: [{ nodeId: 'desktop2gh05s7', online: true }] })
+    }
+    if (pathname === '/api/take') return reply({ ok: true })
+    if (pathname === '/api/remote-agent/ui/dispatch') return reply({ ok: true, taskId: 'ui-c' })
+    if (pathname === '/api/attach') return reply({ ok: true })
+    return reply({ ok: true })
+  }
+  const tick = findInterval(4000)
+  tick.fn()
+  await new Promise((r) => setTimeout(r, 120))
+  assert.ok(
+    calls.find((c) => c.path.includes('token=test-launch-token')),
+    '调度器应先用 connection.authenticatedUrl() 换会话 cookie',
+  )
+  const nodesCalls = calls.filter((c) => c.path === '/api/remote-agent/ui/nodes')
+  assert.equal(nodesCalls.length, 2, `401 后应重试一次 nodes，实际 ${nodesCalls.length} 次`)
+  assert.match(String(nodesCalls[1].headers.cookie || ''), /dsh_session=/, '重试必须带上会话 cookie')
+  const sent = calls.find((c) => c.path === '/api/remote-agent/ui/dispatch')
+  assert.ok(sent, '换到 cookie 后应真的派出去')
+  assert.equal(sent.body.node, 'desktop2gh05s7', 'nodeId 用副机上报值')
+  assert.equal(sent.body.goal, '别名机器', 'goal 用原文')
 }
 
 // ── v1.1：#12 >200 条任务时 board_list 不再截断 ────────────────────────

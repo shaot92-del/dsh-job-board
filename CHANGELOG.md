@@ -1,5 +1,20 @@
 # 变更日志
 
+## v1.1.1 — 2026-10-30
+
+修复 v1.1.0 的致命一步：Host 调度器派不出去。
+
+v1.1.0 把派发搬进 Host 之后，`POST /api/remote-agent/ui/dispatch` 在真实宿主上一直 401 ——
+remote-agent 的 UI 路由每个请求都过 DSH 的浏览器鉴权围栏（`connection.requestRejection`），
+后台进程没有会话 cookie 就不放行，于是任务永远停在 `queued`（plugcheck 用假 fetch，没暴露）。
+
+- Host 调度器改用 `connection.authenticatedUrl()` 把本进程的 launch token 拼进一次 `/` 请求，
+  换会话 cookie；缓存 10 分钟，遇到 401 自动重换一次并重试
+- 副机 `nodeId`（Windows 计算机名，如 `desktop2gh05s7`）与板子机器别名（`MB14`）按
+  `MACHINE_BY_HOSTNAME` 对齐，忽略大小写/连字符；首次拿到节点列表时把映射写进 `_runtime.log`
+- 调度器新增可诊断日志：`take skip` / `dispatch skip`（没有匹配的在线节点）/ `dispatch failed`
+- plugcheck 增补一组断言：换 cookie、401 后重试、`nodeId` 别名匹配
+
 ## v1.1.0 — 2026-10-30
 
 架构升级版：把「派发」和「终态回写」从浏览器搬进 Host 进程，补上 v1.0.2 遗留的

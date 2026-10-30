@@ -32,6 +32,16 @@ Host 后台每 6 秒 syncRemote()：
 也不等副机受理，所以必须由 Host 串行地做「原子占位 → 派发 → 回绑」，才能保证一件任务只有一台
 Host 派出、且板上记录与远程任务对得上。
 
+> **v1.1.1 的鉴权细节**：`/api/remote-agent/ui/*` 跑在 DSH 的浏览器鉴权围栏后面（每请求问
+> `connection.requestRejection`），后台进程直接 fetch 一定 401 —— v1.1.0 就卡在这里。现在
+> Host 调度器先用 `connection.authenticatedUrl()` 把自己进程的 launch token 拼进一次 `/` 请求，
+> 换到会话 cookie（10 分钟缓存；遇到 401 自动重换一次），之后带着它调 remote-agent。不需要
+> 手工登录，也没有改动别人的插件。
+>
+> 副机的 `nodeId` 通常是 Windows 计算机名（`desktop2gh05s7`），而任务上写的是板子的别名
+> （`MB14`）。调度器用插件里同一张 `MACHINE_BY_HOSTNAME` 表把两者对齐（忽略大小写与连字符），
+> 第一次取到节点列表时会把 `nodeId→机器名` 的对应关系写进 `_runtime.log`。
+
 ## 装
 
 ```powershell
