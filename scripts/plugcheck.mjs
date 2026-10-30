@@ -272,6 +272,8 @@ const dispatchBoard = {
   assert.equal(sent.body.node, 'GT14', 'nodeId 必须用副机上报的 nodeId')
   assert.equal(sent.body.goal, '跑个活', 'goal 用原文')
   assert.equal(sent.body.workspace, 'D:/w', 'workspace 要透传')
+  // v1.1.2：exec 任务在 remote-agent 侧默认 manual 审批 —— 调度器必须显式 auto
+  assert.equal(sent.body.approval, 'auto', '派发必须带 approval=auto，否则 exec 任务永远卡在 pending_approval')
   assert.ok(att, '派出后应 /api/attach 回绑')
   assert.equal(att.body.remote_id, 'ui-9')
   assert.equal(att.body.machine, 'GT14')

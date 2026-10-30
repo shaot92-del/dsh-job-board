@@ -1,5 +1,21 @@
 # 变更日志
 
+## v1.1.2 — 2026-10-31
+
+修 v1.1.1 之后暴露的**静默卡住**：任务真的派出去了，却永远停在副机审批里。
+
+- 根因：remote-agent 的 `validateTaskStart` 对 `mode: exec` 的任务默认
+  `approval: 'manual'`（`protocol.js:433-438`）——hub 挂起任务等面板批准，
+  超时 30 分钟自动拒绝。Host 调度器派发时没传 `approval`，于是命令类任务
+  一律挂 `pending_approval`；而 `syncRemote` 只认终态，板上就一直显示 running。
+- 修法一：Host 调度器派发时显式带 `approval`。新配置项 `dispatchApproval`
+  （默认 `'auto'`，设成 `'manual'` 可退回人工审批）。
+- 修法二：`syncRemote` 遇到 `pending_approval` 时在板子上标一次 note
+  （"等待副机审批…"），不再无声无息。
+- 现场验证：GT14 修好 `transportMode` 之后两条 exec 任务 4 秒内被 Host 派给
+  remote-agent（`dispatched … remote=ui-…`），随后在副机侧挂审批 —— 本版就是
+  为这一步补的。
+
 ## v1.1.1 — 2026-10-30
 
 修复 v1.1.0 的致命一步：Host 调度器派不出去。

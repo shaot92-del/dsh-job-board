@@ -110,6 +110,9 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
     shellTimeoutMs: 120000
     maxOutputBytes: 200000   # sh_run 流式保留的上限，超出只保留前 N 字节并标 truncated
     autoDispatch: true       # v1.1：Host 后台自动派发 + 终态回写；设 false 退回纯手动
+    dispatchApproval: auto   # v1.1.2：派发时给 remote-agent 的审批策略。
+                             # remote-agent 对 exec 任务默认 manual（挂起等 30 分钟超时）；
+                             # 自动调度必须写 auto，要人工批就改成 manual
 ```
 
 ## 自检
