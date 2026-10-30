@@ -72,7 +72,8 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
     machine: 'host'          # 副机改成 gt14 / mb14 / pc2
     token: ''                # 板子加鉴权时填
     petImage: ''              # 留空=用随包立绘 assets/pet.png
-    allowedRoots: []         # sh_* 的沙箱根目录，空=不限制
+    allowedRoots: []         # sh_* 只允许访问这些目录（realpath 比较）；空=不限制。
+                             # 注意这是路径白名单，不是沙箱：命令内容本身不受限
     shellTimeoutMs: 120000
     maxOutputBytes: 200000
 ```
@@ -86,7 +87,11 @@ node scripts/plugcheck.mjs
 ```
 
 断言：`apply()` 不抛异常、16 个工具齐备、每个 `output.render` 返回 `[{type:'text',text}]`
-（裸字符串会毒化会话历史 —— 2026-10-27 这么崩过两次）、三条 GUI 路由存在。
+（裸字符串会毒化会话历史 —— 2026-10-27 这么崩过两次）、四条 GUI 路由存在（含面板派工用的
+`/api/board/ui/create`）、任务标题取 `t.title` 且 `goal` 不被裁剪、agent 层工具与主工具共享同一份
+`allowedRoots`、板子不可达时 `board_caps` 返回 `ok:false` 而不是空列表假成功。
+
+真板子相关的验收（真派发、多机、桌宠）走 `scripts/acceptance.mjs`，需要板子服务和本机媒体素材。
 
 ## 许可
 
