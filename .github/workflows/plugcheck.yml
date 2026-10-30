@@ -1,0 +1,17 @@
+name: plugcheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  self-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # 离线自检：不连板子、不启动 DSH，只断言 apply() 注册了 16 个工具、render 输出合法、核心路由在。
+      - run: node scripts/plugcheck.mjs

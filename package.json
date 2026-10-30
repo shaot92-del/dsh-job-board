@@ -29,6 +29,7 @@
     "cordis.patch.yml",
     "assets/pet.png",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "keywords": [
