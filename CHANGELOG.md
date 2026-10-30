@@ -1,5 +1,50 @@
 # 变更日志
 
+## v1.1.0 — 2026-10-30
+
+架构升级版：把「派发」和「终态回写」从浏览器搬进 Host 进程，补上 v1.0.2 遗留的
+5 项 P1/P2（复核第 6/7/12/13/17 项）。20 项复核的逐条状态见 `docs/review-response.md`。
+
+### 架构：Host 侧调度器（复核 #6）
+
+- 新增 Host 后台 `dispatchOnce()`（4 秒）：对 `dispatch:'auto'` 且 `queued/stale` 的任务，
+  先 `POST /api/take` 原子占位，再 `POST /api/remote-agent/ui/dispatch`，成功后
+  `POST /api/attach` 回绑；失败 `POST /api/untake` 放回队列并写明原因
+- 新增 Host 后台 `syncRemote()`（6 秒）：拉 `/api/remote-agent/ui/tasks`，把
+  `completed → done`、`failed/aborted/interrupted/rejected → failed` 回写板子
+- 浏览器不再轮询 remote-agent（删掉约 5.4 KB 的 `bgDispatch` 整段）：多开不再重复派工，
+  关掉页面任务也不会停；面板「派工」只负责建单（`dispatch:'auto'`）
+- 新配置 `autoDispatch`（默认 `true`），设 `false` 可退回「建单后手动 `remote_task`」的旧流程
+
+### 板子协议（服务端需同步升级）
+
+- 调用 `POST /api/take {task_id, machine, minutes?}` 原子占位：`dispatch` 必须为 `auto`、
+  状态必须是 `queued`/过期 `claimed`、且没有被别人占住；`machine` 仍记真正执行机，
+  占位者单独记 `taker`；同一 `taker` 重复调用是续租（`reentrant:true`）
+- 新增 `POST /api/untake {task_id, machine}`：放回队列（`status=queued`、`dispatch=auto`）
+- `POST /api/claim` 改为**原地合并**：旧实现整条覆盖会抹掉 `goal/title/mode/workspace/remote_id`
+- `POST /api/create` 支持 `workspace` 字段；`POST /api/mark` 支持 `note`；`POST /api/attach` 清 `taker`
+- 可选鉴权：服务端设 `GP_BOARD_TOKEN` 后，写请求必须带 `x-board-token` 头（本插件用配置里的
+  `token` 自动带上）；不设则行为不变
+- `/api/health` 增加 `auth` / `version` / `routes`，方便确认对面装的是哪个版本
+
+### 修复（复核 #7 #12 #13 #17）
+
+- **`sh_run` 输出流式限流**：`runOnce` 在 `data` 回调里就按 `maxOutputBytes` 截断（继续 drain
+  管道，不阻塞子进程），不再把整段输出攒进内存最后才裁；超限体现在 `truncated`
+- **`snapshot(limit)` 支持 `limit=0` 取全量**：`board_list` 改用全量快照，`limit` 上限提到 500，
+  不再因为先裁 200 条导致 `total` 封顶、`done/superseded` 被切掉
+- **`dispose()` 完整卸载**：清掉 `caps/live/dispatch/sync` 四个定时器、退订 `agent/created`、
+  清 `portedAgents`；插件重载不再叠加定时器继续上报
+- **能力探测不再阻塞**：`collectCaps` 改 async，5 个版本探测用 `execFile` 并发 + 10 分钟 TTL
+  （原先串行 `spawnSync`，最坏阻塞 15 秒，还包含一次 Windows PowerShell 5.1 启动）
+
+### 测试
+
+- `scripts/plugcheck.mjs` 扩到 11 组断言：新增「建单带 `dispatch:'auto'`」「Host 调度器
+  `take → dispatch → attach`」「`aborted` 折成 `failed`」「230 条任务不被截断」「`dispose()`
+  清掉 4 个定时器」；定时器用 `setInterval` 打桩捕获后手动触发，不真跑、不挂住进程
+
 ## v1.0.2 — 2026-10-30
 
 外部复核（20 项）后的热修版。判定与逐项证据见 `docs/review-response.md`；本次只修不依赖外部服务、

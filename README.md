@@ -7,7 +7,30 @@
    pwsh / read / write，这四个把能力补上（这是从 dsh-shell 合并进来的部分）。
 3. **GUI 面板** —— 侧栏「作业板」：任务表（筛选/搜索/展开详情/认领/交付/打回）、机器能力卡、
    一行派工、桌宠状态卡（可拖动、可拿捏尺寸）。
-4. **Host 路由** —— `/api/board/ui/*`，浏览器不直接跨网访问板子服务。
+4. **Host 路由 + Host 调度器** —— `/api/board/ui/*`（浏览器不直接跨网访问板子服务），以及
+   v1.1 起搬进 Host 后台的派发/终态回写（不再依赖浏览器开着）。
+
+## 架构（v1.1）
+
+派发权在 Host 一侧，浏览器只负责建单：
+
+```
+面板「派工」 ──POST /api/board/ui/create {dispatch:'auto'}──▶ 板子（queued）
+                                                             │
+Host 后台每 4 秒 dispatchOnce()：                             │
+  1) POST /api/take   {task_id, machine:本机}   ← 原子占位，别的 Host 抢不到
+  2) POST /api/remote-agent/ui/dispatch {goal,node,mode,workspace}
+  3a) 成功 → POST /api/attach {task_id, remote_id, machine:执行机}
+  3b) 失败 → POST /api/untake ← 放回队列，等下一轮或换机
+
+Host 后台每 6 秒 syncRemote()：
+  GET /api/remote-agent/ui/tasks → completed→done；failed/aborted/interrupted/rejected→failed
+  POST /api/mark {task_id, status, note, remote_id}
+```
+
+这样做的原因：浏览器多开会重复派工、关页面就停，而 `remote-agent` 的 `/dispatch` 既不幂等
+也不等副机受理，所以必须由 Host 串行地做「原子占位 → 派发 → 回绑」，才能保证一件任务只有一台
+Host 派出、且板上记录与远程任务对得上。
 
 ## 装
 
@@ -24,30 +47,30 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 装完确认 profile 的 `package.json` 里 `dsh.profile.bundles` 有 `dsh-team` 这一行，
 然后重启 DSH（Host 半边改动只有重启才生效；只改 `lib/client.js` 的话刷新页面即可）。
 
-> **它需要一个板子服务。** 本插件是客户端，数据来自一个 HTTP 任务板
-> （`GET /api/board`、`POST /api/claim|beat|release|create|attach|seen|mark` …）。
-> 仓库不含该服务；默认地址 `http://127.0.0.1:8965`，可用 `boardUrl` 指向你自己的实现。
+> **它需要一个板子服务。** 本插件是客户端，数据来自一个 HTTP 任务板。仓库不含该服务；
+> 默认地址 `http://127.0.0.1:8965`，可用 `boardUrl` 指向你自己的实现。
 >
-> **远程派工还依赖 `dsh-remote-agent`。** 本包负责「建单/选机/绑定/回写状态」，
-> 真正的传输、回执、产物清单是 remote-agent 的职责。
+> v1.1 需要板子支持两个额外端点（`/api/take` 原子占位、`/api/untake` 放回），否则 Host 调度器
+> 会一直拿不到派发权、任务停在 `queued`（日志里会写 `take failed`）。只想要 v1.0 的行为，
+> 把 `autoDispatch` 关掉即可。
 
 ## 工具
 
 | 工具 | 干什么 |
 |---|---|
 | `board_status` | 总览：待办/进行/完成/打回计数、机器在线、最近事件 |
-| `board_list` | 列任务，可按 `status` / `machine` 过滤 |
+| `board_list` | 列任务，可按 `status` / `machine` 过滤；默认取全量（v1.1 起不再只给 200 条） |
 | `board_claim` | 认领（挂到配置的 `machine` 名下） |
 | `board_beat` | 续租 + 写进度备注 |
 | `board_done` | 交付（可带 `artifact`） |
 | `board_fail` | 打回（`blocked`）/ 失败（`failed`），必须写原因 |
 | `board_say` | 往事件流播报一句 |
-| `board_dispatch` | 选机 + 建单（`dryRun` 只预览），返回下一步给 `remote_task` 的参数 |
+| `board_dispatch` | 选机 + 建单（`dryRun` 只预览）；v1.1 起建的单带 `dispatch:'auto'`，由 Host 自己派 |
 | `board_attach` | 把远程任务号绑到板子任务，状态转 running |
 | `board_caps` | 看某台机器上报的配置清单 |
 | `board_assess` | 本机工作能力评估（写 `~/.dsh-board/identity.json` 并上报板子） |
 | `board_metrics` | 各机器实时指标（内存/CPU/磁盘/运行时长） |
-| `sh_run` | 执行命令（Windows 用 pwsh，失败回退 powershell） |
+| `sh_run` | 执行命令（Windows 用 pwsh，失败回退 powershell）；输出按 `maxOutputBytes` 流式限流 |
 | `sh_read` | 读文本文件 |
 | `sh_write` | 写文本文件（UTF-8 无 BOM，自动建父目录） |
 | `sh_list` | 列目录 |
@@ -70,12 +93,13 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
   config:
     boardUrl: 'http://127.0.0.1:8965'
     machine: 'host'          # 副机改成 gt14 / mb14 / pc2
-    token: ''                # 板子加鉴权时填
-    petImage: ''              # 留空=用随包立绘 assets/pet.png
+    token: ''                # 板子开了 GP_BOARD_TOKEN 时填同一个值
+    petImage: ''             # 留空=用随包立绘 assets/pet.png
     allowedRoots: []         # sh_* 只允许访问这些目录（realpath 比较）；空=不限制。
                              # 注意这是路径白名单，不是沙箱：命令内容本身不受限
     shellTimeoutMs: 120000
-    maxOutputBytes: 200000
+    maxOutputBytes: 200000   # sh_run 流式保留的上限，超出只保留前 N 字节并标 truncated
+    autoDispatch: true       # v1.1：Host 后台自动派发 + 终态回写；设 false 退回纯手动
 ```
 
 ## 自检
@@ -86,10 +110,13 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 node scripts/plugcheck.mjs
 ```
 
-断言：`apply()` 不抛异常、16 个工具齐备、每个 `output.render` 返回 `[{type:'text',text}]`
-（裸字符串会毒化会话历史 —— 2026-10-27 这么崩过两次）、四条 GUI 路由存在（含面板派工用的
-`/api/board/ui/create`）、任务标题取 `t.title` 且 `goal` 不被裁剪、agent 层工具与主工具共享同一份
-`allowedRoots`、板子不可达时 `board_caps` 返回 `ok:false` 而不是空列表假成功。
+断言 11 项：`apply()` 不抛异常、16 个工具齐备、每个 `output.render` 返回
+`[{type:'text',text}]`（裸字符串会毒化会话历史 —— 2026-10-27 这么崩过两次）、四条 GUI 路由存在
+（含面板派工用的 `/api/board/ui/create`）、任务标题取 `t.title` 且 `goal` 不被裁剪、agent 层工具与
+主工具共享同一份 `allowedRoots`、板子不可达时 `board_caps` 返回 `ok:false`；以及 v1.1 的
+`board_dispatch` 带 `dispatch:'auto'`、Host 调度器真的走 `take → dispatch → attach`、
+`aborted` 折成 `failed`、`board_list` 能看到 230 条、`dispose()` 清掉 4 个定时器。
+全程 `stubFetch`，不连真板子。
 
 真板子相关的验收（真派发、多机、桌宠）走 `scripts/acceptance.mjs`，需要板子服务和本机媒体素材。
 

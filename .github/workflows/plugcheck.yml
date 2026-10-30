@@ -7,11 +7,17 @@ on:
 
 jobs:
   self-check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows 是主阵地（pwsh / realpath / 大小写不敏感路径），Linux 用来兜底跨平台回归
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # 离线自检：不连板子、不启动 DSH，只断言 apply() 注册了 16 个工具、render 输出合法、核心路由在。
+      # 离线自检：不连板子、不启动 DSH，只断言 apply() 注册了 16 个工具、render 输出合法、
+      # 核心路由在、Host 调度器 take→dispatch→attach、dispose 清掉 4 个定时器。
       - run: node scripts/plugcheck.mjs

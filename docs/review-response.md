@@ -1,4 +1,4 @@
-# 对 20 项外部复核的回应（v1.0.2）
+# 对 20 项外部复核的回应（v1.0.2 / v1.1.0）
 
 复核基线：`c4a106d`（v1.0.1）。复核共 20 项，我们逐条对照代码与两份外部组件（板子服务、
 `dsh-remote-agent`）的契约核实，结论是 **12 项 CONFIRMED / 8 项 PARTIAL / 0 项 WRONG** ——
@@ -78,8 +78,34 @@ v1.0.2 只修不依赖外部服务、能在本仓库内闭合的问题；需要�
 4. **#12 snapshot 分页**：`limit=0` 全量 + 调用方自行过滤。
 5. **#18 测试体系**：CI 加 Windows 矩阵；`acceptance` 改成可跳过、素材可用 `ffmpeg` 现场生成。
 
-## 遗留风险（未在本版处理）
+## 遗留风险（v1.0.2 时点）
 
 - 板子服务监听 `0.0.0.0` 且无鉴权：同一局域网内任何人都能建单/改单。在加 token 之前，建议限制
   监听地址或加防火墙规则。
 - 多开 GUI 仍会重复派工（#6 修好前）。
+
+## v1.1.0 之后的状态（2026-10-30 晚）
+
+v1.0.2 之后立刻做了 v1.1.0，把上表里原定「v1.1」的四项全部闭合，并且**动了外部组件**：
+
+| # | v1.1.0 | 做法 |
+|---|--------|------|
+| 6 | 已修 | 派发与终态回写搬进 Host：`dispatchOnce()`（4s）+ `syncRemote()`（6s）；浏览器只建单（`dispatch:'auto'`）。板子侧新增 `POST /api/take`（原子占位，前置条件校验）与 `POST /api/untake`（放回队列）；`claim` 改为原地合并，不再抹掉 `goal/title/mode/workspace/remote_id` |
+| 7 | 已修 | `runOnce` 在 `data` 回调里按 `maxOutputBytes` 截断并继续 drain，超限标 `truncated` |
+| 12 | 已修 | `snapshot(0)` 取全量；`board_list` 上限 500；`total` 不再封顶 200 |
+| 13 | 已修 | `dispose()` 清 `caps/live/dispatch/sync` 四个定时器、退订 `agent/created`、清 `portedAgents` |
+| 17 | 已修 | `collectCaps` 改 async，5 个版本探测 `execFile` 并发 + 10 分钟 TTL；不再串行阻塞 15s |
+| 18 | 部分 | `plugcheck` 扩到 11 组断言（含调度器 take→dispatch→attach、aborted→failed、dispose 清定时器）；Windows 矩阵与 `acceptance` 可跳过仍未做 |
+| 19 | 已修 | 隐藏「远程同事」入口时可还原原内联 `display`，卸载时还原；不再用全局 `!important` |
+| — | 新增 | 板子可选鉴权：`GP_BOARD_TOKEN` + `x-board-token`；`/api/health` 增加 `auth`/`version`/`routes` |
+
+**对外部组件的改动**（这两处不在本仓库，升级时需同步）：
+
+1. `board_server.py`：新增 `do_take`/`do_untake` 与两条路由、`do_claim` 原地合并、`create` 收
+   `workspace`、`mark` 收 `note`、`attach` 清 `taker`、可选 `GP_BOARD_TOKEN` 校验；改完已重启
+   （PID 1668 → 22096），`/api/health` 返回 `version: 2`。
+2. `dsh-remote-agent` **未改动**：Host 走它现成的 HTTP `/api/remote-agent/ui/dispatch|tasks`，
+   并用「先 `/api/take` 占位」规避它没有幂等键的问题；它仍然不等副机受理，回绑靠 `/api/attach`。
+
+剩余风险：`remote-agent` 的 `/dispatch` 若超时（默认 60s），Host 拿到的是错误文本而非 taskId，
+此时任务会走 `/api/untake` 回队列；极端情况下远程其实已受理，靠服务端 `_remote-logs` 对账兜底。
