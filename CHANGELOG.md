@@ -1,3 +1,22 @@
+## v1.1.10 — 2026-11-01
+
+朋友复核 #8 / #9（基线 v1.1.9 / `3cb8753`，均已复现）的最小修法：
+
+- **#9 待回绑记录按身份隔离 + 合并写入**（`lib/index.js`）：
+  - 文件从全用户共享的 `~/.dsh/dsh-team/pending-attach.json` 改为
+    `pending-attach-<machine>-<boardTag>.json`（machine 取本机身份，boardTag 取配置的 boardUrl
+    的 sha1 前 8 位），同一系统用户下的多个 Host/profile 不再互相覆盖。
+  - 写入改为"先读回磁盘 → 按 taskId 合并（本实例内存优先）→ 剔除已补绑成功的条目 → 写临时文件再 rename"
+    的原子流程，另一个实例补绑成功也不会把本进程尚未恢复的记录整文件抹掉。
+  - 首次升级会回退读旧的全用户共享文件，日志 `pending attach migrated from legacy file`，
+    不丢 v1.1.9 已记录的待补绑任务。
+- **#8 暂停要真的停手**（`lib/index.js`）：
+  - `dispatchOnce` 的循环内、每条任务开始前重新检查 `pausedUntil`，中途设暂停会立即 `break`，
+    不再出现"暂停已确认、本轮仍 take/dispatch"。
+  - `dispatchState.inFlight` 包住 take→dispatch→attach；`/api/board/ui/dispatch-pause` 设置暂停后
+    等 inFlight 归零（最多 3 秒）才返回，回执新增 `inFlight` / `waitedMs`。
+
+验证：`node --check` 0 错、`plugcheck` PASS（16 工具 / 12 路由）；运行时验证见下一条发布说明。
 # 变更日志
 
 ## v1.1.9 — 2026-11-01
@@ -264,3 +283,4 @@ remote-agent 的 UI 路由每个请求都过 DSH 的浏览器鉴权围栏（`con
 - 补齐 `repository` / `bugs` / `homepage` / `author` 与 LICENSE 署名
 - README 安装示例换成真实仓库地址；配置段 `petImage` 改为留空用随包立绘
 - `scripts/plugcheck.mjs` 注释修正为 16 个工具（12 个 `board_*` + 4 个 `sh_*`）
+
