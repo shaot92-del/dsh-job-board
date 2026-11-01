@@ -75,7 +75,7 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 | `board_done` | 交付（可带 `artifact`） |
 | `board_fail` | 打回（`blocked`）/ 失败（`failed`），必须写原因 |
 | `board_say` | 往事件流播报一句 |
-| `board_dispatch` | 选机 + 建单（`dryRun` 只预览）；v1.1 起建的单带 `dispatch:'auto'`，由 Host 自己派 |
+| `board_dispatch` | 选机 + 建单（`dryRun` 只预览）；v1.1 起建的单带 `dispatch:'auto'`，由 Host 自己派。**goal 必须 ≤ 300 字**（板子按 `goal[:300]` 存，超了会把 exec 命令截成半句；v1.1.3 起超限直接拒绝） |
 | `board_attach` | 把远程任务号绑到板子任务，状态转 running |
 | `board_caps` | 看某台机器上报的配置清单 |
 | `board_assess` | 本机工作能力评估（写 `~/.dsh-board/identity.json` 并上报板子） |
@@ -123,12 +123,14 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 node scripts/plugcheck.mjs
 ```
 
-断言 11 项：`apply()` 不抛异常、16 个工具齐备、每个 `output.render` 返回
+断言 14 组：`apply()` 不抛异常、16 个工具齐备、每个 `output.render` 返回
 `[{type:'text',text}]`（裸字符串会毒化会话历史 —— 2026-10-27 这么崩过两次）、四条 GUI 路由存在
 （含面板派工用的 `/api/board/ui/create`）、任务标题取 `t.title` 且 `goal` 不被裁剪、agent 层工具与
 主工具共享同一份 `allowedRoots`、板子不可达时 `board_caps` 返回 `ok:false`；以及 v1.1 的
 `board_dispatch` 带 `dispatch:'auto'`、Host 调度器真的走 `take → dispatch → attach`、
-`aborted` 折成 `failed`、`board_list` 能看到 230 条、`dispose()` 清掉 4 个定时器。
+`aborted` 折成 `failed`、`board_list` 能看到 230 条、`dispose()` 清掉 4 个定时器；
+v1.1.1 的会话 cookie 换取与 401 重试、nodeId 别名；v1.1.2 派发带 `approval:'auto'`；
+v1.1.3 的 goal 超 300 字被拒、终态 note 带副机最后一条 stdout。
 全程 `stubFetch`，不连真板子。
 
 真板子相关的验收（真派发、多机、桌宠）走 `scripts/acceptance.mjs`，需要板子服务和本机媒体素材。

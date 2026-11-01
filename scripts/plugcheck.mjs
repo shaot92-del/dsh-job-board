@@ -13,7 +13,9 @@
  *   9. v1.1：终态 aborted/interrupted/rejected 也回写成 failed；
  *  10. v1.1：board_list 取全量（>200 条不被截断）；
  *  11. v1.1：dispose 真的清掉 caps/live/dispatch/sync 四个定时器；
- *  12. v1.1.1：调度器先换会话 cookie（launch token），401 后重试，nodeId 别名能对上机器名。
+ *  12. v1.1.1：调度器先换会话 cookie（launch token），401 后重试，nodeId 别名能对上机器名；
+ *  13. v1.1.2：派发显式带 approval=auto（exec 任务默认 manual 会静默卡住）；
+ *  14. v1.1.3：goal 超 300 字当场拒绝（板子会截断成半句命令），终态 note 带副机 stdout。
  *
  * 跑法：node scripts/plugcheck.mjs
  * 退出码：0 全过 / 1 有失败
@@ -239,6 +241,17 @@ const dispatchBoard = {
   assert.match(String(out.summary || ''), /Host/, '返回值应说明由 Host 派发: ' + out.summary)
 }
 
+// ── v1.1.3：goal 超过板子 300 字上限要当场拒绝 ─────────────────────────
+// board_server.py 的 do_create 是 goal[:300]，exec 命令被截成半句会在副机上炸成
+// 一串看不懂的 ParserError（现场踩过两次）。宁可在建单前拦住。
+{
+  const calls = router({ '/api/board': dispatchBoard })
+  const out = await tools.get('board_dispatch').execute({ goal: 'x'.repeat(330), mode: 'exec' })
+  assert.equal(out.ok, false, 'goal 超 300 字必须被拒: ' + JSON.stringify(out))
+  assert.match(String(out.error || ''), /300/, '拒绝信息要说明 300 字上限: ' + out.error)
+  assert.equal(calls.filter((c) => c.path === '/api/create').length, 0, '被拒时不应建单')
+}
+
 // ── v1.1：#6 Host 调度器 take → dispatch → attach ──────────────────────
 {
   const board = {
@@ -305,6 +318,43 @@ const dispatchBoard = {
   assert.equal(marked.body.task_id, 'r-1')
   assert.equal(marked.body.status, 'failed', 'aborted 应折成 failed')
   assert.match(String(marked.body.note || ''), /aborted/, '备注要说明远程终态')
+}
+
+// ── v1.1.3：终态 note 优先带副机最后一条 stdout ────────────────────────
+// 现场教训：任务 done 了但板上只有「远程 completed」，还得去共享盘翻任务 JSON 才能
+// 看到命令输出。syncRemote 现在把最后一条 [stdout] 直接写进 note。
+{
+  const board = {
+    now: 0,
+    updated: 0,
+    counts: {},
+    machines: { host: { online: true, last_seen: 0 }, GT14: { online: true, last_seen: 0 } },
+    tasks: {
+      'r-2': { status: 'running', machine: 'GT14', remote_id: 'ui-10', goal: '跑个活', updated_at: 0 },
+    },
+    events: [],
+  }
+  const calls = router({
+    '/api/board': board,
+    '/api/remote-agent/ui/tasks': {
+      tasks: [
+        {
+          taskId: 'ui-10',
+          status: 'completed',
+          logs: [{ line: '[stderr] warning' }, { line: '[stdout] GT14 team=1.1.3' }],
+        },
+      ],
+    },
+    '/api/mark': { ok: true },
+  })
+  const tick = findInterval(6000)
+  assert.ok(tick, '终态回写应注册 6 秒定时器（#6）')
+  tick.fn()
+  await new Promise((r) => setTimeout(r, 80))
+  const marked = calls.find((c) => c.path === '/api/mark')
+  assert.ok(marked, 'completed 要回写板子')
+  assert.equal(marked.body.status, 'done', 'completed 应折成 done')
+  assert.match(String(marked.body.note || ''), /GT14 team=1\.1\.3/, 'note 应带副机最后一条 stdout: ' + marked.body.note)
 }
 
 // ── v1.1.1：Host 调度器要穿过 DSH 的浏览器鉴权围栏换会话 cookie ─────────

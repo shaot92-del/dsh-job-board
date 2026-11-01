@@ -1,5 +1,17 @@
 # 变更日志
 
+## v1.1.3 — 2026-11-01
+
+两个在真机上反复咬人的问题：
+
+- **goal 超 300 字被板子截断**：`board_server.py` 的 `do_create` 存的是 `goal[:300]`，
+  exec 命令被截成半句后会在副机上炸出 `ParserError … The string is missing the
+  terminator`（2026-11-01 现场踩了两次）。`board_dispatch` 与 `/api/board/ui/create`
+  现在建单前就拒绝，并把「长逻辑写成共享盘脚本、这里只传一句调用」写进 hint。
+- **终态 note 只有「远程 completed」**：`syncRemote` 改为优先把副机最后一条
+  `[stdout]` 日志写进板子 note，交付信息一眼可见；对象型 error 也能读出来了。
+  注意这条依赖板子的 `do_mark` 支持 `note` 字段 —— 运行中的板子进程要重启才会加载。
+
 ## v1.1.2 — 2026-10-31
 
 修 v1.1.1 之后暴露的**静默卡住**：任务真的派出去了，却永远停在副机审批里。
