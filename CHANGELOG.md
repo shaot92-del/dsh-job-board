@@ -1,5 +1,24 @@
 # 变更日志
 
+## v1.1.5 — 2026-11-01
+
+不含运行时代码改动，只把当天的现场修复沉淀成可复用脚本 `scripts/worker-patches/`：
+
+- `fix-agent-model.ps1`：给副机 profile 补 `agent-default-model`
+  （provider `deepseek-account` / model `deepseek-flash`）。缺这段时副机 agent
+  会话会落到 `deepseek-official` 路由，本地报 `no API key for provider route`，
+  一次模型请求都不会发出。
+- `patch-followup-role.ps1`：修 `dsh-remote-agent` 的 `runner.js` —— `agent.followup`
+  投递任务书时缺 `role`/`id`，导致每条无角色消息在 `serialize()` 里抛
+  `TypeError: Cannot read properties of undefined (reading 'content')`，
+  再被包成 `DeepSeek Messages transport failed / TRANSPORT`。
+- `patch-transport-retry.ps1`（可选）：把节点传输层遇到 `duplicate-node` 等错误时的
+  `this.stop()` 改成 `destroy + scheduleReconnect`，避免被顶下线后永久失联。
+- `restart-dsh.ps1` / `start-dsh-now.cmd`：通过计划任务或手动双击重启副机 DSH，
+  能活过被杀的进程本身（不要在 exec 任务里杀了宿主原地拉起）。
+- 四个 ps1 均用真实原始文件做过端到端演练与幂等复测；`transport.js` 补丁产出
+  `26372 -> 26709 chars`，与副机上实际打出的结果一致。
+
 ## v1.1.4 — 2026-11-01
 
 - **看板 machine 列被 nodeId 覆盖**：`dispatchOnce()` 回执时把 remote-agent 的
