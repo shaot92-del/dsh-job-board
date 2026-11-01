@@ -1,5 +1,15 @@
 # 变更日志
 
+## v1.1.4 — 2026-11-01
+
+- **看板 machine 列被 nodeId 覆盖**：`dispatchOnce()` 回执时把 remote-agent 的
+  `nodeId`（`desktop-2gh05s7`）当成机器名写给 `/api/attach`，于是板子上同一台
+  MB14 一会儿叫 `MB14`、一会儿叫 `desktop-2gh05s7`（历史 9 条任务已留下这个写法）。
+  现在回执统一走 `boardMachineName(nodeMachine(node))`，折回规范名
+  `host / GT14 / MB14 / PC2`；认领、心跳、回执三处口径一致。
+  只影响新派出的任务，历史任务不改名。
+- 附当日现场报告 `docs/summary-report-2026-11-01.md`。
+
 ## v1.1.3 — 2026-11-01
 
 两个在真机上反复咬人的问题：
