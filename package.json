@@ -1,6 +1,6 @@
 {
   "name": "dsh-team",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "description": "DSH 插件：把「团队 · 作业板」接进 DSH —— 作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
   "type": "module",
   "main": "./lib/index.js",

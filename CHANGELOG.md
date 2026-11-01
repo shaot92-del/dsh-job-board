@@ -1,5 +1,19 @@
 # 变更日志
 
+## v1.1.9 — 2026-11-01
+
+待补绑记录的读回路径加固（#4 的收尾，受控重载测试发现的两处）：
+
+- **兼容单个对象**（`lib/index.js` `loadPendingAttach()`）：`savePendingAttach()` 写的是数组，
+  但手工编辑/旧格式可能是单个对象，原来 `Array.isArray()` 判假就静默跳过 ——
+  "记录明明在、却一条都没补绑"。现在统一归一成数组再读。
+- **读取失败留痕**：`loadPendingAttach()` 的 catch 不再吞掉异常，非 `ENOENT`
+  会记 `pending attach load failed: …`，避免同类问题再次变成查不出来的静默 bug。
+
+验证（受控重载）：先写入一条指向假远程号的记录 → 重启 → 日志出现
+`pending attach restored: 1 条待补绑`，随后 `attach retried ok bd-pendattach2-191950
+remote=ui-pendprobe-191950`，板子任务转 `running` 且 `remote_id` 已写，文件回到 `[]`。
+
 ## v1.1.8 — 2026-11-01
 
 复核遗留的三处调度器健壮性缺口（对应 issue #2 / #4 / #7 的二次复核意见）：
