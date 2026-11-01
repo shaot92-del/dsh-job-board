@@ -1,5 +1,32 @@
 # 变更日志
 
+## v1.1.6 — 2026-11-01
+
+修掉外部扫描报的 7 条问题（shaot92-del/dsh-team #1~#7）和派工弹窗的可读性：
+
+- **#1 `sh_write` 可经 junction 绕过 `allowedRoots`**（`lib/shell.js`）：`realPath()`
+  以前把所有 `realpath` 错误都当"路径不存在"，退回字面路径，于是
+  `allowed\link\new.txt`（link 指向白名单外、文件还没建）能通过白名单。
+  现在只对 `ENOENT` 向上找最近存在的祖先再拼回剩余段，其它错误上抛，
+  `withinRoots()` 遇到异常一律判"不在白名单"（fail-closed）。
+- **#2 两台以上副机在线时"自动派工"始终 queued**（`lib/index.js`）：`pickNode()`
+  以前只在恰好一台在线副机时兜底。现在按板子上 running 的任务数挑最闲的那台。
+- **#3 nodeId / 机器别名转换不完整**：新增 `machineAlias()`，任务里写
+  `desktop-2gh05s7` 或 `MB14` 都能选中同一台；`/api/board/ui/summary` 附带
+  `nodeMap`（nodeId → 机器名），面板把两者合成一张卡。
+- **#4 dispatch 成功但 attach 失败会丢失 remote taskId**：新增 `pendingAttach`
+  与 `retryPendingAttach()`，每轮 dispatch 前只重试回绑（绝不重复派发），
+  只有 attach 成功才计入 `dispatched`。
+- **#5 面板交付/打回没带 `task.machine`**（`lib/client.js`）：release 请求体补上
+  machine，多机在跑时不再用本机身份释放别人的占位。
+- **#6 `pendingNoted` 写入失败后阻止重试**：改成 `/api/mark` 成功后才记入集合。
+- **#7 dispose 只清定时器**：新增 `disposed` 标志，dispose 时先置位并清空
+  `pendingAttach`；在飞的 dispatch/sync 会提前退出，认领后未派发的任务会
+  `/api/untake` 放掉。
+- **派工弹窗对比度**：卡片改用实体底色（`#1c2129`）、文字 `#e6edf3`/`#adbac7`、
+  徽章浅底描边、选中态 `rgba(88,166,255,0.22)` + 2px 亮边 + 左侧亮条，
+  离线卡改虚线不再整卡半透明。
+
 ## v1.1.5 — 2026-11-01
 
 不含运行时代码改动，只把当天的现场修复沉淀成可复用脚本 `scripts/worker-patches/`：
