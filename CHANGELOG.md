@@ -1,3 +1,36 @@
+# 变更日志
+
+## v1.1.11 — 2026-11-07
+
+受控重载实测（DSH `0.2.2-rc.1`）暴露的问题与修法：
+
+- **现象**：面板「禁用 → 启用」dsh-team 之后，新实例在第一条路由上抛
+  `webserver: duplicate exact route "/api/board/ui/summary"`，整插件 `failed`，面板与工具全部僵住，
+  只能重启 DSH 才能装回来。日志里 apply 跑到第 5 行就断了，没有任何 dispose 记录，
+  而旧实例的 caps 心跳还在继续刷（`caps reported ok=true`）。
+- **根因判定**（用新增的 `scripts/reload-smoke.mjs` 隔离复现，不碰真实 DSH）：
+  插件自己的 cleanup 是干净的 —— apply → cleanup → apply 到同一个 webserver，
+  12 条路由清空后重新注册不撞名。这次是**宿主没有调用插件的 cleanup 就再次 mount**，
+  属于宿主侧热重载限制；插件侧能做的是"失败时别留半套、并且说清楚原因"。
+- **sh_\* 四个工具的 disposer 没收进回收清单**（`lib/shell.js` 只注册不返回，`lib/index.js` 也没接）：
+  cleanup 之后工具表里还留着 4 个 `sh_*`，重载一次多一套。现在 `registerShellTools` 外面包一层
+  只转发 `tools.register` 的收集器，和 12 条路由一起回收（reload-smoke A5 用例）。
+  - 收集器第一版写成 `Object.create(ctx)` 再赋值 `.tools`，在真宿主上直接抛
+    `cannot set property "tools" in multiple fibers` —— cordis 的 ctx 是带服务 setter 的代理，
+    派生对象上再赋值等于重复声明服务。整个 apply 停在这一行之前，插件 entry 变 `failed`，
+    面板桌宠只剩 🐟 占位（`<img>` 取不到 `/api/board/ui/pet.png` 时的 fallback）。
+    改为普通转发对象后正常；reload-smoke 的假 ctx 也加了同样的 setter 保护，防止再犯。
+- **半装载整体回滚**（`lib/index.js`）：路由注册中途抛错时，把已经注册的工具/路由/事件订阅全部摘掉
+  再抛，日志 `apply aborted before ready, rolling back N resource(s)`；撞上 `duplicate ... route`
+  时额外打一条提示：上次实例没被卸载，热重载不安全，需要重启 DSH。
+- **卸载路径补日志**（`lib/index.js`）：`dispose start resources=N` → `dispose released resources=N`
+  → `dispose done`。以前卸载路径一行日志都没有，排障时无法判断"到底有没有人调过 cleanup"。
+- **新增 `scripts/reload-smoke.mjs`**：假 webserver 复刻 `dsh-host-webserver` 的语义
+  （同路径第二次注册即 `throw`，disposer 只删自己那条），跑三个场景 ——
+  A 正常重载必须全绿、B 旧实例没 cleanup 时的失败形态（只记录）、C 注册到一半失败的整轮回滚必须全绿。
+
+验证：`node --check lib/index.js` 0 错、`node scripts/reload-smoke.mjs` A/C 全过、`plugcheck` PASS（16 工具 / 12 路由）。
+
 ## v1.1.10 — 2026-11-01
 
 朋友复核 #8 / #9（基线 v1.1.9 / `3cb8753`，均已复现）的最小修法：
@@ -16,8 +49,9 @@
   - `dispatchState.inFlight` 包住 take→dispatch→attach；`/api/board/ui/dispatch-pause` 设置暂停后
     等 inFlight 归零（最多 3 秒）才返回，回执新增 `inFlight` / `waitedMs`。
 
-验证：`node --check` 0 错、`plugcheck` PASS（16 工具 / 12 路由）；运行时验证见下一条发布说明。
-# 变更日志
+验证：`node --check` 0 错、`plugcheck` PASS（16 工具 / 12 路由）；运行时验证见 v1.1.11
+（面板「禁用→启用」重载实测 + `scripts/reload-smoke.mjs` 隔离复现，证据见
+`docs/issue-10/04-reload-smoke-2026-11-07.md`）。
 
 ## v1.1.9 — 2026-11-01
 

@@ -21,3 +21,6 @@ jobs:
       # 离线自检：不连板子、不启动 DSH，只断言 apply() 注册了 16 个工具、render 输出合法、
       # 核心路由在、Host 调度器 take→dispatch→attach、dispose 清掉 4 个定时器。
       - run: node scripts/plugcheck.mjs
+      # 重载契约：apply→cleanup→apply 不撞名、cleanup 之后工具/路由/订阅归零、
+      # 半装载失败要整体回滚（复刻 dsh-host-webserver 的重复路由语义，见 v1.1.11）
+      - run: node scripts/reload-smoke.mjs
