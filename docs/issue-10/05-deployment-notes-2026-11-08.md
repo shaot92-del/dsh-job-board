@@ -58,7 +58,7 @@ profile 目录：`C:\Users\17827\.dsh\profiles\desktop`
     role: hub
     listenHost: '192.168.3.40'      # 必须填本机某个具体网卡地址，不能是 0.0.0.0
     listenPort: 19387
-    nodeToken: 'nt_32fcd1cb4dd54bd9883f7ba40ebecaa8'
+    nodeToken: '<nodeToken>'
     systemPrompt: true
 ```
 
