@@ -184,6 +184,21 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
     }
 
     if (p === '/api/remote-agent/ui/tasks') {
+      // R16：模拟 hub 的 200 条上限 —— 节点上任务攒满了，我们那条老任务被切到窗口外。
+      //   flood: 'newer'     → 200 条全都比发出时刻新（无法判断远端有没有）
+      //   flood: 'crossing'  → 200 条里最老的跨过了发出时刻（窗口覆盖到，能判定"没有"）
+      if (hub && hub.flood) {
+        const now = Date.now()
+        const rows = []
+        for (let i = 0; i < 200; i += 1) {
+          const ts = hub.flood === 'crossing' && i === 199 ? now - 60000 : now - i * 10
+          rows.push({
+            taskId: 'ui-flood-' + i, nodeId: 'smoke-node', goal: 'flood goal ' + i,
+            mode: 'agent', createdAt: ts, updatedAt: ts, status: 'done',
+          })
+        }
+        return send(200, { tasks: rows })
+      }
       return send(200, { tasks: remoteTasks })
     }
 
@@ -657,6 +672,54 @@ async function main() {
     check('R15 重派次数有上界（attempts 上限生效）', info.dispatchCalls.length <= 3, `dispatch=${info.dispatchCalls.length}`)
     check('R15 最终升级成 blocked', info.stats.mark >= 1, `mark=${info.stats.mark}`)
     check('R15 到达终态后不再继续 untake', info.stats.untake <= 3, `untake=${info.stats.untake}`)
+  }
+
+  // ── R16（复核 · 反查上限）：/tasks 被 200 条上限截断时，不许判定"远端没有" ──
+  // hub 是 tasks.slice(0, 200) 按 updatedAt 倒序；节点任务攒满后我们那条在途任务会在
+  // 窗口外。这时说"没有"就会 untake 重派 —— 又是一次重复执行。
+  {
+    const tasks = {
+      'bd-r16': { status: 'claimed', taker: 'host', dispatch: 'auto', mode: 'agent', goal: 'R16 goal', machine: 'smoke-node' },
+    }
+    const info = await scenario('R16', {
+      hub: { mode: 'ok', flood: 'newer' },
+      tasks,
+      machine: 'smoke-r16',
+      waitMs: 2400,
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r16', nodeId: 'smoke-node', machine: 'smoke-r16', goal: 'R16 goal', mode: 'agent',
+          workspace: '', phase: 'unknown', attempts: 1, sentAt: now - 3000, at: now - 2000, lastError: 'timeout',
+        },
+      ],
+    })
+    check('R16 列表被截断时不敢放回队列', info.stats.untake === 0, `untake=${info.stats.untake}`)
+    check('R16 也不重派', info.stats.dispatch === 0, `dispatch=${info.stats.dispatch}`)
+    const kept = (Array.isArray(info.journal) ? info.journal : []).find((r) => r && r.taskId === 'bd-r16')
+    const tracked = Boolean(kept) && Number(kept.unresolved || 0) >= 1
+    // 跑得久一点时它会被有界地升级成 blocked（而不是一直挂着）—— 两种收尾都算"没有偷偷重派"。
+    check('R16 条目被追踪（记 unresolved）或有界升级 blocked', tracked || info.stats.mark >= 1,
+      `kept=${JSON.stringify(kept)} mark=${info.stats.mark}`)
+  }
+
+  // ── R16b（同一处的反面）：窗口确实覆盖到发出时刻 → "没有"是可判定的，照常放回队列 ──
+  {
+    const tasks = {
+      'bd-r16b': { status: 'claimed', taker: 'host', dispatch: 'auto', mode: 'agent', goal: 'R16b goal', machine: 'smoke-node' },
+    }
+    const info = await scenario('R16b', {
+      hub: { mode: 'ok', flood: 'crossing' },
+      tasks,
+      machine: 'smoke-r16b',
+      waitMs: 2400,
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r16b', nodeId: 'smoke-node', machine: 'smoke-r16b', goal: 'R16b goal', mode: 'agent',
+          workspace: '', phase: 'unknown', attempts: 1, sentAt: now - 3000, at: now - 2000, lastError: 'timeout',
+        },
+      ],
+    })
+    check('R16b 窗口覆盖到发出时刻时照常澄清', info.stats.untake >= 1, `untake=${info.stats.untake}`)
   }
 
   return summary()
