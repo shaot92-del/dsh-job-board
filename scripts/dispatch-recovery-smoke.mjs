@@ -202,6 +202,16 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
       return send(200, { tasks: remoteTasks })
     }
 
+    if (p === '/api/remote-agent/ui/task') {
+      // v1.3.0：attach 之前插件会核实远端任务是否还在（/api/remote-agent/ui/task?taskId=）。
+      // hub.probeMissing 用来构造"dispatch 回了 taskId，但 hub 上查不到"（远端已被回收）。
+      const taskId = url.searchParams.get('taskId') || ''
+      if (hub && hub.probeMissing) return send(404, { error: 'TASK_UNKNOWN', taskId })
+      const t = remoteTasks.find((x) => String(x.taskId) === taskId)
+      if (!t) return send(404, { error: 'TASK_UNKNOWN', taskId })
+      return send(200, { task: Object.assign({ logs: [] }, t), handoff: null })
+    }
+
     if (p === '/api/remote-agent/ui/dispatch') {
       stats.dispatch += 1
       return readBody().then(async (b) => {
@@ -256,7 +266,7 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
   })
 }
 
-async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTasks, during, markStatus, waitMs = 2600, settle }) {
+async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTasks, during, markStatus, extraCfg, waitMs = 2600, settle }) {
   const boardUrl = null
   let srv = null
   let cleanup = null
@@ -279,6 +289,7 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTask
       writeTimeoutMs: 400,
       dispatchApproval: 'auto',
       allowedRoots: [],
+      ...(extraCfg || {}),
     })
     // `during`：在 apply 之后、断言之前插一段外部动作（模拟另一个 Host 实例写同一个
     // 状态文件）。先睡 150ms 保证本实例已经读过（当时是空的）盘上内容。
@@ -720,6 +731,60 @@ async function main() {
       ],
     })
     check('R16b 窗口覆盖到发出时刻时照常澄清', info.stats.untake >= 1, `untake=${info.stats.untake}`)
+  }
+
+  // ── R17（#10-2 · 调度所有权）：dispatchRole=observer 只建单，不派工 ──
+  {
+    const tasks = {
+      'bd-r17': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R17 goal', machine: 'smoke-node', priority: 5 },
+    }
+    const info = await scenario('R17', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r17',
+      extraCfg: { dispatchRole: 'observer' },
+      waitMs: 1600,
+    })
+    check('R17 observer 不派工', info.stats.dispatch === 0, `dispatch=${info.stats.dispatch}`)
+    check('R17 observer 不认领', info.stats.take === 0, `take=${info.stats.take}`)
+  }
+
+  // ── R18（#10-2 · attach 校验）：hub 回了 taskId 但远端查不到（已被回收）→ 不写 remote_id ──
+  {
+    const tasks = {
+      'bd-r18': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R18 goal', machine: 'smoke-node', priority: 5 },
+    }
+    const info = await scenario('R18', {
+      hub: { mode: 'ok', probeMissing: true },
+      tasks,
+      machine: 'smoke-r18',
+      waitMs: 2400,
+    })
+    check('R18 远端查不到时不 attach', info.stats.attach === 0, `attach=${info.stats.attach}`)
+    check('R18 没有写入 remote_id', !info.tasks['bd-r18'] || !info.tasks['bd-r18'].remote_id,
+      `remote_id=${JSON.stringify(info.tasks['bd-r18'] && info.tasks['bd-r18'].remote_id)}`)
+    check('R18 板子任务被标 failed', info.tasks['bd-r18'] && info.tasks['bd-r18'].status === 'failed',
+      `status=${info.tasks['bd-r18'] && info.tasks['bd-r18'].status}`)
+  }
+
+  // ── R19（#10-2 · 跨 Host 收敛）：任务已被别的机器重新认领 → 本机不再回写终态 ──
+  {
+    const tasks = {
+      'bd-r19': {
+        status: 'running', taker: 'mb-other', dispatch: 'auto', mode: 'agent', goal: 'R19 goal',
+        machine: 'smoke-node', remote_id: 'ui-r19', priority: 5,
+      },
+    }
+    const info = await scenario('R19', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r19',
+      extraCfg: { remoteSyncMs: 300 },
+      seedRemoteTasks: [{ taskId: 'ui-r19', nodeId: 'smoke-node', goal: 'R19 goal', status: 'completed', createdAt: Date.now() - 5000, updatedAt: Date.now() }],
+      waitMs: 2600,
+    })
+    check('R19 被别的机器认领后不回写', info.stats.mark === 0, `mark=${info.stats.mark}`)
+    check('R19 板上状态没被覆盖', info.tasks['bd-r19'].status === 'running', `status=${info.tasks['bd-r19'].status}`)
   }
 
   return summary()

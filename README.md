@@ -113,6 +113,9 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
     dispatchApproval: auto   # v1.1.2：派发时给 remote-agent 的审批策略。
                              # remote-agent 对 exec 任务默认 manual（挂起等 30 分钟超时）；
                              # 自动调度必须写 auto，要人工批就改成 manual
+    dispatchRole: owner      # v1.3.0：同一块板子只让一台 Host 派工。
+                             # 设成 observer 的 Host 只建单、不 take/untake，也不跑 reconcile
+                             # （见 docs/issue-10/07-dispatch-roles.md）
 ```
 
 ## 自检
