@@ -321,7 +321,9 @@ for (const c of CASES) {
     writeTimeoutMs: 5000,
     autoDispatch: true,
     dispatchTickMs: 300,
-    remoteSyncMs: 300,
+    // 复核 B1：两个周期完全相同会让两个定时器落在同一 timers phase，历史上曾因共用
+    // busy 闸门互相饿死；拆闸门之后仍保留一点点错峰，避免把这类 bug 藏回测试里。
+    remoteSyncMs: 350,
     unknownGraceMs: 60000,
   })
   const readTask = async (id) => {
@@ -329,7 +331,15 @@ for (const c of CASES) {
     return (j.tasks || {})[id]
   }
   const row = { 用例: 'acc-11', 标题: '派工链路（take→dispatch→attach→sync→done）', 机器: argMachine, 结果: '', 用时秒: 0, 产物: '', sha256: '', 说明: '' }
+  // 复核 B2：真板子模式下这条会建一条 dispatch=auto 的任务并让它跑在真机上，
+  // 默认跳过；要真跑必须显式 GP_ACCEPT_ALLOW_DISPATCH=1，并自己收尾那条任务。
+  const SKIP_LIVE_DISPATCH = Symbol('skip-live-dispatch')
   try {
+    if (useRealBoard && process.env.GP_ACCEPT_ALLOW_DISPATCH !== '1') {
+      row.结果 = '跳过'
+      row.说明 = '真板子模式默认不跑派工链路（避免留下 dispatch=auto 的残留任务）；需要时设 GP_ACCEPT_ALLOW_DISPATCH=1'
+      throw SKIP_LIVE_DISPATCH
+    }
     // 板子只有收到 /api/caps 后才知道这台机器，而 reportCaps 是 ready 之后异步发的 ——
     // 直接建单会命中「板子上没有这台机器」。这里先等它上线。
     let machineOnline = false
@@ -365,11 +375,21 @@ for (const c of CASES) {
       if (status === 'done') break
     }
     if (status !== 'done') throw new Error('同步回写没发生（板子 status=' + status + '）')
+    // 复核 B3：done 只证明「有一条绑定上了」，证明不了「只派了一次」——
+    // 重复派工会把最后一条的 remote_id 留下，前面那条成孤儿。
+    const stats = await (await fetch(boardUrl + '/api/_test/stats')).json()
+    if (!stats || stats.ok !== true) throw new Error('拿不到假 hub 统计：' + JSON.stringify(stats).slice(0, 120))
+    if (Number(stats.dispatchCount) !== 1) throw new Error('派了 ' + stats.dispatchCount + ' 次（期望 1 次）')
+    if (Number(stats.remoteCount) !== 1) throw new Error('远端留下 ' + stats.remoteCount + ' 条任务（期望 1 条）：' + String(stats.remoteIds || []).slice(0, 120))
     row.结果 = '通过'
-    row.说明 = 'remote=' + remoteId
+    row.说明 = 'remote=' + remoteId + ' dispatch=1'
   } catch (err) {
-    row.结果 = '失败'
-    row.说明 = (err && err.message) || String(err)
+    if (err === SKIP_LIVE_DISPATCH) {
+      /* 跳过：row.结果 与说明已在 try 里写好 */
+    } else {
+      row.结果 = '失败'
+      row.说明 = (err && err.message) || String(err)
+    }
   } finally {
     try {
       cleanup2()
@@ -394,7 +414,7 @@ const finalOk = terminal.every((r) => {
   const t = boardTasks.find((x) => x.id === r.用例)
   if (!t) return false
   return r.结果 === '按预期失败' ? t.status === 'failed' : t.status === 'done'
-}) && results.filter((r) => r.用例 === 'acc-11').every((r) => r.结果 === '通过')
+}) && results.filter((r) => r.用例 === 'acc-11').every((r) => r.结果 === '通过' || r.结果 === '跳过')
 console.log(`\n板子终态核验：${finalOk ? `✅ ${terminal.length}/${terminal.length} 状态与预期一致` : '❌ 状态不一致'}`)
 console.log(`计数：${JSON.stringify(board.counts)}`)
 

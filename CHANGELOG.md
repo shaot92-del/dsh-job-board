@@ -1,5 +1,53 @@
 # 变更日志
 
+## v1.3.6 — 2026-11-08
+
+三方复审（代码审查 / 遗留系统 / 安全审计）后的第一批修复。**派工与同步共用闸门**是本版最重的一条：
+它让"远端跑完了、板上永远收不到"变成随机现象，而验收恰好跑在绿的半边。
+
+### 修好的
+
+1. **B1 派工与同步互相饿死（Critical）** — `dispatchState` 拆成 `dispatching` / `syncing` 两个闸门。
+   以前共用一个 `busy`，语义还是"忙就丢弃"：`dispatchTickMs === remoteSyncMs` 时两个定时器落在同一
+   timers phase，dispatch 在第一个 `await` 让出时 `busy` 仍为 true，同一轮里的 sync 回调直接
+   `return` —— 远端终态永远不回写。实测修前 `node scripts/acceptance.mjs` 三次两红
+   （`acc-11 … 16.39s 同步回写没发生（板子 status=claimed）`），修后三次全绿（0.83s）。
+2. **B2 真板子模式不再跑派工用例** — acc-11 在真板子模式下默认 `跳过`：它会建一条 `dispatch:auto`
+   的任务并让它跑在真机上，而测试本身没有收尾职责。要真跑必须显式 `GP_ACCEPT_ALLOW_DISPATCH=1`。
+3. **B3 "只派一次"现在有断言** — 假 hub 加 `GET /api/_test/stats`（`dispatchCount`/`remoteCount`/
+   `remoteIds`），acc-11 在 done 之外断言"只派了 1 次、远端只留 1 条"。以前只看 `remote_id` 非空，
+   重复派工留下最后一条也能过。
+4. **F2 接管者删不掉记录（High）** — `journalDrop` 以前死认 `rec.holder`：接管者按"崩溃处理"
+   拿到了处理权，却在这里被否掉，记录一路留到 TTL；之后每一轮都命中远端并重新 attach，板上
+   done 被翻回 running、lease 无限续期。现在与 `holderUsable` 同一口径：超 `INSTANCE_TAKEOVER_MS`
+   未更新才允许接管删除，并留一行 trace。
+5. **F1 认领/澄清不看归属（High）** — `reconcileUnknownDispatches` 循环头加 `holderUsable`，
+   `/api/untake`、`/api/mark` 全部带上 `machine` + `holder`。以前 untake 不带 holder，板子那层
+   "双方都提供才比较"的校验直接放行，同机第二个实例能把别人在飞的 claimed 任务放回队列再派一条。
+6. **板子 do_mark 校验归属** — 与 untake/release 同口径：传了就比对（`machine`、`holder`），
+   传了但不匹配回 409；旧版插件不带这两个字段，行为不变。
+
+### 还没修（按复审顺序，另起版本）
+
+- F3 escalate 缺 `absenceProvable` 截断保护；F9 retry/escalate 同 tick 竞态；F8 observer/pause 仍写板子；
+  F11 syncRemote 的 taker 护栏在主窗口失效（`do_attach` 会 pop taker）。
+- B4 假板子仍与真板子有系统性偏差（take 不写 taker、attach 不置 running、mark 无白名单、永不 stale）。
+- 安全 P0：`/api/board/ui/*` 未鉴权（可被页面 XSS/CSRF 借道 RCE）、board token 曾出现在共享盘
+  `_remote-logs`、hub nodeToken 仍等于公开历史值、共享盘 ACL 允许 worker 改守护脚本、
+   仓库历史仍含旧 token。
+
+### 验证
+
+| 套件 | 结果 |
+| --- | --- |
+| `node scripts/plugcheck.mjs` | PASS tools=16 routes=12 |
+| `node scripts/reload-smoke.mjs` | 场景 A/B/C 全部通过 |
+| `node scripts/dispatch-recovery-smoke.mjs` | 71/71 |
+| `node scripts/state-file-smoke.mjs` | 16/16 |
+| `node scripts/acceptance.mjs`（fixtures） | 10/10 + acc-11 |
+| `node scripts/acceptance.mjs`（默认素材） | 10/10 + acc-11 |
+| acceptance 连跑三次 | 三次全绿（B1 修前 2/3 红） |
+
 ## v1.3.5 — 2026-11-08
 
 第四轮复核的**测试保真**项（F11/F12）：验收与回归里那套「假板子」和真板子在

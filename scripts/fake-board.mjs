@@ -373,6 +373,19 @@ const ROUTES = {
     save()
     return send(res, 200, { ok: true, task: t })
   },
+
+  // 验收专用：统计假 hub 收到过多少次 /dispatch（复核 B3：只派一次必须被断言，
+  // 光看 remote_id 非空抓不到「重复派工、只留最后一条」）。
+  'GET /api/_test/stats': async (req, res) => {
+    const remote = state.remote || {}
+    return send(res, 200, {
+      ok: true,
+      dispatchCount: Number(state.remoteSeq || 0),
+      remoteCount: Object.keys(remote).length,
+      remoteIds: Object.keys(remote),
+      tasks: Object.keys(state.tasks || {}).length,
+    })
+  },
 }
 
 const server = http.createServer((req, res) => {
