@@ -1,5 +1,23 @@
 # 变更日志
 
+## v1.1.13 — 2026-11-08
+
+派工恢复当天顺手修掉的一个"看起来只是面板不刷新"的问题。
+
+- **现象**：DSH 重启后第一次 `caps` 上报打出 `caps reported ok=false machine=host shell=true`，
+  但机器明明是好的，下一个 10 分钟周期又可能自己好起来。
+- **根因**：板子写路径比读路径慢——实测 `POST /api/caps` 用 **6111 ms**，
+  而 `call()` 对所有请求共用 `cfg.timeoutMs = 8000 ms`，启动瞬间（板子还在处理
+  `/api/board` 的 110 KB 快照）就容易贴边触发 AbortError，被记成 `ok=false`。
+- **修法**：
+  - `call(method, path, body, opts)` 支持按调用覆盖超时；`caps` 上报用
+    `Math.max(cfg.timeoutMs, 20000)` 的独立超时，不再和读路径抢同一根橡皮筋。
+  - `caps reported ok=… took=NNNms`：加上实际耗时；失败时再补 `status=` / `error=`，
+    以后一眼能分清是超时（`status=0`）、4xx 还是 5xx，不必手工复现。
+- 副作用范围：只动了 `call` 的可选参数与 `reportCaps`，其余调用点超时行为不变。
+- 说明：板子 `/api/board` 单次约 6–7 s / ~110 KB 仍是真的慢，根治在板子侧
+  （增量查询或缓存）；插件侧这次只是把写路径从读路径的超时里摘出来。
+
 ## v1.1.12 — 2026-11-08
 
 派工停机 8 小时才被发现，问题不在派工逻辑，而在**它停下来的方式**。
