@@ -1,5 +1,53 @@
 # 变更日志
 
+## v1.3.7 — 2026-11-08
+
+三方复审里**不需要重启**的那批。两条都是"别人能替我动手"的口子，先关掉。
+
+### 修好的
+
+1. **安全 F1 — 插件 GUI 的写通道没闸门（Critical）**：`/api/board/ui/*` 只抓 Cookie，不校验
+   Host / Origin / 自定义头。任何能打到 `127.0.0.1:<GUI 端口>` 的页面都能建一条
+   `mode=exec, dispatch=auto` 的任务，等于在所有副机上执行 PowerShell。现在每个 handler 前
+   过 `uiGuard(req)`：Host 必须回环或在 `uiAllowedHosts`、带 `Origin` 时必须同源、非 GET 必须
+   带 `x-dsh-team-ui: 1` + JSON Content-Type。面板自己（`lib/client.js`）已统一带上。
+2. **F3/F9 — TTL 升级会用截断列表断言"远端没有"**：`escalateExpiredJournal()` 补上
+   `absenceProvable()`（`/tasks` 未截断，或最老一条 `updatedAt` 早于 `sentAt - 5s`）；否则只做
+   `blockRetryAt = now + 60s` 并留日志。同轮刚补绑成功的任务（`attachedThisRound`）不再被
+   escalate 误标 blocked。
+3. **B4 — 假板子语义向真板子对齐**：`take` 写 `taker`、`attach` 置 `running` + 刷 240 分钟
+   lease + 清 `taker/holder/dispatch`、`mark` 加状态白名单且 `queued` 时清 `remote_id`。
+   这几条之前让 `holderIsUs` / `takerIsUs` / 跨 Host 回写守卫在验收里全是零覆盖。
+4. **脚本卫生（安全 F2 的后续）**：`team-hardening.ps1` 输出打码（以前把含 token 的整块配置
+   打进 stdout，而 stdout 会落进共享盘 `_remote-logs`）；`_remote-logs` 里已有的两条明文已替换。
+   `board_guard_keepalive.ps1` 探活改 `/api/health`（`/api/board` 要 token，401 会让守护每
+   10 分钟被误杀）；`board-presence.ps1`、`自驱.ps1` 的读写都带 `x-board-token`。
+5. **ACL（安全 F4/F5）**：`_tools` / `_board` / `_remote-logs` 不再继承
+   `Authenticated Users:(M)`，显式只留本机所有者与共享盘服务账号可写、`Users` 只读执行；
+   `C:\Users\Public\gp_*_hidden.vbs` 的 `INTERACTIVE/SERVICE/BATCH` 降到只读；
+   `D:\gp_video\_tools\gp-daemon.ps1` 去掉 `Authenticated Users` 写权。
+
+### 没做的（F11，判定为非缺陷）
+
+`syncRemote()` 读 `t.taker` 做归属护栏，而 `do_attach` 会 `pop("taker")` —— 但 attach 之后任务
+本来就归本机，护栏只在任务被别的 Host 重新认领（taker 被重新写上）时才需要，所以不改。
+
+### 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| `node scripts/ui-guard-smoke.mjs` | 7/7 |
+| `node scripts/plugcheck.mjs` | PASS tools=16 routes=12 |
+| `node scripts/reload-smoke.mjs` | 场景 A/B/C 全部通过 |
+| `node scripts/dispatch-recovery-smoke.mjs` | 71/71 |
+| `node scripts/state-file-smoke.mjs` | 16/16 |
+| `node scripts/acceptance.mjs`（fixtures + 默认素材） | 10/10 + acc-11 |
+
+### 还要重启才能做的
+
+hub nodeToken 轮换（旧值在公开 git 历史里）、board token 再轮换（当前枚在 `_remote-logs` 里
+出现过）、仓库历史清 token（filter-repo 强推或转 private + 撤 PR）。
+
 ## v1.3.6 — 2026-11-08
 
 三方复审（代码审查 / 遗留系统 / 安全审计）后的第一批修复。**派工与同步共用闸门**是本版最重的一条：

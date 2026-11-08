@@ -241,3 +241,62 @@ schtasks /run /tn DSHBounce
 
 补一条：`board_server.py` 的 `/api/health` 是公开的，`authTokens` 会直接告诉你板子当前认几枚。
 
+## 10. v1.3.7：不做重启的那批（2026-11-08）
+
+三方复审（代码审查 / 遗留系统 / 安全审计）之后，这一批全部**不需要重启 DSH 或板子**就能落地。
+需要重启的（hub nodeToken、board token 再轮换、仓库历史清 token）留在 §11。
+
+### 10.1 插件 GUI 的写通道（安全 F1，已关）
+
+`/api/board/ui/*` 以前只抓 Cookie，不校验来源——任何能打到 `127.0.0.1:<GUI 端口>` 的页面
+或进程都能 `POST /api/board/ui/create` 建一条 `mode=exec, dispatch=auto` 的任务，等于在你
+所有副机上以你的账号执行 PowerShell。现在每个路由进 handler 前都过 `uiGuard(req)`：
+
+| 检查 | 规则 | 失败返回 |
+| --- | --- | --- |
+| Host | 必须是回环（`127.0.0.1` / `localhost` / `[::1]`）或在 `uiAllowedHosts` 里 | 403 `why:"host"` |
+| Origin | 带 `Origin` 时必须与 Host 同源 | 403 `why:"origin"` |
+| 写请求 | 非 GET 必须带 `x-dsh-team-ui: 1` 且 `content-type: application/json` | 403 `why:"token"` 或 `"content-type"` |
+
+面板自己（`lib/client.js`）已经统一带上这两个头；第三方脚本要调这几个路由，也得照做。
+`uiAllowedHosts` 只在"用别的域名反代到本机 GUI"时才需要配，默认空。
+
+回归：`node scripts/ui-guard-smoke.mjs`（7 个用例：回环放行、外部 Host 拒、跨站 Origin 拒、
+同源放行、缺头拒、非 JSON 拒、合规写放行）。
+
+### 10.2 脚本卫生：token 不再出现在 stdout / 日志里
+
+| 文件 | 改法 |
+| --- | --- |
+| `team-hardening.ps1` | 不再把整块配置打到 stdout（那里面有 `token:`），改成逐行打码 `token: '<redacted>'` |
+| `board_guard_keepalive.ps1` | 探活从 `/api/board` 改 `/api/health`（前者要 token，401 会被当成"板子挂了"，每 10 分钟误杀守护） |
+| `board-presence.ps1` | 报到带 `x-board-token`（从 `~/.dsh/board-tokens.txt` 读，缺则 exit 2） |
+| `自驱.ps1` | 读 `/api/board` 与写动作都带 `x-board-token`；`Get-BoardToken` / `Get-BoardHeaders` 必须定义在 `Get-Board` 之前 |
+| `启动作业板.bat` | 提示改成"浏览器直接打开会 401，这是正常的" |
+
+共享盘 `_remote-logs` 里 2026-11-08 两条 hardening 任务（`ui-mw7r2zq4zf` / `ui-mw7r2zop1uu`）
+的 stdout 曾含 board token 明文，已按实际值原地替换成 `<board-token>`。
+
+### 10.3 ACL：代码目录不再允许"任意已认证用户"改写
+
+`_tools` / `_board` / `_remote-logs` 原先继承 `Authenticated Users:(M)` —— 任何一台副机上的
+任何账号（只要能连 SMB）都能改 `board_server.py`、`board_guard.ps1`，而被改过的代码下次会被
+拉起执行。现在三个目录已 `/inheritance:d`，显式只留：
+
+| 主体 | 权限 |
+| --- | --- |
+| `DESKTOP-NJ6NG3V\17827` | 完全控制（本机所有者） |
+| `DESKTOP-NJ6NG3V\xfer` | 修改（共享盘服务账号，副机经它读写） |
+| `BUILTIN\Users` | 读取与执行 |
+| `SYSTEM` / `Administrators` | 完全控制 |
+
+`C:\Users\Public\gp_board_guard_hidden.vbs`、`gp_daemon_hidden.vbs` 把 `INTERACTIVE` /
+`SERVICE` / `BATCH` 从"修改"降到"读取与执行"；`D:\gp_video\_tools\gp-daemon.ps1` 同样去掉
+`Authenticated Users` 的修改权。
+
+> 注意：已存在的日志/数据文件里仍有继承下来的旧 ACE（在用的文件改不动，`icacls` 会报
+> Access denied）。它们不影响"代码目录不可被改"这一条，但如果你想彻底清一遍，要停掉板子
+> 与日志写入再跑 `icacls <dir> /remove:g "NT AUTHORITY\Authenticated Users" /T /C`。
+
+改完的验证：板子照常写 `state.json`（`/api/create` 200、`state.json` mtime 前进）、副机照常
+读 `Z:\_tools`（派一条 exec 读文件即证）。

@@ -148,6 +148,8 @@ function claimFor(task, machine, minutes, note, holder = '') {
   }
   const wasQueued = String(task.status || 'queued') === 'queued'
   task.machine = machine
+  // B4（三方复审）：真板子 do_take 同时写 taker；不写的话插件里看 taker 的护栏测不到。
+  task.taker = machine
   if (askHolder) task.holder = askHolder
   task.status = task.status === 'running' ? 'running' : 'claimed'
   task.claimed_at = task.claimed_at || nowSec()
@@ -217,9 +219,25 @@ const ROUTES = {
   'POST /api/mark': async (req, res, b) => {
     const t = state.tasks[b.task_id]
     if (!t) return send(res, 404, { ok: false, error: 'no such task' })
+    // B4（三方复审）：与真板子 do_mark 对齐 —— status 白名单 + queued 清干净。
+    const STATUSES = ['queued', 'claimed', 'running', 'done', 'failed', 'blocked', 'superseded', 'stale']
+    if (b.status && !STATUSES.includes(String(b.status))) {
+      return send(res, 400, { ok: false, error: 'status not allowed' })
+    }
     if (b.status) t.status = String(b.status)
     if (b.note) t.note = String(b.note)
-    if (b.remote_id) t.remote_id = String(b.remote_id)
+    if ('remote_id' in b) {
+      if (String(b.remote_id || '')) t.remote_id = String(b.remote_id)
+      else delete t.remote_id
+    }
+    if (String(b.status || '') === 'queued') {
+      delete t.taker
+      delete t.holder
+      delete t.remote_id
+      t.dispatch = 'auto'
+      t.claimed_at = 0
+      t.lease_until = 0
+    }
     if (b.progress !== undefined) t.progress = String(b.progress)
     event('mark', t.id, b.machine, b.status || '')
     touch(t)
@@ -232,8 +250,13 @@ const ROUTES = {
     if (!b.remote_id) return send(res, 400, { ok: false, error: 'remote_id required' })
     t.remote_id = String(b.remote_id)
     if (b.machine) t.machine = String(b.machine)
-    // v1.3.3：真板子 do_attach 会 pop('taker')；占位结束，holder 也一起清掉。
+    // B4（三方复审）：与 board_server.do_attach 对齐 —— 置 running、租约 240 分钟、
+    // pop taker、清 dispatch。以前只写 remote_id，插件里"running 才回写"的分支测不到。
+    t.status = 'running'
+    t.lease_until = leaseOf(240)
+    delete t.taker
     delete t.holder
+    delete t.dispatch
     event('attach', t.id, b.machine, t.remote_id)
     touch(t)
     return send(res, 200, { ok: true, task: t })
