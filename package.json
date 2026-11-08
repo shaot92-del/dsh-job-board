@@ -28,6 +28,7 @@
     "lib/shell.js",
     "cordis.patch.yml",
     "assets/pet.png",
+    "assets/icon-180.png",
     "README.md",
     "CHANGELOG.md",
     "docs/review-response.md",
