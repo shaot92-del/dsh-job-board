@@ -787,6 +787,29 @@ async function main() {
     check('R19 板上状态没被覆盖', info.tasks['bd-r19'].status === 'running', `status=${info.tasks['bd-r19'].status}`)
   }
 
+  // ── R20（v1.3.1 · 多实例并发写）：上一个实例崩溃留下的僵尸锁不许把状态写入卡死 ──
+  {
+    const tasks = {
+      'bd-r20': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R20 goal', machine: 'smoke-node', priority: 5 },
+    }
+    const info = await scenario('R20', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r20',
+      waitMs: 2400,
+      during: async ({ journalFile }) => {
+        const lock = journalFile + '.lock'
+        fs.writeFileSync(lock, JSON.stringify({ pid: 999999, at: 0 }))
+        const old = Date.now() - 600000
+        fs.utimesSync(lock, old / 1000, old / 1000)
+      },
+    })
+    check('R20 僵尸锁不影响派工', info.stats.dispatch === 1 && info.stats.attach === 1,
+      `dispatch=${info.stats.dispatch} attach=${info.stats.attach}`)
+    check('R20 派工成功后 journal 已清空', (Array.isArray(info.journal) ? info.journal.length : 0) === 0,
+      JSON.stringify(info.journal))
+  }
+
   return summary()
 }
 

@@ -99,6 +99,36 @@ if (holder && machineAlias(holder) !== machineAlias(cfg.machine)) {
 M1–M7 七组变异全部按预期被抓住，恢复源码后 59/59。
 
 
+## 4. 状态文件：跨进程锁（v1.3.1）
+
+`dispatch-journal-*.json` 与 `pending-attach-*.json` 都是"读回磁盘 → 合并 → 原子写"。
+原子写只保证单次写入不出现半个文件，挡不住两台 Host **同时**"读 → 合并 → 写"：
+两边都读到 `[x]`，A 写 `[x,a]`，B 写 `[x,b]` —— a 就没了。反过来，两边各自删条目
+也可能把对方刚清的记录写回来。
+
+v1.3.1 把这段收进 `lib/state-file.mjs`：
+
+- `withFileLock(file, fn, { waitMs = 400, staleMs = 30000 })` —— `<file>.lock` 用
+  `O_EXCL` 抢占；持锁进程崩了留下的僵尸锁，超过 `staleMs` 直接抢占；等不到就返回
+  `{ ok:false, busy:true }`，调用方保留内存里的墓碑，下一轮再来（**绝不"没拿到锁也
+  照写"**，那正是丢更新的老路）。
+- `writeStateJson()` 原子写（`<file>.<pid>.tmp` + rename，失败退避重试 20/50/100ms）。
+- `sleepSync()` 同步短睡眠（重试退避用）。
+
+`saveDispatchJournal()` / `savePendingAttach()` 的整段合并都在锁里；拿不到锁时日志
+写清"被另一个实例锁着、内存里还有几条在途"。Journal 的 TTL 过期、墓碑清除这些
+副作用仍留在锁外——它们只影响本实例内存，不需要互斥。
+
+### 验证
+
+- `node scripts/state-file-smoke.mjs` → **8/8**：4 个子进程 × 10 次并发读改写
+  不丢更新（40/40）、僵尸锁可抢占、活锁返回 busy 且不写、锁释放后立刻能写、
+  原子写无 `.tmp` 残留。
+- `dispatch-recovery-smoke` 新增 **R20**：journal 旁边放着 5 分钟前的僵尸锁，
+  派工照常完成（dispatch=1、attach=1、journal 清空）。
+- 变异验证：把 `withFileLock` 换成直接执行 → 并发用例从 40 掉到 9（用例确实能抓）。
+  注意第一版用例用 `spawnSync` 起子进程，串行跑出来照样全绿，已改成 `spawn` + 
+  `Promise.all`。
 ## 还没做的
 
 - **自动选主**：多 owner 时的租约/版本令牌要板子侧配合（#10-2 的后半段）。

@@ -1,6 +1,28 @@
 # 变更日志
 
+## v1.3.1 — 2026-11-08
+
+复核里剩下的「多实例并发写 journal」：`dispatch-journal` / `pending-attach` 都是
+"读回磁盘 → 合并 → 原子写"，原子写挡不住两台 Host 同时读改写（A 写 [x,a]、B 写
+[x,b]，a 就没了；同理两边各自删也可能把对方刚清的记录写回来）。
+
+- 新增 `lib/state-file.mjs`：`withFileLock()`（`<file>.lock` + O_EXCL，僵尸锁超时
+  抢占，等不到返回 busy 而不是硬写）、`writeStateJson()`（tmp+rename、退避重试）、
+  `sleepSync()`。原 index.js 里的本地副本删除，避免两套实现漂移。
+- `saveDispatchJournal()` / `savePendingAttach()` 的读-合并-写整段进锁；拿不到锁时
+  trace 写明"被另一个实例锁着、内存里还有几条在途，下一轮再试"，墓碑保留。
+- 新增 `scripts/state-file-smoke.mjs`（8 项）：4 个子进程 × 10 次并发读改写不丢
+  更新、僵尸锁可抢占、活锁返回 busy 且不写、锁释放后立刻能写、原子写无残留。
+  用例必须用 `spawn` 真并发（`spawnSync` 会退化成串行，变异验证时踩过）。
+- `dispatch-recovery-smoke` 新增 R20：journal 旁放 5 分钟前的僵尸锁，派工照常完成。
+- CI 增加 `node scripts/state-file-smoke.mjs` 一步。
+
+验证：state-file-smoke 8/8；dispatch-recovery-smoke **61/61**；plugcheck
+`PASS tools=16 routes=12`、reload-smoke、acceptance 不受影响。变异验证：去掉锁 →
+并发用例 40 掉到 9。
+
 ## v1.3.0 — 2026-11-08
+
 
 #10-2 说"先明确谁有 autoDispatch 权"，另外复核里一直挂着「attach 不校验远端仍在」
 这件事（v1.2.2 交付时故意没做，因为单看"查不到"会把好任务误标 blocked）。这一版
