@@ -305,6 +305,11 @@ for (const c of CASES) {
   const t0 = Date.now()
   const prevDir = process.env.DSH_TEAM_STATE_DIR
   process.env.DSH_TEAM_STATE_DIR = path.join(WORK, 'plugin-state-dispatch')
+  // v1.3.8：身份文件也隔离。caps 上报的前置条件是「本机已评估」，而评估结果落在
+  // IDENTITY_DIR 里；本机有历史 identity.json 时 acc-11 会假绿（CI 上没有这个文件，
+  // v1.3.6 的 CI 就是因此红的）。隔离后无论本机状态如何都从零开始。
+  process.env.DSH_TEAM_IDENTITY_DIR = path.join(WORK, 'identity-dispatch')
+  fs.mkdirSync(process.env.DSH_TEAM_IDENTITY_DIR, { recursive: true })
   fs.mkdirSync(process.env.DSH_TEAM_STATE_DIR, { recursive: true })
   const tools2 = new Map()
   const ctx2 = {
@@ -340,10 +345,12 @@ for (const c of CASES) {
       row.说明 = '真板子模式默认不跑派工链路（避免留下 dispatch=auto 的残留任务）；需要时设 GP_ACCEPT_ALLOW_DISPATCH=1'
       throw SKIP_LIVE_DISPATCH
     }
-    // 板子只有收到 /api/caps 后才知道这台机器，而 reportCaps 是 ready 之后异步发的 ——
-    // 直接建单会命中「板子上没有这台机器」。这里先等它上线。
+    // 板子只有收到 /api/caps 后才知道这台机器，而 reportCaps 在「未评估」时会主动跳过
+    // （lib/index.js reportCaps 的 identityState().assessed 闸门）。验收用全新身份目录，
+    // 所以这里显式跑一次评估把 caps 发出去，再等它上线。
+    try { await tools2.get('board_assess').execute({ force: true }) } catch {}
     let machineOnline = false
-    for (let i = 0; i < 40 && !machineOnline; i++) {
+    for (let i = 0; i < 60 && !machineOnline; i++) {
       const j = await (await fetch(boardUrl + '/api/board')).json()
       const m = (j.machines || {})[argMachine]
       machineOnline = Boolean(m && m.online)

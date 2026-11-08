@@ -1,5 +1,34 @@
 # 变更日志
 
+## v1.3.8 — 2026-11-08
+
+CI 修红。v1.3.6 的 acc-11 在本机是绿的、在 GitHub Actions 两个平台都是红的，原因是**两者跑在
+不同的"身份状态"上**：
+
+- `reportCaps()` 有个前置闸门 `identityState().assessed` —— 本机没做过评估就跳过上报，以免把
+  一台没评估过的机器写进板子。本机 `~/.dsh-board/identity.json` 是早前评估留下的，所以 acc-11
+  等上线瞬间就成功（0.84s）；CI runner 上没有这个文件，caps 永不发出，10 秒后报
+  `本机迟迟没在板子上线（caps 没上报）`。
+- 同样的问题也意味着 **acc-11 在本机是假绿的**：它测的不是"插件会自己上报"，而是"这台机器
+  以前评估过"。
+
+### 改法
+
+1. `lib/index.js`：身份目录支持 `DSH_TEAM_IDENTITY_DIR` 覆盖（默认仍是 `~/.dsh-board`），
+   验收才能在一个干净的"未评估"状态下跑。
+2. `scripts/acceptance.mjs`：acc-11 把 `DSH_TEAM_IDENTITY_DIR` 指到临时目录，并显式调用
+   `board_assess { force: true }` —— 这正是真部署里"新机器第一次上线"的路径，比等一个
+   历史文件更接近现实。
+3. 等上线的轮询从 40 次放宽到 60 次（15 秒），给慢 runner 留余量。
+
+### 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| 本机有 `identity.json` 时 `node scripts/acceptance.mjs` | 11/11，acc-11 0.78s |
+| **把 `identity.json` 移走**再跑（等价 CI） | 11/11，acc-11 1.11s |
+| `plugcheck` / `reload-smoke` / `dispatch-recovery` / `state-file` / `ui-guard` | PASS / A+B+C / 71/71 / 16/16 / 7/7 |
+
 ## v1.3.7 — 2026-11-08
 
 三方复审里**不需要重启**的那批。两条都是"别人能替我动手"的口子，先关掉。
