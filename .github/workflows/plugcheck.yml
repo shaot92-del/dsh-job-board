@@ -27,3 +27,10 @@ jobs:
       # 派工恢复（#10-1，v1.2.0）：结果未知先查询不重派、已认领未发出直接补发。
       # 假板子 + 假 hub，同样不连真环境。
       - run: node scripts/dispatch-recovery-smoke.mjs
+      # 端到端验收（#10 建议 5）：起仓库自带的 fake-board，用插件自己的 board_*
+      # 工具走 认领→心跳→交付/打回 全流程，最后核对板子终态。
+      # GP_ACCEPT_FIXTURES=1 强制走"本机没有素材"的分支：素材现造或跳过，
+      # 不依赖 runner 上装了什么（acc-04 缺 ffmpeg 时自动跳过而不是失败）。
+      - run: node scripts/acceptance.mjs --port 8977
+        env:
+          GP_ACCEPT_FIXTURES: '1'

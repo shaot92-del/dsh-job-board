@@ -1,5 +1,28 @@
 # 变更日志
 
+## v1.2.5 — 2026-11-08
+
+#10 第 5 条说"故障验收要随仓库启动"，但 `scripts/acceptance.mjs` 一直依赖一个
+**没入库**的 `board_server.py`：找不到就 `exit 2` 整段跳过。于是仓库的 CI 只跑
+plugcheck / reload / dispatch-recovery，**端到端那条链路从来没在 CI 里跑过**。
+
+- **新增 `scripts/fake-board.mjs`**：仓库自带的板子替身，实现插件真正用到的端点
+  （`/api/board`、`claim`、`beat`、`release`、`mark`、`take`、`untake`、`attach`、
+  `create`、`caps`、`metrics`、`say`），认领/续租/交付都按 taker 校验，
+  冲突回 409（插件据此判"不归我"）；状态落盘到 `--state`，可核对终态。
+- **acceptance 不再跳过**：`GP_BOARD_PY` 指向真实板子时照旧用它，没设就用
+  `fake-board.mjs`；于是在任何一台新机器 / CI 上都能从零跑起来。
+- **素材依赖降级**：`acc-02` 缺 `dsh-board/package.json` 就现造一份；
+  `acc-04` 缺测试视频就用 ffmpeg 现造 1 秒小片（没有 ffmpeg 则记为跳过而不是失败）；
+  `acc-10` 缺素材目录就列本次工作目录。`GP_ACCEPT_FIXTURES=1` 强制走这条降级路径。
+- **CI 增加一步**：`.github/workflows/plugcheck.yml` 里跑
+  `node scripts/acceptance.mjs --port 8977`（带 `GP_ACCEPT_FIXTURES=1`），
+  Windows / Linux 两个 job 都会执行 10 条用例并核对板子终态。
+
+验证（本机两种模式都跑过）：真实素材 → 10/10 通过；`GP_ACCEPT_FIXTURES=1`
+（模拟 CI）→ 10/10 通过（acc-04 用现造的 64×48 视频、acc-10 列工作目录）。
+`plugcheck` 仍 `PASS tools=16 routes=12`。
+
 ## v1.2.4 — 2026-11-08
 
 v1.2.3 把「反查不到 ⇒ 放回队列」这类误判按 goal 与时间窗口收紧了，但还剩一条：

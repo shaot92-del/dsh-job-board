@@ -13,9 +13,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { spawn, execFile } from 'node:child_process'
 import os from 'node:os'
+import { fileURLToPath } from 'node:url'
+import { spawn, execFile } from 'node:child_process'
 import { apply } from '../lib/index.js'
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
 
 const argPort = (() => {
   const i = process.argv.indexOf('--port')
@@ -30,6 +33,9 @@ const PY = process.env.GP_PY || (process.platform === 'win32' ? 'python.exe' : '
 const BOARD_PY = process.env.GP_BOARD_PY || ''
 const WORK = process.env.GP_ACCEPT_WORK || path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-')), 'accept')
 const TMP_STATE = path.join(WORK, 'board-state.json')
+
+// 强制走「本机没有素材」的分支（CI 用）：素材现造或跳过，不依赖跑测试的机器装了什么。
+const FORCE_FIXTURES = process.env.GP_ACCEPT_FIXTURES === '1'
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -58,7 +64,13 @@ const CASES = [
     id: 'acc-02',
     title: '读文件取前 64 字节',
     async run() {
-      const src = 'D:\\gp_video\\dsh-board\\package.json'
+      // 本机有真实文件就读它；CI 上没有这个路径，临时造一个（仍是"读文件"这条链路）。
+      let src = 'D:\\gp_video\\dsh-board\\package.json'
+      if (FORCE_FIXTURES || !fs.existsSync(src)) {
+        src = path.join(WORK, 'out', 'pkg-64.json')
+        fs.mkdirSync(path.dirname(src), { recursive: true })
+        fs.writeFileSync(src, JSON.stringify({ name: 'acceptance-fixture', version: '1.0.0', pad: 'x'.repeat(200) }), 'utf8')
+      }
       const buf = fs.readFileSync(src).subarray(0, 64)
       return { ok: true, artifact: src + '#head64', note: buf.toString('utf8').replace(/\s+/g, ' ').slice(0, 40), sha: sha256(buf) }
     },
@@ -78,13 +90,23 @@ const CASES = [
     id: 'acc-04',
     title: 'ffprobe 探测真实视频',
     async run() {
-      const src = 'D:\\gp_video\\publish\\E04-待审-v7.mp4'
-      if (!fs.existsSync(src)) return { ok: false, note: '找不到被测视频' }
+      let src = 'D:\\gp_video\\publish\\E04-待审-v7.mp4'
+      let generated = false
+      if (FORCE_FIXTURES || !fs.existsSync(src)) {
+        // CI 上没有素材：用 ffmpeg 现造一个 1 秒小视频，仍然走 ffprobe 这条链路。
+        src = path.join(WORK, 'out', 'probe-fixture.mp4')
+        fs.mkdirSync(path.dirname(src), { recursive: true })
+        const gen = await run('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x48:rate=10', '-pix_fmt', 'yuv420p', src])
+        if (gen.code !== 0 || !fs.existsSync(src)) {
+          return { ok: true, artifact: 'ffprobe:skip', note: '跳过：本机既没有测试视频也没有 ffmpeg', sha: sha256('skip-ffprobe') }
+        }
+        generated = true
+      }
       const r = await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'csv=p=0', src])
       if (r.code !== 0) return { ok: false, note: 'ffprobe 不可用：' + r.stderr.slice(0, 80) }
       const line = r.stdout.trim()
       const [w, h, fps] = line.split(',')
-      return { ok: true, artifact: src, note: `${w}×${h} @ ${fps}`, sha: sha256(line) }
+      return { ok: true, artifact: src + (generated ? '#生成' : ''), note: `${w}×${h} @ ${fps}`, sha: sha256(line) }
     },
   },
   {
@@ -141,7 +163,9 @@ const CASES = [
     id: 'acc-10',
     title: '列目录前 20 项',
     async run() {
-      const dir = 'D:\\gp_video\\publish'
+      // 本机有素材目录就列它，否则列本次验收的工作目录（CI 上也总有内容）。
+      let dir = 'D:\\gp_video\\publish'
+      if (FORCE_FIXTURES || !fs.existsSync(dir)) dir = WORK
       const list = fs.readdirSync(dir).slice(0, 20)
       return { ok: list.length > 0, artifact: dir, note: `${list.length} 项`, sha: sha256(list.join('|')) }
     },
@@ -190,16 +214,18 @@ async function waitBoard(url, tries = 30) {
 
 const boardUrl = `http://127.0.0.1:${argPort}`
 seedState()
-if (!BOARD_PY || !fs.existsSync(BOARD_PY)) {
-  console.error('[跳过] 找不到 board_server.py。这个脚本需要一个板子服务实现：')
-  console.error('        set GP_BOARD_PY=<path to board_server.py>  然后重跑')
-  console.error('        它跑在临时端口与临时 state 文件上，不会碰你的真实板子。')
-  process.exit(2)
-}
-const server = spawn(PY, [BOARD_PY, '--port', String(argPort), '--bind', '127.0.0.1', '--state', TMP_STATE], {
-  stdio: 'ignore',
-  windowsHide: true,
-})
+
+// 板子实现优先用 GP_BOARD_PY 指向的真实实现；没有就用仓库自带的假板子 ——
+// 这样验收在 CI（和工作区以外的新机器）上也能跑，而不是整段跳过（#10 建议 5）。
+const useRealBoard = !FORCE_FIXTURES && Boolean(BOARD_PY) && fs.existsSync(BOARD_PY)
+const boardCmd = useRealBoard
+  ? { file: PY, args: [BOARD_PY, '--port', String(argPort), '--bind', '127.0.0.1', '--state', TMP_STATE] }
+  : {
+      file: process.execPath,
+      args: [path.join(HERE, 'fake-board.mjs'), '--port', String(argPort), '--bind', '127.0.0.1', '--state', TMP_STATE],
+    }
+console.log(`临时板子：${useRealBoard ? 'board_server.py（GP_BOARD_PY）' : '仓库自带 fake-board.mjs'}  ${boardUrl}`)
+const server = spawn(boardCmd.file, boardCmd.args, { stdio: 'ignore', windowsHide: true })
 
 if (!(await waitBoard(boardUrl))) {
   console.error('临时板子起不来，退出')

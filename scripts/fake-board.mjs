@@ -1,0 +1,316 @@
+#!/usr/bin/env node
+/**
+ * fake-board.mjs —— 仓库自带的作业板替身，只为验收/回归服务。
+ *
+ * 为什么要有它：`scripts/acceptance.mjs` 原来依赖一个**没入库**的
+ * `board_server.py`（真实板子实现），找不到就整段跳过 —— 于是"故障验收随仓库
+ * 启动"（#10 建议 5）一直没做到。这个文件实现了插件真正用到的那几个端点，
+ * 让 acceptance 能在任何一台机器（含 CI）上从零跑起来。
+ *
+ * 用法：
+ *   node scripts/fake-board.mjs --port 8977 --bind 127.0.0.1 --state <state.json>
+ *
+ * 语义刻意保持"够用且诚实"：
+ *   - 认领/续租/交付/打回/放回都按 taker 校验，认领冲突回 409（插件据此判"不归我"）；
+ *   - 支持 remote_id / attach / untake / create，覆盖派工三件套；
+ *   - 状态落盘到 --state，进程重启后还能读回来（accepatance 会核对终态）。
+ * 它**不是**生产板子：没有 token、没有 CORS、没有多进程锁，只监听 127.0.0.1。
+ */
+
+import fs from 'node:fs'
+import http from 'node:http'
+import path from 'node:path'
+
+const argv = process.argv.slice(2)
+const flag = (name, fallback) => {
+  const i = argv.indexOf('--' + name)
+  return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : fallback
+}
+
+const PORT = Number(flag('port', '8977'))
+const BIND = String(flag('bind', '127.0.0.1'))
+const STATE_FILE = path.resolve(String(flag('state', path.join(process.cwd(), 'fake-board-state.json'))))
+
+const nowSec = () => Date.now() / 1000
+
+function emptyState() {
+  return { updated: Math.floor(nowSec()), tasks: {}, machines: {}, events: [] }
+}
+
+function loadState() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
+    const state = emptyState()
+    if (raw && typeof raw === 'object') {
+      state.tasks = raw.tasks && typeof raw.tasks === 'object' ? raw.tasks : {}
+      state.machines = raw.machines && typeof raw.machines === 'object' ? raw.machines : {}
+      state.events = Array.isArray(raw.events) ? raw.events : []
+      state.updated = Number(raw.updated) || Math.floor(nowSec())
+    }
+    return state
+  } catch {
+    return emptyState()
+  }
+}
+
+let state = loadState()
+
+function save() {
+  state.updated = Math.floor(nowSec())
+  fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true })
+  const tmp = STATE_FILE + '.' + process.pid + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8')
+  fs.renameSync(tmp, STATE_FILE)
+}
+
+function event(kind, taskId, machine, note) {
+  state.events.push({ at: nowSec(), kind, task_id: taskId || '', machine: machine || '', note: note || '' })
+  if (state.events.length > 500) state.events = state.events.slice(-500)
+}
+
+function counts() {
+  const c = { queued: 0, claimed: 0, running: 0, done: 0, blocked: 0, failed: 0, stale: 0 }
+  for (const t of Object.values(state.tasks)) {
+    const s = String(t.status || 'queued')
+    if (c[s] !== undefined) c[s] += 1
+  }
+  return c
+}
+
+function boardPayload() {
+  const machines = {}
+  const now = nowSec()
+  for (const [id, m] of Object.entries(state.machines)) {
+    machines[id] = {
+      ...m,
+      online: now - Number(m.last_seen || 0) < 120,
+      status: now - Number(m.last_seen || 0) < 120 ? 'online' : 'offline',
+    }
+  }
+  return {
+    ok: true,
+    updated: Math.floor(now),
+    counts: counts(),
+    tasks: state.tasks,
+    machines,
+    events: state.events.slice(-120),
+  }
+}
+
+const send = (res, status, body) => {
+  const text = JSON.stringify(body)
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(text) })
+  res.end(text)
+}
+
+const readBody = (req) =>
+  new Promise((resolve) => {
+    let raw = ''
+    req.on('data', (c) => (raw += c))
+    req.on('end', () => {
+      try {
+        resolve(raw ? JSON.parse(raw) : {})
+      } catch {
+        resolve({})
+      }
+    })
+    req.on('error', () => resolve({}))
+  })
+
+function touch(task) {
+  task.updated_at = nowSec()
+  save()
+}
+
+function leaseOf(minutes, fallback = 10) {
+  const m = Number(minutes)
+  return nowSec() + (Number.isFinite(m) && m > 0 ? m : fallback) * 60
+}
+
+/** 任务存在、且（无主 或 本来就是本机的）→ 拿到手；否则 409。 */
+function claimFor(task, machine, minutes, note) {
+  if (!task) return { ok: false, status: 404, error: 'no such task' }
+  if (task.machine && String(task.machine).toLowerCase() !== String(machine).toLowerCase()) {
+    return { ok: false, status: 409, error: 'held by ' + task.machine }
+  }
+  const wasQueued = String(task.status || 'queued') === 'queued'
+  task.machine = machine
+  task.status = task.status === 'running' ? 'running' : 'claimed'
+  task.claimed_at = task.claimed_at || nowSec()
+  task.lease_until = leaseOf(minutes)
+  if (note) task.note = String(note)
+  if (wasQueued) event('claim', task.id, machine, note)
+  touch(task)
+  return { ok: true, status: 200, task }
+}
+
+const ROUTES = {
+  'GET /api/health': (req, res) => send(res, 200, { ok: true, board: 'fake' }),
+  'GET /api/board': (req, res) => send(res, 200, boardPayload()),
+
+  'POST /api/claim': async (req, res, b) => {
+    const r = claimFor(state.tasks[b.task_id], b.machine, b.minutes, b.note)
+    if (!r.ok) return send(res, r.status, { ok: false, error: r.error })
+    return send(res, 200, { ok: true, task: r.task })
+  },
+
+  'POST /api/take': async (req, res, b) => {
+    const r = claimFor(state.tasks[b.task_id], b.machine, b.minutes, b.note || '派工认领')
+    if (!r.ok) return send(res, r.status, { ok: false, error: r.error })
+    return send(res, 200, { ok: true, task: r.task })
+  },
+
+  'POST /api/beat': async (req, res, b) => {
+    const t = state.tasks[b.task_id]
+    if (!t) return send(res, 404, { ok: false, error: 'no such task' })
+    if (String(t.machine || '').toLowerCase() !== String(b.machine || '').toLowerCase()) {
+      return send(res, 409, { ok: false, error: 'not yours' })
+    }
+    t.lease_until = leaseOf(b.minutes, 5)
+    if (b.note) t.note = String(b.note)
+    event('beat', t.id, b.machine, b.note)
+    touch(t)
+    return send(res, 200, { ok: true, task: t })
+  },
+
+  // board_done / board_fail 都走这里；mark 额外支持 remote_id（派工回绑）。
+  'POST /api/release': async (req, res, b) => {
+    const t = state.tasks[b.task_id]
+    if (!t) return send(res, 404, { ok: false, error: 'no such task' })
+    if (t.machine && b.machine && String(t.machine).toLowerCase() !== String(b.machine).toLowerCase()) {
+      return send(res, 409, { ok: false, error: 'not yours' })
+    }
+    const next = String(b.status || 'done')
+    if (!['queued', 'done', 'failed', 'blocked', 'claimed', 'running'].includes(next)) {
+      return send(res, 400, { ok: false, error: 'bad status ' + next })
+    }
+    t.status = next
+    if (b.note) t.note = String(b.note)
+    if (b.artifact) t.artifact = String(b.artifact)
+    if (b.remote_id) t.remote_id = String(b.remote_id)
+    if (next === 'queued') {
+      t.machine = ''
+      t.lease_until = null
+    }
+    event(next, t.id, t.machine, b.note)
+    touch(t)
+    return send(res, 200, { ok: true, task: t })
+  },
+
+  'POST /api/mark': async (req, res, b) => {
+    const t = state.tasks[b.task_id]
+    if (!t) return send(res, 404, { ok: false, error: 'no such task' })
+    if (b.status) t.status = String(b.status)
+    if (b.note) t.note = String(b.note)
+    if (b.remote_id) t.remote_id = String(b.remote_id)
+    if (b.progress !== undefined) t.progress = String(b.progress)
+    event('mark', t.id, b.machine, b.status || '')
+    touch(t)
+    return send(res, 200, { ok: true, task: t })
+  },
+
+  'POST /api/attach': async (req, res, b) => {
+    const t = state.tasks[b.task_id]
+    if (!t) return send(res, 404, { ok: false, error: 'no such task' })
+    if (!b.remote_id) return send(res, 400, { ok: false, error: 'remote_id required' })
+    t.remote_id = String(b.remote_id)
+    if (b.machine) t.machine = String(b.machine)
+    event('attach', t.id, b.machine, t.remote_id)
+    touch(t)
+    return send(res, 200, { ok: true, task: t })
+  },
+
+  'POST /api/untake': async (req, res, b) => {
+    const t = state.tasks[b.task_id]
+    if (!t) return send(res, 404, { ok: false, error: 'no such task' })
+    if (t.machine && b.machine && String(t.machine).toLowerCase() !== String(b.machine).toLowerCase()) {
+      return send(res, 409, { ok: false, error: 'not yours' })
+    }
+    t.machine = ''
+    t.status = 'queued'
+    t.lease_until = null
+    if (b.note) t.note = String(b.note)
+    event('untake', t.id, b.machine, b.note)
+    touch(t)
+    return send(res, 200, { ok: true, task: t })
+  },
+
+  'POST /api/create': async (req, res, b) => {
+    const id = String(b.id || b.task_id || 'task-' + Math.random().toString(36).slice(2, 8))
+    if (state.tasks[id]) return send(res, 409, { ok: false, error: 'duplicate id' })
+    state.tasks[id] = {
+      id,
+      title: String(b.title || ''),
+      goal: String(b.goal || ''),
+      status: 'queued',
+      machine: '',
+      agent: '',
+      mode: String(b.mode || 'agent'),
+      dispatch: String(b.dispatch || 'manual'),
+      priority: Number(b.priority) || 5,
+      note: '',
+      remote_id: '',
+      created_at: nowSec(),
+      updated_at: nowSec(),
+      claimed_at: null,
+      lease_until: null,
+      progress: '',
+      artifact: '',
+    }
+    event('create', id, b.machine, b.title)
+    save()
+    return send(res, 200, { ok: true, id, task: state.tasks[id] })
+  },
+
+  'POST /api/caps': async (req, res, b) => {
+    const id = String(b.machine || 'host')
+    const prev = state.machines[id] || {}
+    state.machines[id] = {
+      ...prev,
+      last_seen: nowSec(),
+      caps: b.caps || null,
+      caps_at: nowSec(),
+    }
+    save()
+    return send(res, 200, { ok: true })
+  },
+
+  'POST /api/metrics': async (req, res, b) => {
+    const id = String(b.machine || 'host')
+    const prev = state.machines[id] || {}
+    state.machines[id] = { ...prev, last_seen: nowSec(), live: b.live || null, live_at: nowSec() }
+    save()
+    return send(res, 200, { ok: true })
+  },
+
+  'POST /api/say': async (req, res, b) => {
+    event('say', '', b.machine, b.text)
+    save()
+    return send(res, 200, { ok: true })
+  },
+}
+
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url || '/', 'http://127.0.0.1')
+  const key = req.method + ' ' + url.pathname
+  const handler = ROUTES[key]
+  if (!handler) return send(res, 404, { ok: false, error: 'no route ' + key })
+  if (req.method === 'GET') return handler(req, res)
+  return readBody(req).then((b) => handler(req, res, b))
+})
+
+server.listen(PORT, BIND, () => {
+  console.log('fake-board listening on http://' + BIND + ':' + PORT + '  state=' + STATE_FILE)
+})
+
+const shutdown = () => {
+  try {
+    save()
+  } catch {
+    /* ignore */
+  }
+  server.close(() => process.exit(0))
+  setTimeout(() => process.exit(0), 800).unref()
+}
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)
