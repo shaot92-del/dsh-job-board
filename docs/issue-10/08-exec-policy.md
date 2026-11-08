@@ -300,3 +300,65 @@ schtasks /run /tn DSHBounce
 
 改完的验证：板子照常写 `state.json`（`/api/create` 200、`state.json` mtime 前进）、副机照常
 读 `Z:\_tools`（派一条 exec 读文件即证）。
+
+## 11. hub `nodeToken` 轮换（2026-11-08 实操）
+
+背景：`docs/issue-10/05-deployment-notes-2026-11-08.md` 曾把 hub 的 `nodeToken` 真值写进公开
+仓库（commit `1068cab`，暴露约 8 小时后由 `0fd2043` 移除）。二进制/明文出现在历史里之后，
+**唯一真正安全的动作是换掉它**——旧值一旦作废，历史里的字符串就是废纸。
+
+### 11.1 三台各自的字段名不一样
+
+| 机器 | 角色 | `- id: remote-agent` 里的字段 | 取值示例 |
+| --- | --- | --- | --- |
+| 本机 `DESKTOP-NJ6NG3V` | hub | `nodeToken:`（带单引号） | `'nt_…'` |
+| GT14 | worker | `token:`（**不带引号**） | `nt_…` |
+| MB14 | worker | `token:`（带单引号） | `'nt_…'` |
+
+还有两处容易踩：
+
+- GT14 的 `hubUrl` 是 `ws://192.168.3.40:19387/api/remote-agent/node`（WebSocket），
+  MB14 是 `http://192.168.3.40:19387`（direct）——轮换脚本不要按整块重写，只改 token 那一行。
+- 副机块里 `inject: []` 是刻意的（非空会永远 PENDING）；本机 hub 块是
+  `inject: [ 'webServer', 'tools', 'systemPrompt' ]`。
+
+### 11.2 正确顺序（缺一条就会有一段"连不上"的窗口）
+
+1. **生成**新值：`nt_` + 32 位十六进制（和旧值同形状，长度 35）。
+2. **写三台配置文件**：`Z:\_tools\rotate-hub-token.ps1`（只改 `- id: remote-agent` 块里的
+   `nodeToken|token` 行，保留缩进/引号风格/行尾注释，写前备份、写后复核新旧值）。副机用
+   `-TokenFile Z:\_tools\_ratoken.txt`，避免令牌出现在命令行与任务 goal 里。
+3. **重启两台副机**（它们才会用新值去连 hub）。
+4. **最后重启本机 DSH**（hub 才会用新值校验）。
+
+> 顺序反了会怎样：只改文件不重启 → hub 仍用旧值内存态，副机已用新值 → 连接被拒、
+> `19387 Established = 0`，派工停摆，直到 hub 重启。
+
+### 11.3 热重载会打断回执（不是失败）
+
+副机的 `cordis.patch.yml` 一改，loader 立刻热重载 `dsh-remote-agent`；exec 任务就在这个插件
+里跑，于是**任务回执丢失**（板上停在 `running`），但脚本写文件发生在回执之前，配置通常已经
+写好了。判断办法：重启后重新 dump 一次块内容（`Z:\_tools\_dump-ra.ps1`，token 只打
+`len` 与前 6 位），或看备份文件时间。
+
+### 11.4 重启后的验收四条
+
+1. `Get-NetTCPConnection -LocalPort 19387 -State Listen` 有监听、`healthz` 回 `{"ok":true}`。
+2. `Get-NetTCPConnection -LocalPort 19387 -State Established` 来自 `192.168.3.73`、`192.168.3.75`。
+3. hub 的节点表 `nodes:2, online:2`。
+4. 板子 `health` 仍 `authTokens:1`，三台 `last_seen` 在 15 秒内；随手派一条 exec 能 done。
+
+### 11.5 轮换完成后要做的清理
+
+- 共享盘令牌暂存文件 `Z:\_tools\_ratoken.txt` 用完即删。
+- 旧值可能残留在 `_board\state.json`、`~/.dsh-remote-agent/audit.jsonl`、`board.log`：
+  按字节替换成 `<nodeToken>`（本次实测 `state.json` 命中 1 处，另两个文件干净）。
+- `cordis.patch.yml.bak-ratoken-*` 备份含旧值，轮换确认后删掉。
+
+### 11.6 为什么不清 git 历史
+
+历史里留着的是**已作废**的值：能读到它的人拿不到任何权限。清历史只有两条路——
+`git filter-repo` 强推（全部 SHA 改写、tag 重建、PR 需重开、别人的克隆失效）或仓库转
+private（PR 与市场投稿一并消失）。除非决定"不再公开发布"，否则不值得付这个代价；
+真要清，等市场投稿审完再统一做。
+
