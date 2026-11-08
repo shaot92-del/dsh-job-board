@@ -1,5 +1,40 @@
 # 变更日志
 
+## v1.2.1 — 2026-11-08
+
+v1.2.0 的派工恢复在两位复核者（遗留系统工程师 / 代码审查工程师）手里被打穿了两处，
+而且失效方式都是**同一条任务跑两遍**。这一版修的是"状态机本身能不能表达「已发出、结果未知」"。
+
+- **B1 `claimed` 相位混用**：v1.2.0 是「先写 `claimed` → 再 POST → 成功后才删」，
+  于是 `claimed` 同时表示"肯定没发出"和"可能已发出"。POST 在飞（最长 20 s）时崩掉，
+  恢复路径不 take、不查询、直接补发 → 副机上已有的任务被派第二遍。
+  现在 `claimed` **只表示 dispatch 一次都没发出**；真正发请求之前先落盘
+  `phase=unknown` + `sentAt` + `attempts`。旧版本遗留的 `claimed`（无 `attempts`）
+  在加载时按 `unknown` 处理，`sentAt` 取 `at - 20 s` 保守回退。
+- **B2 反查窗口用错时间点**：v1.2.0 用 `since = at - 5 s`，而 `at` 是**失败那一刻**，
+  已包含整段请求耗时（写超时可达 20 s）—— 远端任务的 `createdAt` 恒在窗口外，
+  于是每次都误判"没发出去"再重派一次。现在下界按**发出时刻** `sentAt - 5 s` 算，
+  并加 `until = at + 5 s` 上界；同一轮内用 `matched` 集合防止两条板子任务绑到同一条远端。
+- **B3 字段名写错**：drop 分支读 `t.remote_id`，而 `snapshot()` 映射出来的是 `remote`，
+  导致"板上已回绑"的分支永远不成立，残留 `claimed` 会被直接补发、`remote_id` 被覆盖。
+- **H3 attach 与 journal 的先后**：以前先删 journal 再 attach，崩在中间会留下
+  "板上 claimed、无 remote_id、无 pendingAttach、无 journal" 的孤儿任务。现在
+  journal 活到 attach 有结论为止（失败那一路由 `pendingAttach` 接管）。
+- **H4/H5 无界重派 + 静默丢弃**：新增 `MAX_DISPATCH_ATTEMPTS = 3`，到上限后把任务
+  标 `blocked` 并写明原因（不再无限 untake 重派；也不再让 2 小时 TTL 把未决条目
+  静默扔掉，过期条目改为逐条升级 `blocked`）。
+- **中档三条**：板上 taker 是别的机器时不再当成本机"已认领未发出"补发；
+  `untake` 只有成功或 409 才清条目（超时/5xx 保留，下一轮再试）；
+  `unknownGraceMs: 0` 不再被 `|| 30000` 吃掉。
+- **测试**：`dispatch-recovery-smoke.mjs` 从 14 项加到 **25 项**，新增
+  R4（慢请求窗口：`sentAt=now-15s`、`at=now`，必须认出远端那条任务）、
+  R5（板上已回绑 → 不补发、`remote_id` 不被覆盖）、
+  R6（taker 是别的机器 → 不抢单）、R7（attempts 到上限 → 标 blocked、不再派工）。
+  并做了变异验证：把 B2/B3 的旧写法改回去，R4/R5 会各自失败（`dispatch=1`、
+  `remote_id` 被新号覆盖），证明用例真的能抓住这两个缺陷。
+- **回归**：`plugcheck` `PASS tools=16 routes=12`；`reload-smoke` 场景 A/C 全过；
+  `node --check lib/index.js` 通过。
+
 ## v1.2.0 — 2026-11-08
 
 派工恢复（GitHub issue #10 建议 1）的第一版实现。v1.1.13 把写路径超时抬到 20 s

@@ -89,9 +89,9 @@ function makeCtx(origin) {
  *   { mode: 'unknown-drop' }   不建任务、拖到超时（客户端 abort）
  *   { mode: 'fail', times }    前 N 次 500
  */
-function startServer({ tasks, hub }) {
+function startServer({ tasks, hub, seedRemoteTasks }) {
   const stats = { take: 0, untake: 0, attach: 0, dispatch: 0, mark: 0 }
-  const remoteTasks = []
+  const remoteTasks = Array.isArray(seedRemoteTasks) ? seedRemoteTasks.slice() : []
   const dispatchCalls = []
 
   const server = http.createServer((req, res) => {
@@ -167,7 +167,14 @@ function startServer({ tasks, hub }) {
 
     if (p === '/api/mark') {
       stats.mark += 1
-      return readBody().then(() => send(200, { ok: true }))
+      return readBody().then((b) => {
+        const t = tasks[b.task_id]
+        if (t && b.status) {
+          t.status = String(b.status)
+          if (b.note) t.note = String(b.note)
+        }
+        return send(200, { ok: true })
+      })
     }
 
     if (p === '/api/remote-agent/ui/nodes') {
@@ -230,12 +237,12 @@ function startServer({ tasks, hub }) {
   })
 }
 
-async function scenario(name, { hub, tasks, machine, seedJournal, waitMs = 2600, settle }) {
+async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTasks, waitMs = 2600, settle }) {
   const boardUrl = null
   let srv = null
   let cleanup = null
   try {
-    srv = await startServer({ tasks, hub })
+    srv = await startServer({ tasks, hub, seedRemoteTasks })
     const jf = journalFile(machine, srv.url)
     const pf = pendingFile(machine, srv.url)
     for (const f of [jf, pf]) fs.rmSync(f, { force: true })
@@ -327,13 +334,101 @@ async function main() {
       machine: 'smoke-r3',
       waitMs: 1600,
       seedJournal: (now) => [
-        { taskId: 'bd-r3', nodeId: 'smoke-node', machine: 'smoke-r3', goal: 'R3 goal', mode: 'agent', workspace: '', phase: 'claimed', at: now, lastError: '' },
+        { taskId: 'bd-r3', nodeId: 'smoke-node', machine: 'smoke-r3', goal: 'R3 goal', mode: 'agent', workspace: '', phase: 'claimed', attempts: 1, at: now, lastError: '' },
       ],
     })
     check('R3 恢复时不重新 take', info.stats.take === 0, `take=${info.stats.take}`)
     check('R3 直接补发了 dispatch', info.stats.dispatch === 1, `dispatch=${info.stats.dispatch}`)
     check('R3 完成 attach', info.stats.attach === 1, `attach=${info.stats.attach}`)
     check('R3 恢复日志已清空', Array.isArray(info.journal) && info.journal.length === 0, JSON.stringify(info.journal))
+  }
+
+  // ── R4（复核 B2）：反查窗口必须按「发出时刻」sentAt 算，而不是「放弃时刻」at ──
+  // 场景：POST 发出（sentAt=now-15s）→ 远端立刻建了任务（createdAt=now-15s）→
+  // 请求一直拖到 now 才失败（at=now）。旧代码用 at-5s 作下界，恒查不到 → 重复派工。
+  {
+    const tasks = { 'bd-r4': { status: 'claimed', taker: 'smoke-r4', dispatch: 'auto', mode: 'agent', goal: 'R4 goal', machine: '' } }
+    const info = await scenario('R4', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r4',
+      waitMs: 1600,
+      seedRemoteTasks: [
+        { taskId: 'ui-seed4', goal: 'R4 goal', mode: 'agent', createdAt: Date.now() - 15000, status: 'running' },
+      ],
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r4', nodeId: 'smoke-node', machine: 'smoke-r4', goal: 'R4 goal', mode: 'agent',
+          workspace: '', phase: 'unknown', attempts: 1, sentAt: now - 15000, at: now, lastError: '',
+        },
+      ],
+    })
+    check('R4 慢请求窗口内仍认得远端那条任务（不重派）', info.stats.dispatch === 0, `dispatch=${info.stats.dispatch}`)
+    check('R4 补绑的是远端那条老任务', info.stats.attach === 1 && String(info.tasks['bd-r4'].remote_id) === 'ui-seed4', `${info.stats.attach} / ${info.tasks['bd-r4'].remote_id}`)
+    check('R4 没有把占位放回队列', info.stats.untake === 0, `untake=${info.stats.untake}`)
+    check('R4 恢复日志已清空', Array.isArray(info.journal) && info.journal.length === 0, JSON.stringify(info.journal))
+  }
+
+  // ── R5（复核 B3）：板上已回绑 remote 时 drop 分支必须生效（字段名 remote 非 remote_id）──
+  {
+    const tasks = {
+      'bd-r5': { status: 'running', taker: 'smoke-r5', remote_id: 'ui-old5', dispatch: 'auto', mode: 'agent', goal: 'R5 goal', machine: '' },
+    }
+    const info = await scenario('R5', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r5',
+      waitMs: 1200,
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r5', nodeId: 'smoke-node', machine: 'smoke-r5', goal: 'R5 goal', mode: 'agent',
+          workspace: '', phase: 'claimed', attempts: 1, at: now, lastError: '',
+        },
+      ],
+    })
+    check('R5 已回绑的任务不被补发', info.stats.dispatch === 0 && info.stats.take === 0, `dispatch=${info.stats.dispatch} take=${info.stats.take}`)
+    check('R5 remote_id 未被覆盖', String(info.tasks['bd-r5'].remote_id) === 'ui-old5', info.tasks['bd-r5'].remote_id)
+    check('R5 残留日志被清掉', Array.isArray(info.journal) && info.journal.length === 0, JSON.stringify(info.journal))
+  }
+
+  // ── R6（复核 中）：板上被别的机器占着 → 不当成「本机已认领未发出」补发 ──
+  {
+    const tasks = {
+      'bd-r6': { status: 'claimed', taker: 'mb-other', dispatch: 'auto', mode: 'agent', goal: 'R6 goal', machine: '' },
+    }
+    const info = await scenario('R6', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r6',
+      waitMs: 1200,
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r6', nodeId: 'smoke-node', machine: 'smoke-r6', goal: 'R6 goal', mode: 'agent',
+          workspace: '', phase: 'claimed', attempts: 1, at: now, lastError: '',
+        },
+      ],
+    })
+    check('R6 不抢别人的单', info.stats.take === 0 && info.stats.dispatch === 0, `take=${info.stats.take} dispatch=${info.stats.dispatch}`)
+  }
+
+  // ── R7（复核 H4/H5）：尝试次数到上限 → 标 blocked，不再无限重派 ──────────
+  {
+    const tasks = { 'bd-r7': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R7 goal', machine: '' } }
+    const info = await scenario('R7', {
+      hub: { mode: 'unknown-drop' },
+      tasks,
+      machine: 'smoke-r7',
+      waitMs: 1800,
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r7', nodeId: 'smoke-node', machine: 'smoke-r7', goal: 'R7 goal', mode: 'agent',
+          workspace: '', phase: 'unknown', attempts: 3, sentAt: now - 40000, at: now - 30000, lastError: 'timeout',
+        },
+      ],
+    })
+    check('R7 达上限后不再派工', info.stats.dispatch === 0, `dispatch=${info.stats.dispatch}`)
+    check('R7 升级成 blocked（写了 /api/mark）', info.stats.mark >= 1, `mark=${info.stats.mark}`)
+    check('R7 恢复日志已清空', Array.isArray(info.journal) && info.journal.length === 0, JSON.stringify(info.journal))
   }
 
   return summary()

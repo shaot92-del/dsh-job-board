@@ -30,11 +30,25 @@ v1.1.x 的处理是**任何一步失败都 `untake` 后下一轮重来**。对 �
 
 | 相位 | 含义 | 下一轮怎么处理 |
 | --- | --- | --- |
-| `claimed` | 板上已认领，`/dispatch` 还没发出（或 `take` 结果未知） | 按板上现状判定：`status=claimed/running` 或 `taker` 非空 ⇒ 直接补发；仍 `queued` ⇒ 重新 take |
-| `unknown` | `/dispatch` 已发出，结果未知 | **先查询**：`/tasks` 里同 `goal`、`createdAt ≥ at−5s` 的任务就是它 ⇒ 只 `attach`；超过 `unknownGraceMs` 仍查不到 ⇒ `untake` 放回队列 |
+| `claimed` | 板上已认领，`/dispatch` **一次都没发出** | 按板上现状判定：`status=claimed/running` 或 `taker` 非空 ⇒ 直接补发；仍 `queued` ⇒ 重新 take；`taker` 是别的机器 ⇒ 不补发也不抢 |
+| `unknown` | `/dispatch` 已发出，结果未知 | **先查询**：`/tasks` 里同 `goal`、`createdAt ∈ [sentAt−5s, at+5s]` 的任务就是它 ⇒ 只 `attach`；超过 `unknownGraceMs` 仍查不到 ⇒ `untake` 放回队列；`attempts ≥ 3` ⇒ 标 `blocked` |
 | （无条目） | 已回绑 | `attach` 失败的那一支由 `pendingAttach` 负责，只重试 attach |
 
-TTL 2 小时；`dispose` 时整体落盘，新实例 `apply` 时读回继续收尾（与 pendingAttach 一致）。
+TTL 2 小时；过期条目不是静默丢弃，而是逐条 `mark blocked` 升级给人看。
+`dispose` 时整体落盘，新实例 `apply` 时读回继续收尾（与 pendingAttach 一致）。
+
+### 2.1 v1.2.1 对上面两个相位的更正
+
+v1.2.0 的写法有两处会把「可能已经派出去了」当成「没发出去」：
+
+1. **`claimed` 混用了两种含义**。原来先写 `claimed`、再 POST、成功后删，于是 POST 在飞时
+   崩溃留下的 `claimed` 与"还没发"长得一模一样。现在 `claimed` 只表示 dispatch 没发出；
+   真正发请求**之前**先落盘 `phase=unknown` + `sentAt` + `attempts`。旧版遗留的
+   `claimed`（没有 `attempts` 字段）在加载时按 `unknown` 处理，`sentAt` 取 `at − 20 s`。
+2. **反查窗口用错了时间点**。原来下界是 `at − 5 s`，而 `at` 是**失败那一刻**，已经包含
+   整段请求耗时（写超时最长 20 s），远端任务的 `createdAt` 必然落在窗口外 → 每次都会
+   误判"没发出去"并重派。现在下界用**发出时刻** `sentAt − 5 s`，并补 `at + 5 s` 上界；
+   同一轮用 `matched` 集合防止两条板子任务绑到同一条远端任务上。
 
 ## 3. 判定「结果是否已知」
 
