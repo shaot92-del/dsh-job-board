@@ -200,6 +200,8 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
     }
 
     if (p === '/api/remote-agent/ui/tasks') {
+      // R23（v1.3.4 复核 N1）：反查接口本身失败时，插件不许断言"远端没有"。
+      if (hub && hub.tasksStatus) return send(hub.tasksStatus, { error: 'hub tasks boom' })
       // R16：模拟 hub 的 200 条上限 —— 节点上任务攒满了，我们那条老任务被切到窗口外。
       //   flood: 'newer'     → 200 条全都比发出时刻新（无法判断远端有没有）
       //   flood: 'crossing'  → 200 条里最老的跨过了发出时刻（窗口覆盖到，能判定"没有"）
@@ -825,6 +827,55 @@ async function main() {
     check('R20 派工成功后 journal 已清空', (Array.isArray(info.journal) ? info.journal.length : 0) === 0,
       JSON.stringify(info.journal))
   }
+
+  // ── R22（v1.3.4 · 复核 🔴‑1/F4）：同机两个实例共用一个 journal 文件。
+  // A 写了 taking/unknown 还没发出，B 读到这条记录时不能替 A 补发（resume 不过 /api/take，
+  // 没有板子那层 holder 护栏），也不能把 A 的记录删掉。 ──
+  {
+    const tasks = {
+      'bd-r22': { status: 'claimed', taker: 'smoke-r22', dispatch: 'auto', mode: 'agent', goal: 'R22 goal', machine: '' },
+    }
+    const info = await scenario('R22', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r22',
+      waitMs: 2600,
+      seedJournal: (now) => [{
+        taskId: 'bd-r22', nodeId: 'smoke-node', machine: 'smoke-r22', goal: 'R22 goal',
+        mode: 'agent', workspace: '', phase: 'taking', attempts: 1, at: now,
+        holder: 'smoke-r22#9999-deadbeef', lastError: '',
+      }],
+    })
+    check('R22 别人实例的在途记录不补发', info.stats.dispatch === 0, `dispatch=${info.stats.dispatch}`)
+    check('R22 别人实例的记录没被删', Array.isArray(info.journal) && info.journal.length === 1,
+      JSON.stringify(info.journal))
+    check('R22 记录仍归原实例', String((info.journal[0] || {}).holder || '') === 'smoke-r22#9999-deadbeef',
+      String((info.journal[0] || {}).holder || '(空)'))
+  }
+
+  // ── R23（v1.3.4 · 复核 N1）：升级 blocked 之前必须先查远端；反查接口本身报错时
+  // 不许把任务判死 —— 以前 res 失败也往下走 mark blocked。 ──
+  {
+    const tasks = {
+      'bd-r23': { status: 'claimed', taker: 'smoke-r23', dispatch: 'manual', mode: 'agent', goal: 'R23 goal', machine: '' },
+    }
+    const info = await scenario('R23', {
+      hub: { mode: 'ok', tasksStatus: 500 },
+      tasks,
+      machine: 'smoke-r23',
+      waitMs: 2600,
+      seedJournal: (now) => [{
+        taskId: 'bd-r23', nodeId: 'smoke-node', machine: 'smoke-r23', goal: 'R23 goal',
+        mode: 'agent', workspace: '', phase: 'unknown', attempts: 1,
+        firstAt: now - 3 * 60 * 60 * 1000, at: now - 3 * 60 * 60 * 1000, sentAt: now - 3 * 60 * 60 * 1000,
+        lastError: '',
+      }],
+    })
+    check('R23 反查失败时不标 blocked', info.stats.mark === 0, `mark=${info.stats.mark}`)
+    check('R23 凭据仍保留', Array.isArray(info.journal) && info.journal.length === 1, JSON.stringify(info.journal))
+    check('R23 板上状态没被改写', String(info.tasks['bd-r23'].status) === 'claimed', info.tasks['bd-r23'].status)
+  }
+
 
   // ── R21（v1.3.3 · 复核 F1）：同一台机器上两个 DSH 进程（同 machine 名）——
   // 板子旧语义对同 machine 是幂等续租，两边都会往下派；新语义看 holder，第二个实例

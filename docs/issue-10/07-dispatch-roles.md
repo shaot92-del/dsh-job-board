@@ -17,13 +17,15 @@ config:
   dispatchRole: observer   # 默认 owner
 ```
 
-| 角色 | 建单 | take / dispatch | untake / reconcile | 回写自己派过的任务 |
-| --- | --- | --- | --- | --- |
-| `owner`（默认） | ✅ | ✅ | ✅ | ✅ |
-| `observer` | ✅ | ❌ | ❌ | ✅ |
+| 角色 | 建单 | take / dispatch | untake / reconcile 认领 | 在途收尾（补绑 / 升级 blocked） | 回写终态 |
+| --- | --- | --- | --- | --- | --- |
+| `owner`（默认） | ✅ | ✅ | ✅ | ✅ | ✅（只写自己派过的） |
+| `observer` | ✅ | ❌ | ❌ | ✅ | ✅（只写自己派过的） |
 
-observer 的 `dispatchOnce()` 在第一行就返回，连 reconcile 都不跑——否则两台 Host
-会互相把对方在跑的任务放回队列。启动日志会写一行：
+observer **不再**在 `dispatchOnce()` 第一行就返回（v1.3.4 更正：v1.3.3 的代码已经把
+`retryPendingAttach` 与 `escalateExpiredJournal` 挪到角色闸门之前 —— 它们要对所有角色都跑，
+否则切到 observer 之后，在途任务没人补绑、超时也没人升级成 blocked）。observer 只跳过
+**认领**这一段（`/api/take` + `/dispatch` + untake），启动日志会写一行：
 
 ```
 dispatch role=observer（这台 Host 只建单、不派工；派工交给 owner 那台）
@@ -121,7 +123,7 @@ v1.3.1 把这段收进 `lib/state-file.mjs`：
 
 ### 验证
 
-- `node scripts/state-file-smoke.mjs` → **8/8**：4 个子进程 × 10 次并发读改写
+- `node scripts/state-file-smoke.mjs` → **16/16**：4 个子进程 × 10 次并发读改写
   不丢更新（40/40）、僵尸锁可抢占、活锁返回 busy 且不写、锁释放后立刻能写、
   原子写无 `.tmp` 残留。
 - `dispatch-recovery-smoke` 新增 **R20**：journal 旁边放着 5 分钟前的僵尸锁，
@@ -155,3 +157,4 @@ machine** 是幂等续租（`200 + reentrant:true`），于是第二个进程会
   把它归档"——那要板子提供 stale 的租约语义。
 - **幂等键**：remote-agent 0.9.x 的 `/dispatch` 由服务端生成 taskId，客户端没有
   请求幂等键，所以"结果未知"仍然只能靠 `goal + 时间窗` 反查（见 06 号文档）。
+

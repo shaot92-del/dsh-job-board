@@ -1,5 +1,71 @@
 # 变更日志
 
+## v1.3.4 — 2026-11-08
+
+第三轮复核（代码审查 + 遗留系统 + AI 安全审计）的**不重启可做项**：同机双实例的
+journal 串账、升级 blocked 的时序与判据、状态文件的守卫与看板的鉴权加固。
+
+**① 同机两个 Host 共用一份 journal，会互相删凭据（🔴）**
+
+journal 文件名只由 `machine + boardUrl` 决定，同机两个 DSH 进程写同一份。B 实例
+`journalSet(taking)` 把 A 的 `unknown` 覆盖掉，take 拿到 409 之后再 `journalDrop` ——
+删掉的是 **A 的记录**。A 崩在 dispatch/attach 之间时，板上停在 claimed、本地一条凭据
+都不剩，12 分钟租约过期后被重派，同一条任务在副机上跑两遍。
+
+- 条目带 `holder`（`<machine>#<pid>-<rand>`）：`journalSet` 自动盖章；
+  `journalDrop` 只删自己的；别人的记录超过 90 秒没更新才允许接管（`dispatch journal takeover`）。
+- resume 侧同样按 holder 过滤（resume 不过 `/api/take`，没有板子那层护栏），
+  队列认领前也先看这条记录是不是别人正在处理。
+- 面板/工具可见 `holder` 与 `leaseUntil`（`snapshot()` 以前不映射这两个字段）。
+
+**② 补绑与升级 blocked 的时序（🔴/N1）**
+
+- `escalateExpiredJournal()` 跳过 `pendingAttach` 里正在补绑的任务 —— 同 tick 刚补绑
+  成功就被标 blocked，会出现"板上 blocked、副机上还在跑"。
+- 反查 `/tasks` 失败时不再往下标 blocked：查不到 ≠ 没有，推迟 60 秒再判。
+- `released` 相位到 TTL 只清账，不再被无条件标 blocked（它已经放回队列，由队列重派）。
+
+**③ 观测与细节**
+
+- take 返回 401/403 时打一行 `dispatch 认领被拒（HTTP 401）：板子鉴权不通过…` ——
+  以前被 `isUnknownOutcome` 归为"已知失败"，只退避不记日志，板上零痕迹。
+- `dispatchRole` 拼错（`Observer`/`readonly`）按 owner 跑但会明确告警；
+  `dispatchTickMs`/`remoteSyncMs` 用有限性判断，不再让 `Number(0) || 6000` 吞掉 0。
+- `heldTraced`/`revokedTraced`/`pendingNoted` 改成有界集合（`rememberOnce`），不再只增不减。
+- `retryPendingAttach` 的失败分支加 60 秒退避（以前 `tries % 20 === 0` 恒真，每 4 秒
+  打一次 `/api/mark` + 一行日志）；补绑放弃前先反查远端，命中就只补绑不标 blocked。
+- dispose 的每一步都包 `safeStep`：某一步抛异常不会连带跳过 disposers/定时器清理。
+
+**④ 测试**
+
+- 新增 **R22**（同机另一实例的在途记录：不补发、不删除、holder 不变）、
+  **R23**（反查接口 500 时不许标 blocked、凭据保留、板上状态不改）。
+- `state-file-smoke` 用例 5 改成**确定断言**（锁是目录 → 必须是 `wait-timeout` 且内容不改写），
+  并新增 5b「真僵尸锁（utimes 老化）→ rename 抢占 → 拿到锁并写入」：**16/16**。
+- 变异验证：去掉 holder 护栏 → R22 挂（dispatch=1）；把反查失败当"没有" → R23 挂
+  （mark=1、板上 blocked）。全套 71/71。
+
+**⑤ 板子与守护脚本（不重启 DSH 就能生效的部分）**
+
+- `board_server.py` v4：无 token **拒绝启动**（fail-closed）、单实例锁（Windows 上用
+  `OpenProcess` + `GetExitCodeProcess` 判存活，`os.kill(pid,0)` 在 Windows 上会误判僵尸）、
+  Origin 白名单（`GP_BOARD_ORIGINS`）、`Content-Type: application/json` 校验、看板 HTML
+  全量 `html.escape`、token 按 bytes 比较（非 ASCII 不再抛 TypeError）。
+- `do_release`/`do_mark`/`do_untake` 增加 holder 校验；`release{queued}` 恢复 `dispatch`；
+  `mark{queued}` 清 `taker/holder/remote_id`；`remote_id:''` 改成 `pop`。
+- `board_guard.ps1` / `启动作业板.bat` 改 fail-closed：探活看公开的 `/api/health`（以前
+  探 `/api/board`，401 被当成"挂了"→ 拉起无 token 的裸板子）、token 从
+  `%USERPROFILE%\.dsh\board-tokens.txt` 读，读不到就只告警不启动。
+- `host_watch.ps1` / `进度播报.ps1` 读板子时带 `x-board-token`。
+- 明文 token 洗地：仓库里 `docs/issue-10/05-*` 的 nodeToken 真值已改为 `<nodeToken>`
+  （commit `0fd2043`）；共享盘 25 个文件里的 hub token / 旧 board token 已替换为占位符；
+  板子改为双 token 过渡（`GP_BOARD_TOKENS`），旧枚等三台 Host 换完再撤。
+
+**尚未做（需要重启 DSH）**：轮换 hub `nodeToken`（旧值已公开，必须换）、给 GT14/MB14
+换新 board token、板子撤旧 token、清 `%TEMP%` 与共享盘的 token 文件与会话残留、
+仓库历史清 token（改 private 或 filter-repo）。
+
+
 ## v1.3.3 — 2026-11-08
 
 上一轮复核（代码审查 + 遗留系统）剩下的 7 组问题。三组会真的做错事，先修这三组。

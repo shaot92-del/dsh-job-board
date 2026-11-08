@@ -111,6 +111,8 @@ async function main() {
 
   // ── 5. 锁路径是个目录（Windows 上 rmSync 报 EISDIR、openSync 仍 EEXIST）──
   // v1.3.3（复核 🔴1）：这种形态在老实现里会让 withFileLock 无限同步自旋。
+  // v1.3.4（复核「用例 5 是空断言」）：改成断言**确定的结果** —— 目录 mtime 是新写不了的
+  // （staleMs 被夹到 ≥1000，waitMs 只有 200ms），所以必然是 wait-timeout，不是"碰巧通过"。
   {
     const file = path.join(TMP, 'lockisdir.json')
     fs.writeFileSync(file, JSON.stringify([{ keep: 'old' }]))
@@ -120,10 +122,31 @@ async function main() {
     const got = withFileLock(file, () => { writeStateJson(file, [{ keep: 'new' }]); return true },
       { waitMs: 200, staleMs: 50 })
     const cost = Date.now() - t0
-    check('锁是目录时也必须按时返回（不许自旋）', cost < 1500, `耗时=${cost}ms ok=${got.ok} error=${got.error || ''}`)
-    check('锁是目录时不当成写入成功', got.ok !== true || JSON.parse(fs.readFileSync(file, 'utf8'))[0].keep === 'new',
-      `ok=${got.ok}`)
+    check('锁是目录时也必须按时返回（不许自旋）', cost < 1500, `耗时=${cost}ms`)
+    check('锁是目录时按预算超时返回（不是假装成功）', got.ok === false && got.error === 'wait-timeout',
+      `ok=${got.ok} error=${got.error || ''}`)
+    check('锁是目录时内容没被改写', JSON.parse(fs.readFileSync(file, 'utf8'))[0].keep === 'old',
+      JSON.parse(fs.readFileSync(file, 'utf8'))[0].keep)
     fs.rmSync(lock, { recursive: true, force: true })
+  }
+
+  // ── 5b. 真僵尸锁：mtime 确实老化 → rename 抢占后正常拿到锁并写入 ──
+  // （v1.3.4：复核指出旧用例 5 从没走到过抢占分支，这条用例把抢占路径钉住。）
+  {
+    const file = path.join(TMP, 'stalelock.json')
+    fs.writeFileSync(file, JSON.stringify([{ keep: 'old' }]))
+    const lock = file + '.lock'
+    fs.writeFileSync(lock, JSON.stringify({ pid: 999999, at: Date.now() - 60000 }))
+    const old = new Date(Date.now() - 60000)
+    fs.utimesSync(lock, old, old)
+    const t0 = Date.now()
+    const got = withFileLock(file, () => { writeStateJson(file, [{ keep: 'new' }]); return true },
+      { waitMs: 3000, staleMs: 1000 })
+    const cost = Date.now() - t0
+    check('僵尸锁被抢占后能拿到锁', got.ok === true && got.value === true, `ok=${got.ok} error=${got.error || ''} 耗时=${cost}ms`)
+    check('僵尸锁抢占后内容已更新', JSON.parse(fs.readFileSync(file, 'utf8'))[0].keep === 'new',
+      JSON.parse(fs.readFileSync(file, 'utf8'))[0].keep)
+    check('僵尸锁抢占后锁文件被清掉', !fs.existsSync(lock), fs.existsSync(lock) ? '锁还在' : '已清')
   }
 
   // ── 6. 状态目录的父路径是个文件（mkdir 会 ENOTDIR/EEXIST）──

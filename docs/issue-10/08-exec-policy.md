@@ -146,3 +146,57 @@ Host 侧：
 4. host 上 hub `192.168.3.40:19387` 有来自副机的 Established 连接。
 
 关闭 token 同样要重启板子进程（环境变量只在启动时读一次）。
+
+## 8. 安全复审后的加固（2026-11-08 晚，不重启 DSH 的部分）
+
+第三轮复审（AI 安全审计）报了三件事，其中两件当场修掉，一件必须等重启。
+
+### 8.1 明文 token 泄露（已止血）
+
+`docs/issue-10/05-deployment-notes-2026-11-08.md` 曾把 hub 的 `nodeToken`
+真值写进正文，并已推到 **public** 仓库（暴露约 8.5 小时）。同一枚还散在：
+板子 `state.json` 的 task note、`_remote-logs/**/tasks/*.json` 的 stdout、
+共享盘若干 `_tools/*.ps1` 与旧备份。
+
+- 仓库：真值已改成 `<nodeToken>`（commit `0fd2043`），`git grep` 复扫无残留。
+- 共享盘：脚本按字节替换（兼容任意编码），25 个文件里的 hub token / 旧 board token
+  换成 `<nodeToken>` / `<board-token-old>`。
+- **但旧 nodeToken 仍然有效** —— 它写在 hub 进程内存里，换掉必须重启 DSH。
+  重启时把 profile `cordis.patch.yml` 里 `- id: remote-agent` 的 `nodeToken` 换成新值，
+  并把三台副机的 `hub-pin.json` / `~/.dsh-remote-agent` 里钉住的旧指纹一并换掉。
+
+### 8.2 板子 v4（已生效）
+
+`board_server.py` 这一版把 fail-open 全关掉：
+
+- **没有 token 拒绝启动**（以前裸板子照样起、照样绑 0.0.0.0）；
+- **单实例锁**：Windows 上 `os.kill(pid, 0)` 判不出存活（会抛异常 → 被当僵尸 → 第二个
+  进程照样启动、两个进程同写一份 state.json），改用 `OpenProcess` +
+  `GetExitCodeProcess == STILL_ACTIVE`；
+- **Origin 白名单**（`GP_BOARD_ORIGINS`）+ 不再回 `Access-Control-Allow-Origin: *`：
+  挡住"任意网页 simple POST 建 exec 单"的 CSRF 链；
+- `do_POST` 要求 `Content-Type: application/json`（缺省放行，其余 415）；
+- 看板 HTML 全量 `html.escape`（存储型 XSS）；token 用 bytes 比较
+  （非 ASCII 头不再抛 `TypeError`）；
+- `do_release` / `do_mark` / `do_untake` 增加 holder 校验；`release{queued}` 恢复
+  `dispatch`；`mark{queued}` 清 `taker/holder/remote_id`；`remote_id:''` 改 `pop`。
+
+### 8.3 守护脚本改 fail-closed（已生效）
+
+`board_guard.ps1` 以前探 `/api/board`，板子一开鉴权就 401，被当成"板子挂了"，
+于是 `Start-Process` 拉起一个**没有 token、绑 0.0.0.0** 的裸板子。现在：
+
+- 探活只打公开的 `/api/health`（200 且 `"ok":true` 才算活）；
+- token 从 `%USERPROFILE%\.dsh\board-tokens.txt`（一行一枚，双 token 过渡期两行）读；
+- 读不到 token 就**只告警、不启动**；`启动作业板.bat` 同规则；
+- `host_watch.ps1` / `进度播报.ps1` 读板子时带 `x-board-token`。
+
+### 8.4 仍然待办（都要重启）
+
+- 轮换 hub `nodeToken`（旧值已公开）；
+- GT14/MB14 换新 board token（用 `Z:\_tools\team-hardening.ps1 -TokenFile`），
+  两台重启后确认 `caps reported ok=true`；
+- 板子撤旧 token（`GP_BOARD_TOKENS` 只留新枚）→ `health.authTokens == 1`；
+- 清 `%TEMP%\board-token*.txt`、共享盘 `_tools/board-token.txt`、DSH 会话残留；
+- 仓库历史清 token：改 private 或 `git filter-repo`（历史里仍有真值）。
+
