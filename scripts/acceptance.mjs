@@ -34,6 +34,14 @@ const BOARD_PY = process.env.GP_BOARD_PY || ''
 const WORK = process.env.GP_ACCEPT_WORK || path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-')), 'accept')
 const TMP_STATE = path.join(WORK, 'board-state.json')
 
+// v1.3.3（复核 🟡7/13）：验收会把插件真正挂起来，如果它连着真实板子、又开着自动派工，
+// 就会对真实任务 take/untake。所以：① 默认拒绝真板子（除非显式 --allow-live-board）；
+// ② 状态目录用临时目录，绝不写 ~/.dsh/dsh-team；③ apply 时关掉自动派工。
+const ALLOW_LIVE = process.argv.includes('--allow-live-board')
+const STATE_DIR = path.join(WORK, 'plugin-state')
+fs.mkdirSync(STATE_DIR, { recursive: true })
+process.env.DSH_TEAM_STATE_DIR = STATE_DIR
+
 // 强制走「本机没有素材」的分支（CI 用）：素材现造或跳过，不依赖跑测试的机器装了什么。
 const FORCE_FIXTURES = process.env.GP_ACCEPT_FIXTURES === '1'
 
@@ -218,6 +226,11 @@ seedState()
 // 板子实现优先用 GP_BOARD_PY 指向的真实实现；没有就用仓库自带的假板子 ——
 // 这样验收在 CI（和工作区以外的新机器）上也能跑，而不是整段跳过（#10 建议 5）。
 const useRealBoard = !FORCE_FIXTURES && Boolean(BOARD_PY) && fs.existsSync(BOARD_PY)
+if (useRealBoard && !ALLOW_LIVE) {
+  console.error('拒绝：GP_BOARD_PY 指向真实板子，验收会对真实任务认领/交付。')
+  console.error('     确认是无干扰的板子后，再加 --allow-live-board；默认请用假板子（不设 GP_BOARD_PY）。')
+  process.exit(2)
+}
 const boardCmd = useRealBoard
   ? { file: PY, args: [BOARD_PY, '--port', String(argPort), '--bind', '127.0.0.1', '--state', TMP_STATE] }
   : {
@@ -241,7 +254,8 @@ const ctx = {
   effect: () => {},
   logger: { info() {}, warn() {}, error() {} },
 }
-apply(ctx, { boardUrl, machine: argMachine, timeoutMs: 8000 })
+// v1.3.3（复核 🟡7/13）：autoDispatch:false —— 验收只测工具链路，不许后台派工碰真实任务。
+apply(ctx, { boardUrl, machine: argMachine, timeoutMs: 8000, autoDispatch: false })
 
 const results = []
 for (const c of CASES) {

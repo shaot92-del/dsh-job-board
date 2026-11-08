@@ -129,6 +129,25 @@ v1.3.1 把这段收进 `lib/state-file.mjs`：
 - 变异验证：把 `withFileLock` 换成直接执行 → 并发用例从 40 掉到 9（用例确实能抓）。
   注意第一版用例用 `spawnSync` 起子进程，串行跑出来照样全绿，已改成 `spawn` + 
   `Promise.all`。
+## 5. 同机多进程：实例身份 `holder`（v1.3.3）
+
+`dispatchRole` 解决的是"哪台机器派工"，解决不了"同一台机器上两个 DSH 进程都想派工"
+（两个 profile、热重载残留、崩溃后旧进程还没退）。板子原来的 `do_take` 对**同一个
+machine** 是幂等续租（`200 + reentrant:true`），于是第二个进程会把第一个的占位当成
+"自己上一轮的重入"，也往下 `/dispatch` —— 同一条板上任务在副机上跑两遍。
+
+- 插件：每次 `apply()` 生成实例身份
+  `INSTANCE_HOLDER = <machine>#<pid>-<6 位随机>`，`/api/take` 一并上报 `holder`。
+- 板子：同 machine 但 `holder` 不同 → `409 {"error":"已被同机的另一个实例占住"}`；
+  attach / untake / release(queued) 会清掉 `holder`。
+- 兼容：旧插件不带 `holder`，旧板子忽略该字段 —— 都不报错，只是同机双派这个场景
+  仍然没有护栏（升级是单边的，两边各自独立）。
+
+⚠️ 板子侧改动需要重启 8965 上的服务才生效。
+
+验证：`dispatch-recovery-smoke` 的 **R21** 起两个实例（同 machine、不同 holder）打
+同一个假板子，断言只派一次、第二个实例收到 409、远端只有一条任务。变异（去掉
+`holder: INSTANCE_HOLDER`）会让 R21 变成 `dispatch=2`、远端两条。
 ## 还没做的
 
 - **自动选主**：多 owner 时的租约/版本令牌要板子侧配合（#10-2 的后半段）。

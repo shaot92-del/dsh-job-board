@@ -109,6 +109,41 @@ async function main() {
     check('原子写没有残留 .tmp', leftovers.length === 0, leftovers.join(',') || '无')
   }
 
+  // ── 5. 锁路径是个目录（Windows 上 rmSync 报 EISDIR、openSync 仍 EEXIST）──
+  // v1.3.3（复核 🔴1）：这种形态在老实现里会让 withFileLock 无限同步自旋。
+  {
+    const file = path.join(TMP, 'lockisdir.json')
+    fs.writeFileSync(file, JSON.stringify([{ keep: 'old' }]))
+    const lock = file + '.lock'
+    fs.mkdirSync(lock, { recursive: true })
+    const t0 = Date.now()
+    const got = withFileLock(file, () => { writeStateJson(file, [{ keep: 'new' }]); return true },
+      { waitMs: 200, staleMs: 50 })
+    const cost = Date.now() - t0
+    check('锁是目录时也必须按时返回（不许自旋）', cost < 1500, `耗时=${cost}ms ok=${got.ok} error=${got.error || ''}`)
+    check('锁是目录时不当成写入成功', got.ok !== true || JSON.parse(fs.readFileSync(file, 'utf8'))[0].keep === 'new',
+      `ok=${got.ok}`)
+    fs.rmSync(lock, { recursive: true, force: true })
+  }
+
+  // ── 6. 状态目录的父路径是个文件（mkdir 会 ENOTDIR/EEXIST）──
+  {
+    const blocker = path.join(TMP, 'blocker.txt')
+    fs.writeFileSync(blocker, 'not a directory')
+    const file = path.join(blocker, 'state.json')
+    const t0 = Date.now()
+    let threw = null
+    let got = null
+    try {
+      got = withFileLock(file, () => true, { waitMs: 100, staleMs: 1000 })
+    } catch (e) {
+      threw = e
+    }
+    const cost = Date.now() - t0
+    check('父路径是文件时不抛异常（返回错误）', threw === null, threw ? String(threw.message) : 'ok')
+    check('父路径是文件时在预算内返回', cost < 1200 && got !== null, `耗时=${cost}ms ok=${got && got.ok}`)
+  }
+
   const okCount = results.filter((r) => r.ok).length
   console.log(`\nstate-file-smoke: ${okCount}/${results.length} passed`)
   fs.rmSync(TMP, { recursive: true, force: true })

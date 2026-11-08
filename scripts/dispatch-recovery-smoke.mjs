@@ -90,7 +90,7 @@ function makeCtx(origin) {
  *   { mode: 'fail', times }    前 N 次 500
  */
 function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
-  const stats = { take: 0, untake: 0, attach: 0, dispatch: 0, mark: 0 }
+  const stats = { take: 0, untake: 0, attach: 0, dispatch: 0, mark: 0, holderConflict: 0 }
   const remoteTasks = Array.isArray(seedRemoteTasks) ? seedRemoteTasks.slice() : []
   const dispatchCalls = []
 
@@ -132,9 +132,21 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
       return readBody().then((b) => {
         const t = tasks[b.task_id]
         if (!t) return send(404, { error: 'no-such-task' })
+        const machine = String(b.machine || '')
+        const holder = String(b.holder || '')
+        // v1.3.3：与 board_server.py do_take 同构 —— 同机不同实例不再算重入。
+        if (t.status === 'claimed' && t.taker && t.taker !== machine) {
+          return send(409, { error: 'taken-by-other', taker: t.taker })
+        }
+        if (t.status === 'claimed' && t.taker === machine && t.holder && holder && t.holder !== holder) {
+          stats.holderConflict += 1
+          return send(409, { error: 'held-by-other-instance', taker: t.taker, holder: t.holder })
+        }
         t.status = 'claimed'
-        t.taker = 'host'
-        return send(200, { ok: true })
+        t.taker = machine || t.taker || 'host'
+        if (holder) t.holder = holder
+        t.lease_until = Date.now() + 10 * 60 * 1000
+        return send(200, { ok: true, taken: true })
       })
     }
 
@@ -145,6 +157,8 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
         if (t) {
           t.status = 'queued'
           t.taker = ''
+          delete t.holder
+          delete t.remote_id
         }
         return send(200, { ok: true })
       })
@@ -157,6 +171,8 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
         if (!t) return send(404, { error: 'no-such-task' })
         t.remote_id = String(b.remote_id || '')
         t.status = 'running'
+        t.taker = ''
+        delete t.holder
         return send(200, { ok: true })
       })
     }
@@ -808,6 +824,48 @@ async function main() {
       `dispatch=${info.stats.dispatch} attach=${info.stats.attach}`)
     check('R20 派工成功后 journal 已清空', (Array.isArray(info.journal) ? info.journal.length : 0) === 0,
       JSON.stringify(info.journal))
+  }
+
+  // ── R21（v1.3.3 · 复核 F1）：同一台机器上两个 DSH 进程（同 machine 名）——
+  // 板子旧语义对同 machine 是幂等续租，两边都会往下派；新语义看 holder，第二个实例
+  // 必须拿到 409 并停手，整条任务只允许派一次。 ──
+  {
+    const tasks = {
+      'bd-r21': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R21 goal', machine: '' },
+    }
+    let srv = null
+    let cleanupA = null
+    let cleanupB = null
+    try {
+      srv = await startServer({ tasks, hub: { mode: 'ok' } })
+      const machine = 'smoke-r21'
+      const jf = journalFile(machine, srv.url)
+      const pf = pendingFile(machine, srv.url)
+      for (const f of [jf, pf]) fs.rmSync(f, { force: true })
+      const base = {
+        boardUrl: srv.url,
+        machine,
+        timeoutMs: 400,
+        dispatchTickMs: 250,
+        unknownGraceMs: 400,
+        writeTimeoutMs: 400,
+        dispatchApproval: 'auto',
+        allowedRoots: [],
+      }
+      cleanupA = apply(makeCtx(srv.url), base)
+      cleanupB = apply(makeCtx(srv.url), base)
+      await sleep(2600)
+      const journal = readJson(jf)
+      check('R21 同机两实例只派一次', srv.stats.dispatch === 1, `dispatch=${srv.stats.dispatch}`)
+      check('R21 第二个实例被 holder 挡住', srv.stats.holderConflict >= 1,
+        `holderConflict=${srv.stats.holderConflict} take=${srv.stats.take}`)
+      check('R21 远端只有一条任务', srv.remoteTasks.length === 1, JSON.stringify(srv.remoteTasks.map((t) => t.taskId)))
+      check('R21 journal 最终清空', (Array.isArray(journal) ? journal.length : 0) === 0, JSON.stringify(journal))
+    } finally {
+      try { if (cleanupB) cleanupB() } catch { /* ignore */ }
+      try { if (cleanupA) cleanupA() } catch { /* ignore */ }
+      if (srv) await srv.close()
+    }
   }
 
   return summary()

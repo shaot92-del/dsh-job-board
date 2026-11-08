@@ -8,9 +8,10 @@
  * 成功则返回一个按路径删除的 disposer —— 与 app.asar 里 dsh-host-webserver/lib/index.js:377-384 一致。
  *
  * 场景 A：正常重载（旧实例先 cleanup，再 apply 新实例）→ 必须干净、不撞名
- * 场景 B：旧实例没被 dispose（DSH 面板「禁用→启用」时的真实形态）→ 记录失败形态
+ * 场景 B：旧实例没被 dispose（DSH 面板「禁用→启用」时的真实形态）→ 断言第二次
+ *         apply 必须因路由撞名失败，且旧实例那套路由保持不动（v1.3.3 起计入失败）
  *
- * 退出码 0 表示 A 全过；B 只记录现象，不计入失败。
+ * 退出码 0 表示 A/B/C 全过。
  */
 import { apply } from '../lib/index.js'
 
@@ -134,6 +135,15 @@ console.log('\n— 场景 B：旧实例未 cleanup 就再 apply（DSH 重载实�
       : 'ℹ️ 第二次 apply 没抛错（说明已做自愈）',
   )
   console.log(`ℹ️ 路由表里现在 ${ws.exact.size} 条（12 = 旧实例仍在提供服务）`)
+  // v1.3.3（复核 F12）：以前这里只 console.log，连"撞名"这种最该抓的形态都不判。
+  // 宿主的真实行为是「旧实例不 dispose 就再 apply」：这时第二次 apply 必须抛出
+  // duplicate 路由错误（插件侧无法自愈），否则说明注册路径悄悄覆盖了别人的路由。
+  check(Boolean(err), `B1 旧实例未 cleanup 时第二次 apply 必须失败${err ? '' : '（实际没抛错）'}`)
+  check(
+    Boolean(err) && /duplicate\s+exact\s+route/i.test(String(err.message)),
+    `B2 失败原因是路由撞名${err ? '：' + err.message : '（没有异常）'}`,
+  )
+  check(ws.exact.size === 12, `B3 撞名后路由表仍是旧实例那一套（实际 ${ws.exact.size}）`)
 }
 
 /* 场景 C：注册到一半失败 —— 必须整体回滚，不能留半套工具/路由在宿主上 */
@@ -165,5 +175,5 @@ console.log('\n— 场景 C：注册第 5 条路由时抛错（半装载回滚�
   check(a.subs.length === 0, `C4 失败后事件订阅被退订（剩 ${a.subs.length}）`)
 }
 
-console.log(failed ? `\n${failed} 项未通过` : '\n场景 A/C 全部通过')
+console.log(failed ? `\n${failed} 项未通过` : '\n场景 A/B/C 全部通过')
 process.exit(failed ? 1 : 0)

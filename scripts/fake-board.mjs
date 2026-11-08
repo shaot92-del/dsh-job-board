@@ -127,14 +127,23 @@ function leaseOf(minutes, fallback = 10) {
   return nowSec() + (Number.isFinite(m) && m > 0 ? m : fallback) * 60
 }
 
-/** 任务存在、且（无主 或 本来就是本机的）→ 拿到手；否则 409。 */
-function claimFor(task, machine, minutes, note) {
+/** 任务存在、且（无主 或 本来就是本机的）→ 拿到手；否则 409。
+ *  v1.3.3：同机不同实例（holder 不同）不再当"自己的重入" —— 真的板子
+ *  （board_server.py do_take）就是这么判的，这里必须同构，否则测试测不到双派。 */
+function claimFor(task, machine, minutes, note, holder = '') {
   if (!task) return { ok: false, status: 404, error: 'no such task' }
   if (task.machine && String(task.machine).toLowerCase() !== String(machine).toLowerCase()) {
     return { ok: false, status: 409, error: 'held by ' + task.machine }
   }
+  const mine = String(task.machine || '') !== ''
+  const curHolder = String(task.holder || '')
+  const askHolder = String(holder || '')
+  if (mine && curHolder && askHolder && curHolder !== askHolder) {
+    return { ok: false, status: 409, error: 'held-by-other-instance', holder: curHolder }
+  }
   const wasQueued = String(task.status || 'queued') === 'queued'
   task.machine = machine
+  if (askHolder) task.holder = askHolder
   task.status = task.status === 'running' ? 'running' : 'claimed'
   task.claimed_at = task.claimed_at || nowSec()
   task.lease_until = leaseOf(minutes)
@@ -155,8 +164,8 @@ const ROUTES = {
   },
 
   'POST /api/take': async (req, res, b) => {
-    const r = claimFor(state.tasks[b.task_id], b.machine, b.minutes, b.note || '派工认领')
-    if (!r.ok) return send(res, r.status, { ok: false, error: r.error })
+    const r = claimFor(state.tasks[b.task_id], b.machine, b.minutes, b.note || '派工认领', b.holder)
+    if (!r.ok) return send(res, r.status, { ok: false, error: r.error, holder: r.holder })
     return send(res, 200, { ok: true, task: r.task })
   },
 
@@ -191,6 +200,9 @@ const ROUTES = {
     if (next === 'queued') {
       t.machine = ''
       t.lease_until = null
+      // v1.3.3（复核 F8）：放回队列的任务不能带着 remote_id / holder，否则没人能再派它。
+      delete t.remote_id
+      delete t.holder
     }
     event(next, t.id, t.machine, b.note)
     touch(t)
@@ -215,6 +227,8 @@ const ROUTES = {
     if (!b.remote_id) return send(res, 400, { ok: false, error: 'remote_id required' })
     t.remote_id = String(b.remote_id)
     if (b.machine) t.machine = String(b.machine)
+    // v1.3.3：真板子 do_attach 会 pop('taker')；占位结束，holder 也一起清掉。
+    delete t.holder
     event('attach', t.id, b.machine, t.remote_id)
     touch(t)
     return send(res, 200, { ok: true, task: t })
@@ -229,6 +243,9 @@ const ROUTES = {
     t.machine = ''
     t.status = 'queued'
     t.lease_until = null
+    delete t.holder
+    // v1.3.3（复核 F8）：回到队列却带着 remote_id，所有 Host 的队列过滤都会跳过它。
+    delete t.remote_id
     if (b.note) t.note = String(b.note)
     event('untake', t.id, b.machine, b.note)
     touch(t)

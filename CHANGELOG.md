@@ -1,5 +1,74 @@
 # 变更日志
 
+## v1.3.3 — 2026-11-08
+
+上一轮复核（代码审查 + 遗留系统）剩下的 7 组问题。三组会真的做错事，先修这三组。
+
+**① 状态文件锁可能把 Host 主线程卡死（🔴）**
+
+`withFileLock()` 在"僵尸锁抢不掉"时走 `continue`，把 `waitMs` 预算整个绕过了；
+锁路径又恰好是个目录时（`rmSync` 报 EISDIR 被吞、`openSync('wx')` 在 Windows 上
+仍回 EEXIST），循环永不退出。探针里子进程 4019ms 被 SIGTERM 才停 —— 在真 Host 里
+就是主线程永久阻塞，而且一行日志都没有。
+
+- 任何分支都必须过预算：`outOfBudget()` 在循环末尾统一判，超时返回
+  `{ ok:false, busy:true, error:'wait-timeout' }`。
+- 抢僵尸锁改用原子 `renameSync`（`<lock>.stale-<pid>` 抢到再删），不再 `rm + open`
+  两手；（复核 F9 的 TOCTOU 一并消掉）。
+- 抢锁失败连续 40 次 → `stale-lock-stuck`；成功抢占连续 5 次 → `stale-lock-churn`
+  —— 两种病态都如实返回，不硬写也不空转。
+- `fn()` 抛异常转成 `{ ok:false, why:'fn threw' }`，不逃到 `dispatchOnce` / `dispose`。
+- `dispose()` 的每一步改成 `safeStep(name, fn)`：某一步失败只 trace，不影响后面
+  释放 disposers 与定时器。
+
+**② 同一台机器上两个 DSH 进程会重复派工（复核 F1）**
+
+板子 `do_take` 对"同一个 machine"是幂等续租（200 + reentrant），于是同机的第二个
+进程会把第一个的占位当成自己的重入，两边都往下 `/dispatch` —— 同一条板上任务在
+副机上跑两遍。
+
+- 插件每次 apply 生成实例身份 `INSTANCE_HOLDER = <machine>#<pid>-<随机>`，
+  `/api/take` 一并上报 `holder`。
+- 板子 `do_take`：同 machine 但 holder 不同 → `409 已被同机的另一个实例占住`；
+  attach / untake / release(queued) 清 holder。
+- 顺带修 F8：untake / release(queued) 把任务放回队列时清掉 `remote_id` ——
+  否则带着 remote_id 回 queued 的任务会被所有 Host 的 `!t.remote` 过滤跳过，
+  永远派不出去。
+- ⚠️ 需要重启板子服务（8965）才生效；旧板子会忽略 `holder` 字段，插件侧行为不变。
+
+**③ observer / probe / 退避 / TTL 四处逻辑错位**
+
+- observer 闸门原来在 `dispatchOnce` 最前面，把 `retryPendingAttach()` 与
+  `escalateExpiredJournal()` 一起跳过 —— 在途任务无人收尾。现在先做收尾，再闸门。
+- `dispatchRole` 拼错（`Observer` / `readonly`）原来静默变 owner，现在归一化后
+  仍认不出的值会在 ready 时 trace 配置值，并按 owner 运行。
+- `probeRemoteTask()` 原来把任何 404 都当"远端没有这条任务"并直接标 failed；
+  现在只认 `task-unknown`（hub 的真实契约），其它 404 归 `known:null` 继续观察。
+- `retryPendingAttach()` 标 blocked 失败后 `tries` 不再增长，`tries % 20 === 0`
+  恒真 → 每 4 秒一次 /api/mark + 一条日志；现在失败后 60 秒再试
+  （`pendingAttachRetryAt`），成功或清理时删除。
+- TTL 过期条目原来先从盘上抹掉、下一 tick 才升级 blocked，中间崩溃即永久丢凭据；
+  现在过期条目带 `expired:true` 留在盘上，升级成功才 `journalDrop()`。
+
+**④ 细节与测试保真**
+
+- `Number(x) || 6000` / `|| 4000` 会吞 0：`dispatchTickMs` / `remoteSyncMs` 改
+  `Number.isFinite` 判断；`bumpBackoff` 的指数上限 4 → 5，与注释的 5 分钟一致。
+- `heldTraced` / `revokedTraced` / `pendingNoted` 换成 `rememberOnce()`（上限 2000，
+  超了按插入顺序淘汰），长跑不再只增不减。
+- `state-file-smoke` 补两条负向用例：锁路径是目录、状态目录的父路径是文件。
+- `reload-smoke` 场景 B 原来只 `console.log`，现在断言"旧实例未 cleanup 时第二次
+  apply 必须因路由撞名失败、且旧路由不动"，并计入失败。
+- `dispatch-recovery-smoke` 的假板子开始建模 taker/holder（`/api/take` 不再硬编码
+  `taker='host'`，同机异实例回 409；attach 清 taker/holder；untake 清 remote_id），
+  新增 **R21**：同机两实例并发只允许派一次。
+- `acceptance.mjs`：`autoDispatch:false`、状态目录走临时 `DSH_TEAM_STATE_DIR`、
+  `GP_BOARD_PY` 指向真板子时必须显式 `--allow-live-board`，否则拒绝运行。
+
+验证：`plugcheck PASS tools=16 routes=12`；`reload-smoke` A/B/C 全过；
+`dispatch-recovery-smoke` **65/65**（R1–R21）；`state-file-smoke` **12/12**；
+`acceptance` fixtures 10/10 + 真板子模式拒绝运行（退出码 2）。
+变异验证：去掉 `holder: INSTANCE_HOLDER` → R21 挂（dispatch=2、远端两条）。
 ## v1.3.2 — 2026-11-08
 
 文档：新增 `docs/issue-10/08-exec-policy.md`（#10-4）—— 部署级命令执行策略。
