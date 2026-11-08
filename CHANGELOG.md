@@ -1,5 +1,35 @@
 # 变更日志
 
+## v1.2.0 — 2026-11-08
+
+派工恢复（GitHub issue #10 建议 1）的第一版实现。v1.1.13 把写路径超时抬到 20 s
+只是"多等一会"，这一版回答的是**超时之后到底发没发出去**。
+
+- **问题**：一条任务的派工要跨三步 —— `take`（板子认领）→ `POST /api/remote-agent/ui/dispatch`
+  （真正派出）→ `attach`（回绑远程任务号）。任何一步只要"发出去却没收到回执"（超时、
+  连接被断、5xx），v1.1.x 都是 `untake` 之后下一轮重来。对 `take`/`attach` 尚可，
+  对 `dispatch` 是错的：超时那一刻副机上可能已经开跑，重派就是同一条任务跑两遍。
+- **做法**：把在途派工的状态持久化到
+  `~/.dsh/dsh-team/dispatch-journal-<machine>-<boardTag>.json`，只留三个相位：
+  - `claimed` —— 板子已认领、dispatch 还没发出。崩在这里（或认领结果未知），
+    下一轮按板上 `taker/status` 判定：确实占着就直接补发，**不重新 take**；
+  - `unknown` —— dispatch 已发出但结果未知。下一轮**先查询**：拿 `goal` + 创建时间
+    去 `/tasks` 反查，远端确有这条任务就只补绑定、绝不重派；确认没有（超过
+    `unknownGraceMs`，默认 30 s）才 `untake` 放回队列重派一次；
+  - 回绑失败的那一支不进这里，仍由 `pendingAttach` 负责（只重试 attach）。
+- **超时**：写路径（POST）默认 `max(cfg.timeoutMs, 20000)`，读路径保持 `cfg.timeoutMs`
+  —— 调度 tick 不会被慢写拖长；`writeTimeoutMs` / `dispatchTickMs` / `unknownGraceMs`
+  可配，仅用于隔离验证。
+- **观测**：新增四条日志，故障时直接看得见走到了哪一步：
+  `dispatch resume …（不重新 take）`、`take unknown …（下一轮按板上 taker 判定）`、
+  `dispatch unknown …（先查远端再决定，不重派）`、
+  `dispatch recovered …（结果未知 → 远端确有此任务，只补绑不重派）`。
+- **验证**：新增 `scripts/dispatch-recovery-smoke.mjs`（假板子 + 假 hub，14 项断言）：
+  - R1 结果未知但远端已建任务 → `/dispatch` 只调 1 次、`attach` 1 次、`untake` 0 次；
+  - R2 结果未知且远端确实没有 → 澄清后 `untake` 1 次、重派 1 次、最终只建 1 条远端任务；
+  - R3 已认领未发出（崩溃恢复）→ `take` 0 次、直接补发并回绑。
+  另外 `plugcheck`（`PASS tools=16 routes=12`）与 `reload-smoke`（场景 A/C）无回归。
+
 ## v1.1.13 — 2026-11-08
 
 派工恢复当天顺手修掉的一个"看起来只是面板不刷新"的问题。

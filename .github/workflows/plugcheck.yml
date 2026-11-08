@@ -24,3 +24,6 @@ jobs:
       # 重载契约：apply→cleanup→apply 不撞名、cleanup 之后工具/路由/订阅归零、
       # 半装载失败要整体回滚（复刻 dsh-host-webserver 的重复路由语义，见 v1.1.11）
       - run: node scripts/reload-smoke.mjs
+      # 派工恢复（#10-1，v1.2.0）：结果未知先查询不重派、已认领未发出直接补发。
+      # 假板子 + 假 hub，同样不连真环境。
+      - run: node scripts/dispatch-recovery-smoke.mjs
