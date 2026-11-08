@@ -382,3 +382,40 @@ private（PR 与市场投稿一并消失）。除非决定"不再公开发布"�
   `_diag`、`_remote-logs` 里命中的 4 个文件按实际值替换为 `<nodeToken>`。
 - **旧值会顺着探针日志外溢**：`_remote-logs` 里早期"打印配置块"的探针任务是令牌明文的最大来源。
   以后探针一律只打 `len` 与前 6 位，不再整块回显。
+
+## 12. 第 1 层安全修补（2026-11-08 实施）
+
+三专家复审（v1.3.8）后按"当天能关的洞先关"落地这一批，清单与证据如下。
+
+### 12.1 秘密清理
+
+| 位置 | 处理 |
+| --- | --- |
+| `L:\云盘\gp_video_xfer\_keys\gemini.txt`（明文 Google key） | 移到 `%USERPROFILE%\.dsh\secrets\gemini.txt`，`icacls /inheritance:r` 只给当前用户；共享盘 `_keys` 目录删除；`setup-modlens.ps1` 默认路径同步改 |
+| `_board\state.json` 里的旧 `nt_…` | 替换为 `<nodeToken>`（替换前先停板子，否则内存里的旧值会写回） |
+| `_remote-logs` 里的旧 `nt_…` | 已替换；**注意**：这几个文件在写入后约 15 秒会被外部镜像还原，属于托管目录，不能当"可删除的存储"用 |
+| 仓库 `docs/issue-10/05-deployment-notes-2026-11-08.md` | 已在 `0fd2043` 里改成 `<nodeToken>` |
+
+> 密钥搬到本机只解决了"共享盘可见"，**泄露过的 key 仍然要上游撤销重建**。
+
+### 12.2 板子（`board_server.py`）
+
+- 写入边界脱敏：`say` / `create` / `mark` / `release` / `claim` 的文本先过 `redact()` 再落盘；
+  出口 `/api/board` 再整体 `redact_obj()` 一遍（双保险）。
+- `/api/health`：无 token 只回 `{"ok": true}`；带 token 才给 `tasks/authTokens/version/routes`。
+- `MAX_BODY_BYTES = 1 MB`：超限直接读空，不把线程挂住。
+- `_minutes()`：租约夹到 1–1440 分钟。
+
+### 12.3 日常扫描（`_tools\scan-share-secrets.ps1`）
+
+- 规则：`nt_[0-9a-f]{32}`、`ghp_…`、`github_pat_…`、`sk-…{32,}`、`AQ.…`、独立 40 位十六进制。
+- 分级：真实形状 → `ERROR`（脚本 `exit 3`）；文档/代码里的字段名与占位符 → `INFO`。
+- 日志追加到 `_board\secrets-scan.log`；建议注册为每天跑一次的计划任务。
+- 已知例外：`_remote-logs` 里三个被镜像托管的文件仍含**已作废**的旧世代 `nt_32fcd1c…`，脚本记为 INFO。
+
+### 12.4 这一层还不解决什么
+
+- 一把 token 仍然同时是"看板读写"和"让副机执行命令"的凭证 —— 真正分权是第 2 层（分档 token、
+  任务级 claimSecret、exec 白名单）。
+- 板子仍绑 `0.0.0.0:8965`（防火墙收窄需要管理员权限，尚未做）。
+- 明文 HTTP；events 与 state 仍同库。

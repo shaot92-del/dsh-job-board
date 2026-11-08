@@ -1,5 +1,55 @@
 # 变更日志
 
+## v1.3.9 — 2026-11-08
+
+安全修补第一批（三专家复审的必改项 + 共享盘秘密清理）。这一版的目标不是"再加功能"，而是把
+上一轮审计里能当场关掉的洞关掉，并把"令牌被写进日志"这条路一起堵上。
+
+### 插件（`lib/index.js`）
+
+- **D1 修掉 `HUB_TASKS_LIMIT` 的作用域 bug**：它原来只在 `reconcileUnknownDispatches` 的
+  IIFE 里声明，`escalateExpiredJournal` 引用它会抛 `ReferenceError`，而 `escalateExpiredJournal`
+  排在队列循环之前 —— 每 tick 都会把整轮派工打断，且日志只有一句 `dispatch loop error`。
+  现在 `HUB_TASKS_LIMIT` 提到模块级，两份内联的"反查窗口是否覆盖发出时刻"判断合并成
+  `hubWindowCoversTime(rows, since)`（D5 判据不一致一并修掉）。
+- **D2 修掉多机部署的 mark 归属错**：`attachTask` 与 `retryPendingAttach` 的
+  `/api/mark {status:'failed'|'blocked'}` 原来传 `machine: cfg.machine`（调度器自己的名字），
+  而板子比的是执行机名字 ⇒ 多机部署必然 409、任务卡在 claimed、待补绑记录清不掉。
+  现在分别传 `machineName` 与 `info.machine || cfg.machine`。
+
+### 板子（`board_server.py`，共享盘）
+
+- **入站与出口双重脱敏**：新增 `_SECRET_RULES` / `redact()` / `redact_obj()`，覆盖
+  `nt_…`、`ghp_…`、`github_pat_…`、`sk-…`、`AQ.…`、独立 40 位十六进制与
+  `x-board-token` 一类键值行。`/api/board` 出口整体过滤；`reconcile_once` 拼 note 前过滤；
+  `say`/`create`/`mark`/`release`/`claim` 的文本在**写入边界**就过滤 —— 明文不再落进
+  `state.json`，也就不会被镜像同步出去。
+- **`/api/health` 公开面收敛**：无 token 只回 `{"ok":true}`，任务数、令牌枚数、版本、路由表
+  这些侦察信息要带 token 才给（守护脚本只判 `ok`，不受影响）。
+- **请求体与租约收敛**：`MAX_BODY_BYTES = 1 MB`（超限直接读空，不再把线程挂住）；
+  `_minutes()` 把租约夹到 1–1440 分钟（负数会让任务立刻过期，非数字会把异常回显成 500）。
+
+### 运维
+
+- 共享盘 `_keys/gemini.txt`（明文 Google key）已移出共享盘，改放本机
+  `%USERPROFILE%\.dsh\secrets\gemini.txt`（ACL 只给当前用户）；`setup-modlens.ps1` 的默认
+  密钥路径同步更新。**密钥本身仍需到上游撤销重建**。
+- 共享盘里的旧 `nt_…` 已替换为 `<nodeToken>`；新增 `_tools\scan-share-secrets.ps1`
+  做日常扫描（真实令牌形状 → ERROR，字段名/占位符 → INFO）。
+
+### 验证
+
+`node --check` / plugcheck `tools=16 routes=12` / reload-smoke A-B-C / dispatch-recovery 71/71 /
+state-file 16/16 / ui-guard 7/7 / acceptance 11/11（acc-11 1.09s）。
+运行时：无 token `/api/health` → `{"ok":true}`；含假令牌的 `say` 文本在 `/api/board` 里显示为
+`<redacted>`，原始串不出现。
+
+### 仍未做（需要窗口/重启）
+
+- 副机 `dispatchApproval` 是否改 `manual`（会中断自动派工，等用户拍板）。
+- 板子 8965 的防火墙收窄到三台机器。
+- 第 2 层：分档 token、任务级 claimSecret、exec 白名单、日志走 hub 不走共享盘。
+
 ## v1.3.8 — 2026-11-08
 
 CI 修红。v1.3.6 的 acc-11 在本机是绿的、在 GitHub Actions 两个平台都是红的，原因是**两者跑在
@@ -868,4 +918,5 @@ remote-agent 的 UI 路由每个请求都过 DSH 的浏览器鉴权围栏（`con
 - 补齐 `repository` / `bugs` / `homepage` / `author` 与 LICENSE 署名
 - README 安装示例换成真实仓库地址；配置段 `petImage` 改为留空用随包立绘
 - `scripts/plugcheck.mjs` 注释修正为 16 个工具（12 个 `board_*` + 4 个 `sh_*`）
+
 
