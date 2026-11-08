@@ -95,3 +95,54 @@ Host 侧：
    goal / workspace / 时间；
 3. Host `_runtime.log`：`dispatched <id> → <node> remote=<taskId>`、`apply start
    config=…`（看那台机器的 `allowedRoots` 到底是什么）。
+
+## 7. 已实施的加固（2026-11-08 实测）
+
+三台 Host 与板子在这一天按本文档落地，踩到的坑按原样记下来，别再踩。
+
+**板子**（`L:\云盘\gp_video_xfer\_tools\board_server.py`）：
+
+- 设 `GP_BOARD_TOKEN`（40 位随机串，存本机 `%TEMP%\board-token.txt`，不进仓库）；
+  所有 Host 的 `token` 配同一值。
+- 重启方式：停掉 8965 监听进程 → 在**同一个** PowerShell 进程里
+  `$env:GP_BOARD_TOKEN = <token>` → `Start-Process python board_server.py --port 8965
+  --bind 0.0.0.0`。
+- 验证：`GET /api/health` 的 `auth` 必须是 `true`；无 token 的 `POST /api/say` 必须
+  401，带 `x-board-token` 必须 200。**只启动成功不代表鉴权生效** —— 本次第一次
+  重启时子进程没继承到环境变量，health 回 `auth:false`、无 token 写入居然成功，
+  必须实测这两条才算开成。
+
+**三台 Host**（都写在各机 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 的
+`- id: team` 覆盖行里，`config` 整体替换）：
+
+| 机器 | `dispatchRole` | `allowedRoots` | `token` |
+| --- | --- | --- | --- |
+| host | `owner` | `["D:\\gp_video","C:\\Users\\<user>\\Documents\\deepseek-harness"]` | 同一枚 |
+| GT14 | `observer` | 同上 | 同一枚 |
+| MB14 | `observer` | `["D:\\gp_video"]` | 同一枚 |
+
+改之前先备份（本次备份名 `cordis.patch.yml.bak-hardening-<时间戳>`），改完用
+`js-yaml` 解析一遍确认 entry 数与 `config`。
+
+**生效方式与两个坑**：
+
+1. 改 `cordis.patch.yml` 会触发热重载，而宿主**不会**先调本插件的 `cleanup` →
+   `webserver: duplicate exact route "/api/board/ui/summary"` → 该 entry 变
+   `failed`。v1.1.11 起插件会整体回滚并打一行提示，但配置只有在**完整重启
+   DSH** 后才真正生效。
+2. **不要从 DSH 自己的执行会话里重启 DSH**。`Stop-Process -Name 'DeepSeek
+   Harness'` 会把执行这条命令的进程一起杀掉；紧接着 `Start-Process` 拉起的 GUI
+   进程落不到交互桌面会话，机器直接失联（本次 GT14 与 MB14 都这样，ping、SMB
+   445 全不通，WOL 魔包也没唤醒），只能到机器前手动登录重启。远程重启只能交给
+   登录时运行的脚本或计划任务，在用户会话内执行。
+
+**重启后逐台核对**（顺序照做，别跳）：
+
+1. `Get-Process -Name 'DeepSeek Harness' | Select StartTime` —— 确实是新进程；
+2. `_runtime.log` 的 `apply start config={…"token":"***","allowedRoots":[…]}` 与
+   `route registered …ready`；
+3. `caps reported ok=true machine=<名> shell=true`（10 分钟一拨；token 没带上时
+   会看到该台 caps 401、板子上 `last_seen` 变陈旧）；
+4. host 上 hub `192.168.3.40:19387` 有来自副机的 Established 连接。
+
+关闭 token 同样要重启板子进程（环境变量只在启动时读一次）。
