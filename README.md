@@ -106,7 +106,9 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
     token: ''                # 板子开了 GP_BOARD_TOKEN 时填同一个值
     petImage: ''             # 留空=用随包立绘 assets/pet.png
     allowedRoots: []         # sh_* 只允许访问这些目录（realpath 比较）；空=不限制。
-                             # 注意这是路径白名单，不是沙箱：命令内容本身不受限
+                             # 注意这是路径白名单，不是沙箱：命令内容本身不受限。
+                             # 部署前请读 docs/issue-10/08-exec-policy.md（谁能在这几台
+                             # 机器上跑命令、板子该怎么配 token）。
     shellTimeoutMs: 120000
     maxOutputBytes: 200000   # sh_run 流式保留的上限，超出只保留前 N 字节并标 truncated
     autoDispatch: true       # v1.1：Host 后台自动派发 + 终态回写；设 false 退回纯手动
@@ -137,6 +139,16 @@ v1.1.3 的 goal 超 300 字被拒、终态 note 带副机最后一条 stdout。
 全程 `stubFetch`，不连真板子。
 
 真板子相关的验收（真派发、多机、桌宠）走 `scripts/acceptance.mjs`，需要板子服务和本机媒体素材。
+产物报表落在 `%TEMP%\dsh-team-*\accept\验收矩阵-*.csv`。
+
+## 文档索引
+
+| 文档 | 内容 |
+| --- | --- |
+| `docs/issue-10/05-deployment-notes-2026-11-08.md` | hub 与 profile 的部署姿势、踩过的坑 |
+| `docs/issue-10/06-dispatch-recovery.md` | 三步派工与"结果未知"恢复日志（v1.2.0–v1.2.4） |
+| `docs/issue-10/07-dispatch-roles.md` | 派工所有权、attach 校验、跨 Host 收敛、状态文件锁 |
+| `docs/issue-10/08-exec-policy.md` | **部署级命令执行策略**：谁能在哪台机器上跑什么 |
 
 ## 许可
 

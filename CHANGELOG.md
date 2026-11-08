@@ -1,6 +1,24 @@
 # 变更日志
 
+## v1.3.2 — 2026-11-08
+
+文档：新增 `docs/issue-10/08-exec-policy.md`（#10-4）—— 部署级命令执行策略。
+
+写清四件事：
+
+- `sh_*` 的真实能力边界：`allowedRoots` 只对路径参数做 realpath 前缀比较，
+  **不限制命令内容**；超时只 kill 直接子进程；执行账号就是 DSH 当前用户。
+- 四条通道的默认状态与守卫：板子 8965（默认无 token、绑 0.0.0.0）、remote-agent
+  hub 19387（nodeToken + TOFU pin）、插件 GUI 路由（无鉴权但只监听 127.0.0.1）、
+  `sh_*`（路径白名单）。
+- 按可能性排序的威胁模型 + 四台机的推荐配置表（owner/observer、allowedRoots 别留空、
+  需要把关的机器把 dispatchApproval 设 manual）。
+- 明确不做的事：不做沙箱、不做 RBAC、不做审计合规、不清理孙进程。
+
+README 增加"文档索引"表，并在 `allowedRoots` 注释里指向这份文档。
+
 ## v1.3.1 — 2026-11-08
+
 
 复核里剩下的「多实例并发写 journal」：`dispatch-journal` / `pending-attach` 都是
 "读回磁盘 → 合并 → 原子写"，原子写挡不住两台 Host 同时读改写（A 写 [x,a]、B 写

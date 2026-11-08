@@ -1,0 +1,97 @@
+# 部署级命令执行策略（#10-4）
+
+> 一句话：**这块板子能在这几台机器上用当前账号执行命令，`allowedRoots` 只是路径
+> 白名单，不是沙箱。** 这份文档写清"谁能让哪台机器跑什么"，以及部署时该关掉什么。
+
+## 1. 能力边界：`sh_*` 到底能干什么
+
+`sh_run` / `sh_write` / `sh_read` / `sh_list` 由 Host 插件在**本机**执行：
+
+| 检查 | 实际行为 | 不是什么 |
+| --- | --- | --- |
+| `allowedRoots` | 只对"路径参数"做 realpath 前缀比较，越界即拒绝（fail-closed） | 不限制命令内容：`sh_run` 的 `command` 原样交给 pwsh |
+| `shellTimeoutMs` | 超时只 kill 直接子进程 | 不 kill 子进程树（`Start-Process` 拉起的孙进程会活下来） |
+| `maxOutputBytes` | 保留前 N 字节并标 `truncated` | 不影响命令本身的副作用 |
+| 执行账号 | DSH 进程的当前用户（无提权） | 不是隔离账号，不是容器 |
+
+结论：**能建单的人 ≈ 能在这些机器上以你的账号执行命令的人**。板子的信任边界就是
+"谁能访问 8965 端口 + 谁能访问 remote-agent hub"。
+
+## 2. 四条通道与各自的守卫
+
+```
+                   ┌───────────────┐
+   建单/认领 ──────►│ 板子 :8965     │◄──── caps 心跳（每台机器）
+                   │ board_server  │
+                   └──────┬────────┘
+                          │ 调度器 take/dispatch/attach
+                   ┌──────▼────────┐        ┌──────────────────┐
+                   │ Host 插件      │───────►│ remote-agent hub  │
+                   │ (DSH 进程内)   │  HTTP  │ 192.168.3.40:19387│
+                   └──────┬────────┘        └───────┬──────────┘
+                          │ sh_* 在本机执行           │ 派发到副机
+                          ▼                          ▼
+                    当前 Windows 账号            GT14 / MB14 上的 DSH
+```
+
+| 通道 | 默认状态 | 守卫 |
+| --- | --- | --- |
+| 板子 `:8965` | 绑 `0.0.0.0`，**默认无 token**，CORS `*` | 无（要自己开 `GP_BOARD_TOKEN`） |
+| remote-agent hub `:19387` | 绑 LAN IP，带 `nodeToken` | 节点身份 + TOFU pin（`hub-pin.json`） |
+| 插件 GUI 路由 `/api/board/ui/*` | 无鉴权，但只监听 DSH Web 的本地端口 | 靠"DSH Web 只绑 127.0.0.1" |
+| `sh_*` 工具 | 任何拿到工具的人都能调 | `allowedRoots`（路径级） |
+
+> 2026-11-08 实测：板子在 `192.168.3.40:8965` 对全网段开放、无 token；DSH Web 只
+> 监听 `127.0.0.1`，所以"面板路由无鉴权"的实际暴露面是"本机任意进程"。
+
+## 3. 威胁模型（按可能性排序）
+
+1. **同网段任意设备建单** → 一条 `dispatch:auto` 的 `exec` 任务会真在 GT14/MB14 上
+   跑。这是当前最高风险：板子无鉴权 + 默认 `dispatchApproval: auto`。
+2. **误操作的 agent 会话** → agent 手里有 `board_dispatch` / `sh_run`，一句话就能把
+   命令发到另一台机器；`allowedRoots: []`（默认）等于不限制目录。
+3. **副机凭据** → 副机的 DSH 以自己的账号跑 remote-agent worker；派工给它的任务
+   与"在那台机器上手敲"等价。
+4. **状态文件** → `state.json`（板子）、`pending-attach-*.json`、`dispatch-journal-*.json`
+   都可被同账号进程篡改；v1.3.1 只解决并发一致性，不解决认证。
+
+## 4. 部署清单（四台机的推荐值）
+
+| 机器 | `dispatchRole` | `allowedRoots` | `dispatchApproval` | 说明 |
+| --- | --- | --- | --- | --- |
+| host（本机） | `owner` | 只列真正要动的目录，如 `["D:\\gp_video"]` | 保持 `auto` | 唯一派工的那台 |
+| GT14 | 不装插件也可 | —— | —— | 只跑 remote-agent worker |
+| MB14 | 同上 | —— | —— | 同上 |
+| 第二台 Host | `observer` | 同上 | —— | 只建单、不派工 |
+
+板子侧（`board_server.py`）：
+
+- 设置 `GP_BOARD_TOKEN=<随机串>`，所有 Host 的 `token` 配同一值；
+- 只在需要的网段开放 8965；不要把它暴露到公网；
+- `state.json` 定时备份（单点，损坏即丢全部历史）。
+
+Host 侧：
+
+- `allowedRoots` 从 `[]` 换成具体目录 —— 空数组是"不限制"，不是"不许"；
+- 需要人工把关的机器把 `dispatchApproval` 设 `manual`：exec 任务会在副机上挂起
+  等待批准（remote-agent 的默认行为），而不是直接跑；
+- 一台机器只跑一个 DSH 实例（v1.3.1 的锁解决并发写，不解决两个调度器抢任务）。
+
+## 5. 明确不做的（别期望这些）
+
+- **不做沙箱**：没有容器/虚拟机/受限账号隔离；`sh_run` 的 `command` 不受
+  `allowedRoots` 约束。
+- **不做 RBAC**：板子不知道"是谁"建的单；谁能连上板子谁就能建。
+- **不做审计合规**：可回溯的只有 Host 的 `_runtime.log`、板子的 events 与
+  remote-agent 的 `audit.jsonl`，都不防篡改。
+- **不清理孙进程**：超时只 kill 直接子进程。
+
+## 6. 排查用三连
+
+怀疑"有人从别处使唤了这几台机器"时：
+
+1. 板子 `GET /api/board` 的 `events`：谁在什么时候 create / take / dispatch；
+2. 副机 `C:\Users\<user>\.dsh-remote-agent\audit.jsonl`：每条 `task.dispatch` 的
+   goal / workspace / 时间；
+3. Host `_runtime.log`：`dispatched <id> → <node> remote=<taskId>`、`apply start
+   config=…`（看那台机器的 `allowedRoots` 到底是什么）。
