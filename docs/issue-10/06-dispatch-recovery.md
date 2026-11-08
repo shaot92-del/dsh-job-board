@@ -92,9 +92,25 @@ dispatch journal restored: N 条在途（claimed/unknown）
 - **R1**：`/dispatch` 超时但远端已建任务 → `/dispatch` 只调 1 次、`attach` 1 次、`untake` 0 次；
 - **R2**：`/dispatch` 超时且远端确实没有 → `untake` 1 次、重派 1 次、远端仍只有 1 条任务；
 - **R3**：已认领未发出（崩溃恢复）→ `take` 0 次、直接补发并回绑。
+- **R4**（v1.2.1）：慢请求窗口（`sentAt=now−15s`、`at=now`，远端 15 s 前就建好了）
+  → `dispatch` 0 次、只补绑那条老任务；
+- **R5**（v1.2.1）：板上已回绑 `remote` → drop 分支生效、不补发、`remote_id` 不被覆盖；
+- **R6**（v1.2.1）：taker 是别的机器 → `take` 0、`dispatch` 0；
+- **R7**（v1.2.1）：`attempts` 到上限 → 写 `/api/mark` 标 `blocked`、不再派工；
+- **R8**（v1.2.2）：另一个实例在本实例启动后写入一条在途记录 → 本实例落盘时必须保留。
+
+对 B2/B3 与 H6 都做过变异验证：把旧写法改回去，R4/R5/R8 会各自失败
+（`dispatch=1`、`remote_id` 被新号覆盖、合并结果变成 `[]`），证明用例能抓住缺陷。
+
+## 6.1 状态文件纪律（v1.2.2）
+
+- 两个状态文件（`pending-attach-*`、`dispatch-journal-*`）都走 `writeStateJson()`：
+  先写 `<file>.<pid>.tmp`，再 `renameSync`（失败重试 3 次），最后按需读-合并。
+- 删除条目一律留墓碑（`pendingAttachRemoved` / `journalRemoved`），否则"读回磁盘
+  再合并"会把刚删掉的条目复活。
+- 写盘失败不再静默：日志里带文件路径、错误码、内存里还剩几条。
 
 ## 7. 尚未覆盖（下一步）
-
 - `attach` 目前仍只重试、不做「远端任务是否还在」的校验；更完整的状态要加上
   `pending_approval`、`running`、终态的分类回读（`syncRemote` 已覆盖终态回写）。
 - 跨 Host 收敛：同一板子上多个 Host 都可能建单，最终归档仍需板子侧校验（#10 建议 2）。

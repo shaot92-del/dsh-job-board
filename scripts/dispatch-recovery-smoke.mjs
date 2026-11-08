@@ -237,7 +237,7 @@ function startServer({ tasks, hub, seedRemoteTasks }) {
   })
 }
 
-async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTasks, waitMs = 2600, settle }) {
+async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTasks, during, waitMs = 2600, settle }) {
   const boardUrl = null
   let srv = null
   let cleanup = null
@@ -261,6 +261,10 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTask
       dispatchApproval: 'auto',
       allowedRoots: [],
     })
+    // `during`：在 apply 之后、断言之前插一段外部动作（模拟另一个 Host 实例写同一个
+    // 状态文件）。先睡 150ms 保证本实例已经读过（当时是空的）盘上内容。
+    await sleep(150)
+    if (during) await during({ journalFile: jf, pendingFile: pf })
     await sleep(waitMs)
     const journal = readJson(jf)
     const info = { journal, stats: srv.stats, tasks, remoteTasks: srv.remoteTasks, dispatchCalls: srv.dispatchCalls }
@@ -429,6 +433,36 @@ async function main() {
     check('R7 达上限后不再派工', info.stats.dispatch === 0, `dispatch=${info.stats.dispatch}`)
     check('R7 升级成 blocked（写了 /api/mark）', info.stats.mark >= 1, `mark=${info.stats.mark}`)
     check('R7 恢复日志已清空', Array.isArray(info.journal) && info.journal.length === 0, JSON.stringify(info.journal))
+  }
+
+  // ── R8（复核 H6）：两个 Host 实例共用同一台机器的状态文件 → 写回必须先读再合并 ──
+  // 另一个实例在本实例启动后才写入一条在途记录；本实例随后因派工落盘时不能把它抹掉。
+  {
+    const tasks = {
+      'bd-r8': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R8 goal', machine: '' },
+    }
+    const info = await scenario('R8', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r8',
+      waitMs: 1500,
+      during: async ({ journalFile }) => {
+        let rows = []
+        try {
+          rows = JSON.parse(fs.readFileSync(journalFile, 'utf8'))
+        } catch {
+          rows = []
+        }
+        rows.push({
+          taskId: 'bd-ghost-8', nodeId: 'smoke-node', machine: 'smoke-r8', goal: '另一个实例的任务',
+          mode: 'agent', workspace: '', phase: 'unknown', at: Date.now(), sentAt: Date.now(), attempts: 1, lastError: 'x',
+        })
+        fs.writeFileSync(journalFile, JSON.stringify(rows, null, 2), 'utf8')
+      },
+    })
+    const kept = (Array.isArray(info.journal) ? info.journal : []).some((r) => r && r.taskId === 'bd-ghost-8')
+    check('R8 写回时保住了另一个实例的在途记录', kept, JSON.stringify(info.journal))
+    check('R8 本实例自己的条目照样收尾', info.stats.attach === 1, `attach=${info.stats.attach}`)
   }
 
   return summary()
