@@ -89,7 +89,7 @@ function makeCtx(origin) {
  *   { mode: 'unknown-drop' }   不建任务、拖到超时（客户端 abort）
  *   { mode: 'fail', times }    前 N 次 500
  */
-function startServer({ tasks, hub, seedRemoteTasks }) {
+function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
   const stats = { take: 0, untake: 0, attach: 0, dispatch: 0, mark: 0 }
   const remoteTasks = Array.isArray(seedRemoteTasks) ? seedRemoteTasks.slice() : []
   const dispatchCalls = []
@@ -168,6 +168,8 @@ function startServer({ tasks, hub, seedRemoteTasks }) {
     if (p === '/api/mark') {
       stats.mark += 1
       return readBody().then((b) => {
+        // R10：模拟"标 blocked 恒失败" —— 这时绝对不能丢 journal 凭据。
+        if (Number(markStatus || 200) >= 400) return send(Number(markStatus), { error: 'mark-boom' })
         const t = tasks[b.task_id]
         if (t && b.status) {
           t.status = String(b.status)
@@ -216,6 +218,8 @@ function startServer({ tasks, hub, seedRemoteTasks }) {
           if (stats.dispatch <= Number(hub.times || 0)) return send(500, { error: 'boom' })
           return send(200, { ok: true, taskId: create(), nodeId: b.node })
         }
+        // R14：永久 4xx —— 明确的失败，必须退避，不能每 tick 重来。
+        if (hub.mode === 'always-400') return send(400, { error: 'bad-goal' })
         return send(500, { error: 'unknown-mode' })
       })
     }
@@ -237,12 +241,12 @@ function startServer({ tasks, hub, seedRemoteTasks }) {
   })
 }
 
-async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTasks, during, waitMs = 2600, settle }) {
+async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTasks, during, markStatus, waitMs = 2600, settle }) {
   const boardUrl = null
   let srv = null
   let cleanup = null
   try {
-    srv = await startServer({ tasks, hub, seedRemoteTasks })
+    srv = await startServer({ tasks, hub, seedRemoteTasks, markStatus })
     const jf = journalFile(machine, srv.url)
     const pf = pendingFile(machine, srv.url)
     for (const f of [jf, pf]) fs.rmSync(f, { force: true })
@@ -463,6 +467,196 @@ async function main() {
     const kept = (Array.isArray(info.journal) ? info.journal : []).some((r) => r && r.taskId === 'bd-ghost-8')
     check('R8 写回时保住了另一个实例的在途记录', kept, JSON.stringify(info.journal))
     check('R8 本实例自己的条目照样收尾', info.stats.attach === 1, `attach=${info.stats.attach}`)
+  }
+
+  // ── R9（复核 D2）：goal 首尾空白/连续空白不同，仍要认得出是同一条任务 ──────
+  // 板子存原文、remote-agent 落库前会 trim()；旧代码全等比较 → 判"远端没有" → 重派。
+  {
+    const tasks = {
+      'bd-r9': { status: 'claimed', taker: 'host', dispatch: 'auto', mode: 'agent', goal: 'R9  goal', machine: 'smoke-node' },
+    }
+    const info = await scenario('R9', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r9',
+      waitMs: 1200,
+      seedRemoteTasks: [
+        { taskId: 'ui-space9', goal: '  R9   goal\n', mode: 'agent', createdAt: Date.now() - 2000, status: 'running' },
+      ],
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r9', nodeId: 'smoke-node', machine: 'smoke-r9', goal: 'R9  goal', mode: 'agent',
+          workspace: '', phase: 'unknown', attempts: 1, sentAt: now - 3000, at: now - 2000, lastError: 'timeout',
+        },
+      ],
+    })
+    check('R9 空白差异不影响反查（不重派）', info.stats.dispatch === 0, `dispatch=${info.stats.dispatch}`)
+    check('R9 把远端那条任务补绑回来', String(info.tasks['bd-r9'].remote_id) === 'ui-space9', info.tasks['bd-r9'].remote_id)
+    check('R9 没有把占位放回队列', info.stats.untake === 0, `untake=${info.stats.untake}`)
+  }
+
+  // ── R10（复核 D6）：标 blocked 恒失败时不能丢凭据，也不能再派 ────────────
+  {
+    const tasks = { 'bd-r10': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R10 goal', machine: '' } }
+    const info = await scenario('R10', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r10',
+      waitMs: 1800,
+      markStatus: 500,
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r10', nodeId: 'smoke-node', machine: 'smoke-r10', goal: 'R10 goal', mode: 'agent',
+          workspace: '', phase: 'unknown', attempts: 3, sentAt: now - 40000, at: now - 30000, lastError: 'timeout',
+        },
+      ],
+    })
+    const still = (Array.isArray(info.journal) ? info.journal : []).find((r) => r && r.taskId === 'bd-r10')
+    check('R10 mark 失败后凭据仍在（没有被静默丢掉）', Boolean(still), JSON.stringify(info.journal))
+    check('R10 mark 失败后不再派工', info.stats.dispatch === 0, `dispatch=${info.stats.dispatch}`)
+    check('R10 至少尝试过标 blocked', info.stats.mark >= 1, `mark=${info.stats.mark}`)
+  }
+
+  // ── R11（复核 D3）：板上已经回绑 remote、任务在跑 → 绝不 untake ────────────
+  {
+    const tasks = {
+      'bd-r11': { status: 'running', taker: 'host', remote_id: 'ui-run11', dispatch: 'auto', mode: 'agent', goal: 'R11 goal', machine: 'smoke-node' },
+    }
+    const info = await scenario('R11', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r11',
+      waitMs: 1200,
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r11', nodeId: 'smoke-node', machine: 'smoke-r11', goal: 'R11 goal', mode: 'agent',
+          workspace: '', phase: 'unknown', attempts: 1, sentAt: now - 3000, at: now - 2000, lastError: 'timeout',
+        },
+      ],
+    })
+    check('R11 正在跑的任务没被 untake', info.stats.untake === 0, `untake=${info.stats.untake}`)
+    check('R11 也没被重派', info.stats.dispatch === 0, `dispatch=${info.stats.dispatch}`)
+    check('R11 remote_id 保持不变', String(info.tasks['bd-r11'].remote_id) === 'ui-run11', info.tasks['bd-r11'].remote_id)
+  }
+
+  // ── R12（复核 D4）：两条板子任务同 goal，不能认领同一条远端任务 ───────────
+  {
+    const tasks = {
+      'bd-r12a': { status: 'claimed', taker: 'host', dispatch: 'auto', mode: 'agent', goal: 'R12 同名任务', machine: 'smoke-node' },
+      'bd-r12b': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R12 同名任务', machine: 'smoke-node' },
+    }
+    const info = await scenario('R12', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r12',
+      waitMs: 1800,
+      seedRemoteTasks: [
+        { taskId: 'ui-shared12', goal: 'R12 同名任务', mode: 'agent', createdAt: Date.now() - 2000, status: 'running' },
+      ],
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r12a', nodeId: 'smoke-node', machine: 'smoke-r12', goal: 'R12 同名任务', mode: 'agent',
+          workspace: '', phase: 'unknown', attempts: 1, sentAt: now - 3000, at: now - 2000, lastError: 'timeout',
+        },
+      ],
+    })
+    const ra = String(info.tasks['bd-r12a'].remote_id || '')
+    const rb = String(info.tasks['bd-r12b'].remote_id || '')
+    check('R12 补绑的那条认领了既有远端任务', ra === 'ui-shared12', ra)
+    check('R12 另一条没有绑到同一条远端任务', rb !== '' && rb !== ra, `a=${ra} b=${rb}`)
+    check('R12 远端任务没有被两条板子任务共享', info.remoteTasks.filter((t) => t.taskId === 'ui-shared12').length === 1, info.remoteTasks.length)
+  }
+
+  // ── R13（复核 D5）：写盘失败后墓碑不能提前清 —— 被删的条目不许复活 ────────
+  // 做法：把 journal 文件设成只读，让一次删除的落盘失败；随后恢复可写并触发下一次保存，
+  // 断言被删的条目没有从磁盘"读回-合并"里复活。
+  {
+    const tasks = {
+      'bd-r13': { status: 'running', taker: 'host', remote_id: 'ui-old13', dispatch: 'auto', mode: 'agent', goal: 'R13 goal', machine: 'smoke-node' },
+      'bd-r13b': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R13 second', machine: '' },
+    }
+    const info = await scenario('R13', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r13',
+      waitMs: 2200,
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r13', nodeId: 'smoke-node', machine: 'smoke-r13', goal: 'R13 goal', mode: 'agent',
+          workspace: '', phase: 'unknown', attempts: 1, sentAt: now - 3000, at: now - 2000, lastError: 'timeout',
+        },
+      ],
+      during: async ({ journalFile }) => {
+        try {
+          fs.chmodSync(journalFile, 0o444)
+        } catch {
+          /* ignore */
+        }
+        // 让第一次删除在这里撞上只读文件（rename 失败）
+        await sleep(1200)
+        try {
+          fs.chmodSync(journalFile, 0o666)
+        } catch {
+          /* ignore */
+        }
+      },
+    })
+    const rows = Array.isArray(info.journal) ? info.journal : []
+    check('R13 已删条目没有复活', !rows.some((r) => r && r.taskId === 'bd-r13'), JSON.stringify(rows.map((r) => r.taskId)))
+    check('R13 同一文件里别的实例条目仍在（写盘恢复可用）', info.stats.attach >= 1, `attach=${info.stats.attach}`)
+  }
+
+  // ── R14（复核 S2）：永久 4xx 必须退避，不能每 4 秒重打 ────────────────────
+  {
+    const tasks = { 'bd-r14': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R14 goal', machine: '' } }
+    const info = await scenario('R14', {
+      hub: { mode: 'always-400' },
+      tasks,
+      machine: 'smoke-r14',
+      waitMs: 6000,
+    })
+    check('R14 永久失败有退避（6 秒内不反复重打）', info.dispatchCalls.length <= 2, `dispatch=${info.dispatchCalls.length}`)
+    check('R14 失败后仍会把占位放回队列', info.stats.untake >= 1, `untake=${info.stats.untake}`)
+  }
+
+  // ── R12b（复核 D4）：远端任务已经被**别的**板子任务占用 → 不许再认领 ─────
+  {
+    const tasks = {
+      'bd-r12c': { status: 'running', taker: 'host', remote_id: 'ui-taken12', dispatch: 'auto', mode: 'agent', goal: 'R12b 同名', machine: 'smoke-node' },
+      'bd-r12d': { status: 'claimed', taker: 'host', dispatch: 'auto', mode: 'agent', goal: 'R12b 同名', machine: 'smoke-node' },
+    }
+    const info = await scenario('R12b', {
+      hub: { mode: 'ok' },
+      tasks,
+      machine: 'smoke-r12b',
+      waitMs: 1800,
+      seedRemoteTasks: [
+        { taskId: 'ui-taken12', goal: 'R12b 同名', mode: 'agent', createdAt: Date.now() - 2000, status: 'running' },
+      ],
+      seedJournal: (now) => [
+        {
+          taskId: 'bd-r12d', nodeId: 'smoke-node', machine: 'smoke-r12b', goal: 'R12b 同名', mode: 'agent',
+          workspace: '', phase: 'unknown', attempts: 1, sentAt: now - 3000, at: now - 2000, lastError: 'timeout',
+        },
+      ],
+    })
+    // 允许它被放回队列后自己派一条新的，但绝不能绑到别人正在用的那条远端任务上。
+    check('R12b 不认领已被别的任务占用的远端任务', String(info.tasks['bd-r12d'].remote_id || '') !== 'ui-taken12', String(info.tasks['bd-r12d'].remote_id || ''))
+    check('R12b 原占用者保持不变', String(info.tasks['bd-r12c'].remote_id) === 'ui-taken12', info.tasks['bd-r12c'].remote_id)
+  }
+
+  // ── R15（复核 D1+S2）：结果永远未知时 attempts 必须累计、最终有界停下 ──────
+  {
+    const tasks = { 'bd-r15': { status: 'queued', dispatch: 'auto', mode: 'agent', goal: 'R15 goal', machine: '' } }
+    const info = await scenario('R15', {
+      hub: { mode: 'unknown-drop' },
+      tasks,
+      machine: 'smoke-r15',
+      waitMs: 8000,
+    })
+    check('R15 重派次数有上界（attempts 上限生效）', info.dispatchCalls.length <= 3, `dispatch=${info.dispatchCalls.length}`)
+    check('R15 最终升级成 blocked', info.stats.mark >= 1, `mark=${info.stats.mark}`)
+    check('R15 到达终态后不再继续 untake', info.stats.untake <= 3, `untake=${info.stats.untake}`)
   }
 
   return summary()

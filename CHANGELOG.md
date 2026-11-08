@@ -1,5 +1,50 @@
 # 变更日志
 
+## v1.2.3 — 2026-11-08
+
+代码审查工程师用 5 个探针把 v1.2.0–v1.2.2 又打穿了一遍：**修住的都是"理想路径"，
+剩下的漏洞全在"远端那条任务到底建没建"这个中间态**。这一版按复核给的顺序补齐。
+
+- **D3 reconcile 抢在快照之前**：原来 reconcile 拿不到板上 `remote_id`，崩在
+  "attach 成功、删 journal 之前"时会把**正在跑**的任务 untake 再派一条，而且 untake
+  之后 `syncRemote` 不再盯它（watched 只含 running/claimed/stale），旧任务的结果
+  永远回写不了。现在 `dispatchOnce()` 先取快照再 reconcile；板上已有 `remote` → 只清账
+  不动板子；板上 `running` → 一律不允许 untake。
+- **D4 同 goal 的两条板子任务认领同一条远端任务**：`matched` 只排除"本轮已分配"的，
+  不排除板上**其它任务已经引用**的 `remote_id`。现在建 `occupied` 集合参与候选过滤，
+  且**只有唯一候选才认领**（多候选宁可不猜）。
+- **D2 goal 全等比较 + 5 s 跨机窗口**：板子存原文，remote-agent `hub/ui-routes.js`
+  落库前会 `body.goal.trim()`，两边空格不同就判"远端没有"→ 重派。探针实测 4 秒内
+  副机真建了 7 条同名任务、板上 `remote_id` 仍为空。现在两侧都走 `normGoal()`
+  （合并连续空白、去首尾）。
+- **D1 attempts 上限永远到不了**：untake 成功就删条目，下一轮 `attempts` 从 0 起算，
+  `MAX_DISPATCH_ATTEMPTS` 和 2 h TTL 都是死代码（探针 9 秒内 dispatch=15 / untake=14）。
+  现在澄清后写 `phase:'released'` 并**保留 attempts**，只有 attach 成功或 mark 确认
+  成功才删条目；同时加 `taking` 相位（take 成功、请求还没发出去时就崩的场景，防 S7 孤儿）。
+- **S2 永久 4xx 无退避**：探针 6 秒内 dispatch=29。现在 `dispatchBackoff` 指数退避
+  （15 s 起、翻倍、封顶 5 min），日志写明"多少秒后再试"。
+- **D5 墓碑清得太早**：`journalRemoved.clear()` 跑在写盘之前，写盘一失败，已删条目
+  会被下一次"读回-合并"复活（探针 P5）。现在写成功后才清墓碑；`writeStateJson` 的
+  rename 重试带 20/50/100 ms 退避。
+- **D6 mark blocked 失败仍删凭据**：板上留永久 `claimed` 却没人再管（探针 P3）。
+  现在只有 `marked.ok` 才删，失败保留并 `blockRetryAt = +60s`。
+- **S3 journalSet 写盘失败仍继续发**：现在"发请求前那次 unknown 写"失败就 untake
+  回来并跳过本轮（宁可晚一轮，也不在状态没落盘时发不可撤回的请求）。
+- **S5 TTL 升级前先查远端**：可能把"其实已经建好、只是回执丢了"的任务标成 blocked，
+  而 blocked 不在 `syncRemote` 的 watched 里。现在升级前按 `normGoal` + `sentAt` 反查，
+  命中就只补绑。**S4** `retryPendingAttach` 加了 20 次上限，到顶标 blocked。
+- **S1 暂停假成功**：`dispatch-pause` 只等 3 s，写超时 20 s，超时仍回 `paused:true`，
+  面板据此把在途任务 release 成 superseded。现在返回体多一个 `stopped` 字段，面板
+  `runCleanup()` 会二次确认；仍停不住就**不归档任何任务**并提示稍后再点。
+
+验证：`dispatch-recovery-smoke.mjs` 扩到 **48 项**（R1–R15，含 R12b），新增
+R9（goal 空白差异仍能反查）、R10（mark 恒 500 时凭据不丢）、R11（在跑的任务绝不 untake）、
+R12/R12b（同 goal 不共享远端任务、不抢别人已占用的）、R13（写盘失败后被删条目不许复活）、
+R14（永久 4xx 有退避）、R15（结果永远未知 → attempts 有界、最终 blocked）。
+变异验证三组：`normGoal` 退回裸比较 → R9 挂；去掉 `occupied` → R12b 挂；
+`released` 退回直接删条目 → R15 挂（dispatch=8）。恢复后 48/48 全绿，
+`plugcheck` `PASS tools=16 routes=12`、`reload-smoke` 场景 A/C、`node --check` 均通过。
+
 ## v1.2.2 — 2026-11-08
 
 v1.2.1 修完会"双跑"的两条之后，接着补复核清单里剩下的状态文件纪律与暂停竞态。

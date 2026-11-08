@@ -31,7 +31,9 @@ v1.1.x 的处理是**任何一步失败都 `untake` 后下一轮重来**。对 �
 | 相位 | 含义 | 下一轮怎么处理 |
 | --- | --- | --- |
 | `claimed` | 板上已认领，`/dispatch` **一次都没发出** | 按板上现状判定：`status=claimed/running` 或 `taker` 非空 ⇒ 直接补发；仍 `queued` ⇒ 重新 take；`taker` 是别的机器 ⇒ 不补发也不抢 |
-| `unknown` | `/dispatch` 已发出，结果未知 | **先查询**：`/tasks` 里同 `goal`、`createdAt ∈ [sentAt−5s, at+5s]` 的任务就是它 ⇒ 只 `attach`；超过 `unknownGraceMs` 仍查不到 ⇒ `untake` 放回队列；`attempts ≥ 3` ⇒ 标 `blocked` |
+| `taking` | 正在 take，请求可能已在飞（v1.2.3） | 与 `claimed` 同一套判定，避免 take 与落盘之间崩溃留下孤儿 |
+| `unknown` | `/dispatch` 已发出，结果未知 | **先查询**：`/tasks` 里 `normGoal` 相同、`createdAt ∈ [sentAt−5s, at+5s]` 且未被其它板子任务占用的任务就是它 ⇒ 只 `attach`；超过 `unknownGraceMs` 仍查不到 ⇒ `untake` 放回队列；`attempts ≥ 3` ⇒ 标 `blocked` |
+| `released` | 已放回队列，但**保留 attempts**（v1.2.3） | 只做清理：板上任务没了或已回绑 ⇒ 删条目；否则等它被重新派出去，attempts 接着累加 |
 | （无条目） | 已回绑 | `attach` 失败的那一支由 `pendingAttach` 负责，只重试 attach |
 
 TTL 2 小时；过期条目不是静默丢弃，而是逐条 `mark blocked` 升级给人看。
@@ -87,7 +89,7 @@ dispatch journal restored: N 条在途（claimed/unknown）
 
 ## 6. 验证
 
-`node scripts/dispatch-recovery-smoke.mjs`（假板子 + 假 hub，14 项断言，已并入 CI）：
+`node scripts/dispatch-recovery-smoke.mjs`（假板子 + 假 hub，48 项断言，已并入 CI）：
 
 - **R1**：`/dispatch` 超时但远端已建任务 → `/dispatch` 只调 1 次、`attach` 1 次、`untake` 0 次；
 - **R2**：`/dispatch` 超时且远端确实没有 → `untake` 1 次、重派 1 次、远端仍只有 1 条任务；
@@ -98,9 +100,18 @@ dispatch journal restored: N 条在途（claimed/unknown）
 - **R6**（v1.2.1）：taker 是别的机器 → `take` 0、`dispatch` 0；
 - **R7**（v1.2.1）：`attempts` 到上限 → 写 `/api/mark` 标 `blocked`、不再派工；
 - **R8**（v1.2.2）：另一个实例在本实例启动后写入一条在途记录 → 本实例落盘时必须保留。
+- **R9**（v1.2.3）：远端 goal 带首尾/连续空白差异 → 仍能反查到、只补绑（D2）；
+- **R10**（v1.2.3）：标记 blocked 恒 500 → 凭据留在 journal、不再派工（D6）；
+- **R11**（v1.2.3）：板上 `running` 且已有 `remote` → 绝不 untake、`remote_id` 不变（D3）；
+- **R12**（v1.2.3）：两条板子任务同 goal、远端只有一条 → 只有一条认领，另一条自己派新的（D4）；
+- **R12b**（v1.2.3）：远端任务已被别的板子任务占用 → 不许再认领（D4）；
+- **R13**（v1.2.3）：journal 只读导致删除落盘失败 → 恢复可写后被删条目也不复活（D5）；
+- **R14**（v1.2.3）：hub 永久 400 → 6 秒内只打一次、有退避（S2）；
+- **R15**（v1.2.3）：结果永远未知 → 重派有界（≤3 次）、最终标 blocked（D1）。
 
-对 B2/B3 与 H6 都做过变异验证：把旧写法改回去，R4/R5/R8 会各自失败
-（`dispatch=1`、`remote_id` 被新号覆盖、合并结果变成 `[]`），证明用例能抓住缺陷。
+变异验证三组（v1.2.3）：`normGoal` 退回裸比较 → R9 挂；去掉 `occupied` 过滤 →
+R12b 挂；untake 成功后 `released` 退回直接删条目 → R15 挂（`dispatch=8`、`mark=0`）。
+更早的 B2/B3、H6 也各做过一组（改回旧写法 R4/R5/R8 分别失败）。
 
 ## 6.1 状态文件纪律（v1.2.2）
 
