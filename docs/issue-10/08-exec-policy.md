@@ -194,9 +194,50 @@ Host 侧：
 ### 8.4 仍然待办（都要重启）
 
 - 轮换 hub `nodeToken`（旧值已公开）；
-- GT14/MB14 换新 board token（用 `Z:\_tools\team-hardening.ps1 -TokenFile`），
-  两台重启后确认 `caps reported ok=true`；
-- 板子撤旧 token（`GP_BOARD_TOKENS` 只留新枚）→ `health.authTokens == 1`；
-- 清 `%TEMP%\board-token*.txt`、共享盘 `_tools/board-token.txt`、DSH 会话残留；
 - 仓库历史清 token：改 private 或 `git filter-repo`（历史里仍有真值）。
+
+> 2026-11-08 19:40 更新：GT14/MB14 已换新 board token 并重启（19:33、19:35），
+> 两台用运行时 token 打 `/api/board` 均 `200`；板子已撤旧枚（`authTokens:1`，旧枚 401）；
+> `%TEMP%` 与共享盘的 token 文本已删。剩下 hub `nodeToken` 与仓库历史两件。
+
+## 9. board token 轮换实操（2026-11-08 实测）
+
+### 9.1 顺序（三步，最后一步才收窄板子）
+
+1. **各 Host 换 token**：`pwsh -File Z:\_tools\team-hardening.ps1 -Machine <M> -TokenFile <token 文件> -Roots <...> -Role <owner|observer>`。
+   脚本从文件读 token，命令行与 goal 里都不出现真值。
+2. **各 Host 重启 DSH**，让运行时真的用上新 token；重启后逐台核对
+   `iwr http://192.168.3.40:8965/api/board -Headers @{'x-board-token'=<运行时 token>}` 回 200。
+3. **收窄板子**：`%USERPROFILE%\.dsh\board-tokens.txt` 只留新枚 → 重启 8965 →
+   `health.authTokens == 1`，旧枚再打 `/api/board` 必须回 401。
+
+顺序反了就是一次 401 空窗：板子只认新枚、而某台 Host 还在用旧枚。
+
+### 9.2 重启副机 DSH 的可靠姿势
+
+**不能**从 DSH 自己派的 exec 任务里 `Start-Process` 重启 —— 那个子进程在 DSH 的进程树里，
+`taskkill` 会连坐，机器直接失联（2026-11-08 实测两台都这样，最后靠人工开机）。
+
+可靠做法是让任务计划程序托管一个 VBS，脱离 DSH 进程树：
+
+```powershell
+# 共享盘上的 bounce-dsh.vbs：睡 N 毫秒 → taskkill DeepSeek Harness → 6 秒后重新拉起
+schtasks /create /tn DSHBounce /tr 'wscript.exe \\DESKTOP-NJ6NG3V\gp_xfer\_tools\bounce-dsh.vbs 15000' /sc once /st 23:59 /it /f
+schtasks /run /tn DSHBounce
+```
+
+`/it` 保证在交互桌面会话里运行，GUI 才能真起来。实测 GT14（19:35:33）、MB14（19:33:17）
+都换成了新进程，hub 连接与 caps 心跳随后自动恢复。
+
+就地 `explorer.exe Z:\_tools\bounce-dsh.vbs` **不生效**（实测进程启动时间没变）——不要用。
+
+### 9.3 验证三连
+
+| 检查 | 命令/口径 | 期望 |
+| --- | --- | --- |
+| 配置已换 | 副机读 `cordis.patch.yml` 的 `token:` 与 `Z:\_tools\board-token.txt` 比对 | `same=True` |
+| 运行时已换 | 副机用配置里的 token `iwr /api/board` | `200` |
+| 板子已收窄 | 旧枚打 `/api/board` | `401` |
+
+补一条：`board_server.py` 的 `/api/health` 是公开的，`authTokens` 会直接告诉你板子当前认几枚。
 
