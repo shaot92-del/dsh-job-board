@@ -30,11 +30,14 @@ const flag = (name, fallback) => {
 const PORT = Number(flag('port', '8977'))
 const BIND = String(flag('bind', '127.0.0.1'))
 const STATE_FILE = path.resolve(String(flag('state', path.join(process.cwd(), 'fake-board-state.json'))))
+// v1.3.5（复核 F11/F12）：验收要覆盖「派工链路」，所以这里也当一次 remote-agent hub。
+// nodeId 默认取本机 machine 名，保证插件 pickNode 能按机器名选中它。
+const NODE_ID = String(flag('node', process.env.GP_FAKE_NODE || 'host'))
 
 const nowSec = () => Date.now() / 1000
 
 function emptyState() {
-  return { updated: Math.floor(nowSec()), tasks: {}, machines: {}, events: [] }
+  return { updated: Math.floor(nowSec()), tasks: {}, machines: {}, events: [], remote: {}, remoteSeq: 0 }
 }
 
 function loadState() {
@@ -45,6 +48,8 @@ function loadState() {
       state.tasks = raw.tasks && typeof raw.tasks === 'object' ? raw.tasks : {}
       state.machines = raw.machines && typeof raw.machines === 'object' ? raw.machines : {}
       state.events = Array.isArray(raw.events) ? raw.events : []
+      state.remote = raw.remote && typeof raw.remote === 'object' ? raw.remote : {}
+      state.remoteSeq = Number(raw.remoteSeq) || 0
       state.updated = Number(raw.updated) || Math.floor(nowSec())
     }
     return state
@@ -260,13 +265,18 @@ const ROUTES = {
       title: String(b.title || ''),
       goal: String(b.goal || ''),
       status: 'queued',
-      machine: '',
-      agent: '',
+      // v1.3.5（复核 F11/F12）：真板子 do_create 会把 machine/owner/dispatch 一起落下，
+      // 这里以前把 machine 写成空串，导致「指定机器建单」的语义和真板子不一致 ——
+      // 派工链路一测就发现 pickNode 选不中任何节点。
+      machine: String(b.machine || ''),
+      owner: String(b.machine || ''),
+      agent: 'board_dispatch',
       mode: String(b.mode || 'agent'),
       dispatch: String(b.dispatch || 'manual'),
       priority: Number(b.priority) || 5,
       note: '',
       remote_id: '',
+      workspace: String(b.workspace || ''),
       created_at: nowSec(),
       updated_at: nowSec(),
       claimed_at: null,
@@ -304,6 +314,64 @@ const ROUTES = {
     event('say', '', b.machine, b.text)
     save()
     return send(res, 200, { ok: true })
+  },
+
+  /* ── v1.3.5（复核 F11/F12）：remote-agent hub 的最小替身 ──────────────
+   * 以前 acceptance 只测工具链路，派工一段「零覆盖」，两个假板子对 taker /
+   * dispatch 的建模也和真板子系统性偏差。这四个端点让验收能把
+   * take → dispatch → attach → sync → done 整条链路真跑一遍。
+   * 只实现插件真正用到的字段，不是 hub 的完整实现。 */
+
+  'GET /api/remote-agent/ui/nodes': (req, res) =>
+    send(res, 200, { ok: true, nodes: [{ nodeId: NODE_ID, online: true, machine: NODE_ID }] }),
+
+  'GET /api/remote-agent/ui/tasks': (req, res) => {
+    const u = new URL(req.url || '/', 'http://127.0.0.1')
+    const node = String(u.searchParams.get('node') || '')
+    const tasks = Object.values(state.remote)
+      .filter((t) => !node || String(t.nodeId) === node)
+      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+      .slice(0, 200)
+    return send(res, 200, { ok: true, tasks })
+  },
+
+  'GET /api/remote-agent/ui/task': (req, res) => {
+    const u = new URL(req.url || '/', 'http://127.0.0.1')
+    const id = String(u.searchParams.get('taskId') || '')
+    const t = state.remote[id]
+    if (!t) return send(res, 404, { ok: false, error: 'task-unknown' })
+    return send(res, 200, { ok: true, task: t })
+  },
+
+  'POST /api/remote-agent/ui/dispatch': async (req, res, b) => {
+    state.remoteSeq = Number(state.remoteSeq || 0) + 1
+    const id = 'ui-fake-' + state.remoteSeq
+    const t = {
+      taskId: id,
+      nodeId: String(b.node || NODE_ID),
+      mode: String(b.mode || 'agent'),
+      approval: 'auto',
+      goal: String(b.goal || ''),
+      status: 'running',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      result: '',
+    }
+    state.remote[id] = t
+    event('dispatch', '', t.nodeId, t.goal)
+    save()
+    return send(res, 200, { ok: true, taskId: id, nodeId: t.nodeId, mode: t.mode, approval: 'auto' })
+  },
+
+  // 验收专用：把远端任务置成终态，模拟「副机干完了」，插件的 syncRemote 应当回写板子。
+  'POST /api/_test/remote-complete': async (req, res, b) => {
+    const t = state.remote[String(b.taskId || '')]
+    if (!t) return send(res, 404, { ok: false, error: 'task-unknown' })
+    t.status = String(b.status || 'completed')
+    t.result = String(b.result || 'acceptance: 派工链路跑通')
+    t.updatedAt = Date.now()
+    save()
+    return send(res, 200, { ok: true, task: t })
   },
 }
 

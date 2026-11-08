@@ -1,5 +1,42 @@
 # 变更日志
 
+## v1.3.5 — 2026-11-08
+
+第四轮复核的**测试保真**项（F11/F12）：验收与回归里那套「假板子」和真板子在
+taker / dispatch / lease 上系统性偏差，派工链路从来没有被验收覆盖过。
+
+**① 派工链路进验收（acc-11）**
+
+`scripts/fake-board.mjs` 现在同时当 remote-agent hub 的最小替身：实现了插件真正
+调用的四个端点 —— `/api/remote-agent/ui/nodes`、`/tasks`（按 `?node=` 过滤、
+`updatedAt` 倒序、`slice(0,200)`）、`/task`（找不到回 `404 {error:'task-unknown'}`）、
+`/dispatch`（生成 `ui-fake-N`，状态 running）。另加一个验收专用
+`POST /api/_test/remote-complete`，用来模拟「副机干完了」。
+
+`scripts/acceptance.mjs` 在原来 10 条用例之后新增 **acc-11 派工链路**：第二次
+`apply()` 打开 `autoDispatch`（独立状态目录 + `dispatchTickMs/remoteSyncMs=300`），
+`board_dispatch` 建单 → 等板上 `remote_id` 出现（take→dispatch→attach 走完）→
+模拟远端 completed → 等板子 `status==='done'`（syncRemote 回写）。任一环没发生
+就判失败，并把原因写进报表。
+
+**② 假板子与真板子对齐**
+
+- `do_create` 以前把 `machine` 写成空串，真板子会把 `machine/owner/dispatch` 一起
+  落下 —— 于是「指定机器建单」在假板子上等于没指，派工链路一测就露馅。
+- 保持 v1.3.3 的 holder 语义：同机不同实例 → `409 held-by-other-instance`；
+  `attach/untake/release{queued}` 清 `holder`，`untake` 与 `release{queued}` 清
+  `remote_id`（复核 F8）。
+
+**验证**
+
+- `node scripts/acceptance.mjs`（默认素材）：11/11，acc-11 走完整条派工链路。
+- `GP_ACCEPT_FIXTURES=1 node scripts/acceptance.mjs`：11/11（CI 用的就是这条）。
+- plugcheck `PASS tools=16 routes=12`；reload-smoke A/B/C；dispatch-recovery 71/71；
+  state-file 16/16。
+
+**仍未做**：hub `nodeToken` 轮换（旧值已公开，需三台一起重启）；仓库历史里
+`1068cab` 仍留着旧 nodeToken（转 private 或 filter-repo 重写历史）。
+
 ## v1.3.4 — 2026-11-08
 
 第三轮复核（代码审查 + 遗留系统 + AI 安全审计）的**不重启可做项**：同机双实例的

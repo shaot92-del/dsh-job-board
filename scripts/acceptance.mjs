@@ -238,7 +238,12 @@ const boardCmd = useRealBoard
       args: [path.join(HERE, 'fake-board.mjs'), '--port', String(argPort), '--bind', '127.0.0.1', '--state', TMP_STATE],
     }
 console.log(`临时板子：${useRealBoard ? 'board_server.py（GP_BOARD_PY）' : '仓库自带 fake-board.mjs'}  ${boardUrl}`)
-const server = spawn(boardCmd.file, boardCmd.args, { stdio: 'ignore', windowsHide: true })
+const server = spawn(boardCmd.file, boardCmd.args, {
+  stdio: 'ignore',
+  windowsHide: true,
+  // v1.3.5（复核 F11/F12）：假板子同时当 hub，nodeId 用本机 machine 名，插件才选得中。
+  env: { ...process.env, GP_FAKE_NODE: argMachine },
+})
 
 if (!(await waitBoard(boardUrl))) {
   console.error('临时板子起不来，退出')
@@ -290,16 +295,107 @@ for (const c of CASES) {
   console.log(`${mark} ${row.用例} ${row.标题}  ${row.用时秒}s  ${row.说明}`)
 }
 
+/* ───────── 阶段二：派工链路（v1.3.5，复核 F11/F12） ─────────
+ * 前 10 条只测工具链路，派工一段「零覆盖」。这一段把自动派工真跑一遍：
+ *   board_dispatch 建单（dispatch=auto） → 插件 take → hub dispatch → attach
+ *   → 模拟副机完成 → syncRemote 回写 → 板上 done
+ * autoDispatch 只在这次 apply 里打开，并用独立状态目录，避免与前 10 条互相干扰。
+ */
+{
+  const t0 = Date.now()
+  const prevDir = process.env.DSH_TEAM_STATE_DIR
+  process.env.DSH_TEAM_STATE_DIR = path.join(WORK, 'plugin-state-dispatch')
+  fs.mkdirSync(process.env.DSH_TEAM_STATE_DIR, { recursive: true })
+  const tools2 = new Map()
+  const ctx2 = {
+    tools: { register: (t) => (tools2.set(t.name, t), () => {}) },
+    webServer: { register: () => () => {}, getOrigin: () => boardUrl },
+    get: () => null,
+    effect: () => {},
+    logger: { info() {}, warn() {}, error() {} },
+  }
+  const cleanup2 = apply(ctx2, {
+    boardUrl,
+    machine: argMachine,
+    timeoutMs: 5000,
+    writeTimeoutMs: 5000,
+    autoDispatch: true,
+    dispatchTickMs: 300,
+    remoteSyncMs: 300,
+    unknownGraceMs: 60000,
+  })
+  const readTask = async (id) => {
+    const j = await (await fetch(boardUrl + '/api/board')).json()
+    return (j.tasks || {})[id]
+  }
+  const row = { 用例: 'acc-11', 标题: '派工链路（take→dispatch→attach→sync→done）', 机器: argMachine, 结果: '', 用时秒: 0, 产物: '', sha256: '', 说明: '' }
+  try {
+    // 板子只有收到 /api/caps 后才知道这台机器，而 reportCaps 是 ready 之后异步发的 ——
+    // 直接建单会命中「板子上没有这台机器」。这里先等它上线。
+    let machineOnline = false
+    for (let i = 0; i < 40 && !machineOnline; i++) {
+      const j = await (await fetch(boardUrl + '/api/board')).json()
+      const m = (j.machines || {})[argMachine]
+      machineOnline = Boolean(m && m.online)
+      if (!machineOnline) await sleep(250)
+    }
+    if (!machineOnline) throw new Error('本机迟迟没在板子上线（caps 没上报）')
+    const created = await tools2.get('board_dispatch').execute({ title: 'acc-11 派工链路', goal: 'acceptance: 说一句 ok', machine: argMachine, mode: 'exec' })
+    if (!created || created.ok !== true) throw new Error('建单失败：' + JSON.stringify(created).slice(0, 120))
+    const id = created.taskId || created.id || (created.task && created.task.id)
+    if (!id) throw new Error('建单没返回任务号：' + JSON.stringify(created).slice(0, 120))
+    let remoteId = ''
+    for (let i = 0; i < 60 && !remoteId; i++) {
+      await sleep(250)
+      const t = await readTask(id)
+      remoteId = String((t && t.remote_id) || '')
+    }
+    if (!remoteId) throw new Error('15 秒内没派出去（板上 remote_id 仍空）')
+    const done = await (await fetch(boardUrl + '/api/_test/remote-complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ taskId: remoteId, status: 'completed', result: 'acceptance ok' }),
+    })).json()
+    if (!done || done.ok !== true) throw new Error('模拟远端完成失败：' + JSON.stringify(done).slice(0, 120))
+    let status = ''
+    for (let i = 0; i < 60; i++) {
+      await sleep(250)
+      const t = await readTask(id)
+      status = String((t && t.status) || '')
+      if (status === 'done') break
+    }
+    if (status !== 'done') throw new Error('同步回写没发生（板子 status=' + status + '）')
+    row.结果 = '通过'
+    row.说明 = 'remote=' + remoteId
+  } catch (err) {
+    row.结果 = '失败'
+    row.说明 = (err && err.message) || String(err)
+  } finally {
+    try {
+      cleanup2()
+    } catch {
+      /* ignore */
+    }
+    if (prevDir === undefined) delete process.env.DSH_TEAM_STATE_DIR
+    else process.env.DSH_TEAM_STATE_DIR = prevDir
+  }
+  row.用时秒 = ((Date.now() - t0) / 1000).toFixed(2)
+  results.push(row)
+  console.log(`${row.结果 === '通过' ? '✅' : '❌'} ${row.用例} ${row.标题}  ${row.用时秒}s  ${row.说明}`)
+}
+
 /* ───────── 核验板子最终状态 ───────── */
 
 const board = await (await fetch(boardUrl + '/api/board')).json()
 const boardTasks = Array.isArray(board.tasks) ? board.tasks : Object.entries(board.tasks || {}).map(([id, v]) => ({ id, ...v }))
-const finalOk = results.every((r) => {
+// acc-11 的任务号是插件生成的 bd-…，不是用例号，单独按 results 判定（它自己已经断言过板上 done）。
+const terminal = results.filter((r) => r.用例 !== 'acc-11')
+const finalOk = terminal.every((r) => {
   const t = boardTasks.find((x) => x.id === r.用例)
   if (!t) return false
   return r.结果 === '按预期失败' ? t.status === 'failed' : t.status === 'done'
-})
-console.log(`\n板子终态核验：${finalOk ? '✅ 10/10 状态与预期一致' : '❌ 状态不一致'}`)
+}) && results.filter((r) => r.用例 === 'acc-11').every((r) => r.结果 === '通过')
+console.log(`\n板子终态核验：${finalOk ? `✅ ${terminal.length}/${terminal.length} 状态与预期一致` : '❌ 状态不一致'}`)
 console.log(`计数：${JSON.stringify(board.counts)}`)
 
 /* ───────── 出表 ───────── */
