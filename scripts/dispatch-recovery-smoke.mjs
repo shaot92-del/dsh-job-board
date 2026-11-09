@@ -27,7 +27,11 @@ const check = (name, ok, detail = '') => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-const STATE_DIR = path.join(os.homedir(), '.dsh', 'dsh-team')
+// v1.4.1：插件新增了 <stateDir>/config.json 兜底，会写进状态目录。测试若共用真实的
+// ~/.dsh/dsh-team，场景之间会互相继承 token/machine/dispatchRole（实测把 76 项打成 43 项），
+// 也会污染真实环境。这里改成独立临时目录。
+const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-dispatch-smoke-'))
+process.env.DSH_TEAM_STATE_DIR = STATE_DIR
 const journalFile = (machine, boardUrl) =>
   path.join(
     STATE_DIR,
@@ -317,6 +321,9 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteOwne
       unknownGraceMs: 400,
       writeTimeoutMs: 400,
       dispatchApproval: 'auto',
+      // v1.4.1：配置兜底会把上一场景显式写过的 dispatchRole 留在 config.json 里；
+      // 这里默认 owner，避免 R21/R20 这类没写 role 的场景继承成 observer 后不派工。
+      dispatchRole: 'owner',
       allowedRoots: [],
       ...(extraCfg || {}),
     })

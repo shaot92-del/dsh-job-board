@@ -1,5 +1,42 @@
 # 变更日志
 
+## v1.4.1 — 2026-11-09
+
+配置的第二层兜底：profile patch 被整份重写时，插件不再跟着失联。
+
+### 为什么
+
+2026-11-09 22:57，`C:\Users\17827\.dsh\profiles\desktop\cordis.patch.yml` 被外部重写成
+889 B / 4 条，`- id: team` 与 `- id: remote-agent` 整块消失（当天第二次丢块）。后果不是
+「面板报个错」，而是：team 没有 token → 板子 401；hub 退回默认只监听 `127.0.0.1:19387`
+→ 两台副机全部掉线、队列排着不动。`dsh-remote-agent` 本来有 `instance.json` 兜底，
+但那份文件从来没生成过；team 则完全没有兜底。
+
+### 改动
+
+- **`lib/index.js` 增加 `<stateDir>/config.json`**（`DSH_TEAM_STATE_DIR` 覆盖，默认
+  `~/.dsh/dsh-team`）。白名单只存 9 个键：`token`、`boardUrl`、`machine`、`dispatchRole`、
+  `allowedRoots`、`dispatchApproval`、`timeoutMs`、`shellTimeoutMs`、`maxOutputBytes`。
+  规则：loader/patch 显式给了值 → 以它为准并回写存档（用户改配置仍然生效）；缺省 →
+  用存档兜底。这样「谁把 patch 写坏了」不再等于「整机失联」。
+- **doctor 更诚实**：新增 `config-saved` 警告（列出哪些键来自存档），响应增加
+  `configSource: "patch" | "saved"`。看到这条就说明 patch 又被重写了。
+- **`scripts/config-persist-smoke.mjs`**：9 项断言——C1 空配置全部走存档、C2 显式值覆盖
+  存档、C3 混合（显式覆盖、缺省续用上一轮写回值）。
+- **本机补了 `~/.dsh-remote-agent/instance.json`**（`role: hub`、`listenHost: 0.0.0.0`、
+  `listenPort: 19387`、`nodeToken`，ACL 仅本人）：即使 patch 再次丢掉 remote-agent 块，
+  hub 仍按存档起在 19387 并认副机的 token。
+
+### 验证
+
+`config-persist-smoke` 9/9；plugcheck `tools=16 routes=13`；reload-smoke A/B/C；state-file
+16/16；ui-guard 9/9；dispatch-recovery 76/76；board-server-smoke 17/17；acceptance 11/11。
+
+### 仍未做
+
+- 没查清是哪个宿主组件在重写 patch。下一步：启动时与 canonical 副本对比，缺块就恢复并
+  在 doctor 里报错（比「靠人记得恢复」可靠）。
+
 ## v1.4.0 — 2026-11-09
 
 运维自愈第一批：让「装没装上、跑没跑对」这件事有据可查，并且撞车时不再整机重启。

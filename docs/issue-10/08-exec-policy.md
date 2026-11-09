@@ -614,3 +614,41 @@ TTL。现在 `syncRemote` 在拿到快照后先扫一遍板上终态任务，命
 2. 重启 DSH 装载插件（热重载现在不会回滚，但旧路由仍在，等于没换）。
 3. 打开面板看 doctor：`routes` 消失、`board-stale` 正常刷新、`dispatch` 不报错。
 4. 派一条 e2e 任务确认三类都活着（host 派 → 副机跑 → 板子终态）。
+
+## 16. v1.4.1：配置第二层兜底（2026-11-09）
+
+### 16.1 触发
+
+2026-11-09 22:57，profile 的 `cordis.patch.yml` 被外部重写成 889 B / 4 条，
+`- id: team` 与 `- id: remote-agent` 整块消失（当天第二次；第一次在 20:10）。
+后果：team 没有 token → 板子 401；hub 退回默认 `127.0.0.1:19387` → 两台副机全掉线。
+`dsh-remote-agent` 本有 `~/.dsh-remote-agent/instance.json` 兜底，但该文件从未生成；
+team 则完全没有兜底。
+
+### 16.2 机制
+
+| 层 | 位置 | 行为 |
+| --- | --- | --- |
+| 第一层（原有） | `cordis.patch.yml` 的 `- id: team` 块 | 用户/设置页显式配置 |
+| 第二层（新增） | `<stateDir>/config.json` | 白名单 9 键；loader 显式给值则以它为准并回写存档，缺省用存档 |
+
+- `stateDir`：`DSH_TEAM_STATE_DIR` 覆盖，否则 `~/.dsh/dsh-team`（与 journal/账本同目录）。
+- 白名单：`token`、`boardUrl`、`machine`、`dispatchRole`、`allowedRoots`、
+  `dispatchApproval`、`timeoutMs`、`shellTimeoutMs`、`maxOutputBytes`。
+- doctor 增加 `config-saved`（warn，列出哪些键来自存档）与 `configSource: patch|saved`。
+  看到这条 = patch 又被重写了，恢复 patch 后警告消失。
+- remote-agent 侧补了 `~/.dsh-remote-agent/instance.json`
+  （`role: hub`、`listenHost: 0.0.0.0`、`listenPort: 19387`、`nodeToken`，ACL 仅本人），
+  即使 patch 丢了 `remote-agent` 块，hub 也会按存档起在 19387。
+
+### 16.3 测试
+
+- `scripts/config-persist-smoke.mjs` 9/9：C1 空配置全走存档、C2 显式值覆盖、C3 混合。
+- dispatch-recovery 76/76（该脚本改用临时状态目录，避免场景间继承 `dispatchRole`）。
+- 其余同 15.6：plugcheck 16/13、reload A/B/C/D、state-file 16/16、ui-guard 9/9、
+  board-server-smoke 17/17、acceptance 11/11。
+
+### 16.4 仍未做
+
+- 没查清是哪个宿主组件在重写 patch。下一步：启动时对比 canonical 副本
+  （`~/.dsh/cordis-patch-good-*.yml`），缺块即恢复并在 doctor 报 error。
