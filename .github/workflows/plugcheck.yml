@@ -37,3 +37,10 @@ jobs:
       - run: node scripts/acceptance.mjs --port 8977
         env:
           GP_ACCEPT_FIXTURES: '1'
+      # v1.4.0：board_server.py 随仓库发布（tools/），CI 真起两个进程验契约——
+      # 单实例锁、机器名大小写归一、身份校验、请求体上限。以前它只活在共享盘上，
+      # 没有历史也没有测试，改完靠手抄，跑没跑上新代码只能靠 probe 猜。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/board-server-smoke.py

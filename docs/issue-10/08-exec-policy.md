@@ -538,3 +538,79 @@ commit sha。重跑（20:41:22）：**`files=1989 errors=0 infos=40`，exit 0**�
 `~/.dsh/board-tokens.txt` 读）。插件侧改动（D6/M4/F10）要重启 DSH 才生效 —— 本轮 DSH 的
 热重载已知会撞 `duplicate exact route "/api/board/ui/summary"`，别指望它。
 
+## 15. 第四批（v1.4.0）：运维自愈
+
+### 15.1 为什么先做这个
+
+前一阶段的事故不是「功能不够」，而是「跑起来之后没人替它看着」：
+
+- v1.3.11 板子补丁写完了，但进程还是旧的，我却报告「已生效」——因为没有任何东西能证明
+  运行中的进程就是磁盘上那份源码；
+- 改 `cordis.patch.yml` 触发一次热重载，撞 `duplicate exact route "/api/board/ui/summary"`，
+  16 个资源整体回滚，插件半死，只能整机重启。这种情况一周发生了两次。
+
+所以 v1.4.0 做四件事：板子进仓库、部署脚本自检、doctor 把状态讲出来、撞名时降级而不是
+整体回滚。外加 D6 账本的一个收尾。
+
+### 15.2 板子进仓库与 `build` 指纹
+
+- 源：`tools/board_server.py`（git 跟踪）；部署目标仍是
+  `L:\云盘\gp_video_xfer\_tools\board_server.py`。
+- `/api/health`（带 token）新增 `build`：启动时对 `__file__` 取 sha256 前 12 位。判断
+  「跑的是不是新代码」只看这一项，不要再看行为猜。
+- 部署：`pwsh -File scripts/install-board.ps1`；参数 `-OnlyCheck`（只校验不重启）、
+  `-DryRun`（只打印计划）。退出码：0 成功、2 源缺失、3 无 token、4 停旧失败、5 启动或
+  自检失败；日志在 `_board/install-board.log`。
+- 脚本会：哈希比较 → 备份旧文件 `.bak-<时间戳>` → 停监听端口的进程 → 清陈旧锁（锁里
+  pid 还活着就拒绝，避免误清）→ 用 `GP_BOARD_TOKENS` 环境变量启动 → 25 秒内等 health →
+  校验 `version=4`、`build` 与源一致、`authTokens` 枚数、`singleInstance=true`。
+
+### 15.3 doctor 与面板红条
+
+`GET /api/board/ui/doctor`（回环 + `x-dsh-team-ui` 头）返回
+`{ok, version, role, machine, board, checks[], checkedAt}`。检查项：
+
+| id | level | 触发 |
+| --- | --- | --- |
+| `config-token` | error | team 配置里没有 token |
+| `config-machine` | warn | machine 为空，多机归属会写成空 |
+| `board` | error | 板子连不上或返回异常 |
+| `board-stale` | warn | 板子快照超过 120 秒没更新 |
+| `workers` | warn | 没有在线 worker；部分离线也是 warn |
+| `hub` | warn/error | hub `/nodes` 不可用（error）或 0 个 worker（warn） |
+| `routes` | warn | 有路由被旧实例占用（降级加载） |
+| `dispatch` | error | 距上次 tick 超过 `max(30s, dispatchTickMs*5)` |
+| `dispatch-paused` | warn | 调度器被暂停 |
+| `dispatch-error` | error | 最近一次 tick 抛错 |
+
+面板每 30 秒拉一次，有 error 显示红条、只有 warn 显示黄条，逐条给 `message → hint`。
+
+### 15.4 路由注册的降级语义
+
+- 每条路由单独 try/catch；错误信息匹配 `duplicate ... route` → 跳过这一条、记进
+  `degradedRoutes`、trace `route SKIPPED …`，其余照常注册，插件正常 ready。
+- 非 duplicate 的失败（例如路由表本身坏了）仍 rethrow，走原有整体回滚——降级只针对
+  「旧实例还没卸载」这一种已知形态。
+- 代价：降级实例的 UI 路由仍由旧实例应答（旧代码），doctor 会报 `routes`。看到这条
+  就安排重启，不要以为热重载已经换上新代码。
+
+### 15.5 D6 账本收尾
+
+板子自己的 `reconcile_once` 会先把任务标成 done/failed/blocked/superseded；这时插件的
+`syncRemote` 走不到「写回终态」分支，`forgetRemoteOwner` 不触发，账本条目要等 12 小时
+TTL。现在 `syncRemote` 在拿到快照后先扫一遍板上终态任务，命中账本就清掉（其它条目保留）。
+
+### 15.6 测试
+
+- `board-server-smoke.py` 17/17（默认跑仓库副本，health 含 `build`）。
+- plugcheck `tools=16 routes=13`；ui-guard 9/9（doctor 外部 Host 403、回环 200）。
+- reload-smoke：A/B/D 覆盖正常装载、降级装载、单条撞名；C 仍验证非 duplicate 失败时整体回滚。
+- dispatch-recovery 76/76（新增 R25：板上终态 → 账本清理）。
+- state-file 16/16；acceptance（fixtures）11/11。
+
+### 15.7 部署顺序
+
+1. `scripts/install-board.ps1` 部署并重启板子；核对 health 的 `build` 与源文件 sha256 前 12 位一致。
+2. 重启 DSH 装载插件（热重载现在不会回滚，但旧路由仍在，等于没换）。
+3. 打开面板看 doctor：`routes` 消失、`board-stale` 正常刷新、`dispatch` 不报错。
+4. 派一条 e2e 任务确认三类都活着（host 派 → 副机跑 → 板子终态）。

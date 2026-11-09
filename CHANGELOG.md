@@ -1,5 +1,57 @@
 # 变更日志
 
+## v1.4.0 — 2026-11-09
+
+运维自愈第一批：让「装没装上、跑没跑对」这件事有据可查，并且撞车时不再整机重启。
+
+### 板子（`tools/board_server.py`，第一次进仓库）
+
+- **权威副本进 git**：以前板子只存在于共享盘 `_tools`，改动不进版本库、CI 也测不到。
+  现在仓库里的 `tools/board_server.py` 是源，部署用 `scripts/install-board.ps1`。
+- **`/api/health` 带 `build`**：取源文件 sha256 前 12 位。v1.3.11 曾出现「以为 M1 已生效、
+  实际旧进程还在服务」的误判；以后先看 `build` 对不对，再谈行为。
+- **`scripts/install-board.ps1`**：哈希比较后复制（旧文件留 `.bak-<时间戳>`）→ 停监听端口的
+  进程 → 清陈旧锁（锁里的 pid 还活着就拒绝）→ 从 `_dsh/board-tokens.txt` 读 token 启动 →
+  25 秒内等 health → 校验 `version=4`、`build` 与源一致、`authTokens` 枚数、
+  `singleInstance=true`。日志写 `_board/install-board.log`；支持 `-OnlyCheck` / `-DryRun`。
+- **CI 跑板子 smoke**：`board-server-smoke.py` 默认指向仓库副本，Actions 用 Python 3.12 执行。
+
+### 插件（`lib/index.js` / `lib/client.js`）
+
+- **doctor + 面板红条**：新增 `/api/board/ui/doctor`（回环 + 自定义头保护），每 30 秒检查
+  配置 token/machine、板子连通与新鲜度（>120s）、在线 worker、hub `/nodes`、降级路由数、
+  调度器心跳（>max(30s, tick×5)）、暂停/报错状态。面板在有 error 时显示红条、只有 warn 时
+  黄条，逐条给 message 与 hint。
+- **路由注册幂等化**：撞 `duplicate route` 时只跳过那一条并记入降级列表（trace + doctor
+  上报），工具、定时器、调度器照常启动；非 duplicate 的注册失败仍然整插件回滚。
+  以前一次撞名会把 16 个资源全 rollback，只能整机重启（这周发生过两次）。
+- **D6 账本收尾**：板子自己的 `reconcile_once` 先把任务标成终态时，`syncRemote` 的终态
+  分支不会执行，账本条目以前要等 12h TTL；现在同步时先扫一遍板上终态任务并清账。
+- 版本号从 `package.json` 读取并随 doctor 返回，便于对照「部署版本 ≠ 运行版本」。
+
+### 测试
+
+- `board-server-smoke.py` **17/17**（仓库副本，health 含 `build`）。
+- plugcheck `tools=16 routes=13`（新增 doctor）；ui-guard **9/9**（doctor 外部 Host 403、
+  回环 200）。
+- reload-smoke 场景 A/B/D 全过：B 改为「降级加载不抛错、旧路由仍在、cleanup 不误删」，
+  新增 D「doctor 单条撞名，其余 12 条照常注册」。
+- dispatch-recovery **76/76**：新增 R25（板上已终态 → 账本条目被清，其它条目保留）。
+- state-file 16/16；acceptance（fixtures）11/11。
+
+### 部署
+
+- 板子已用 `install-board.ps1` 实跑：旧 pid 43092 → 新 pid 15840，`build` 与源一致，
+  `authTokens=1`、`singleInstance=true`。
+- 插件仍需重启 DSH 才装载；热重载不会再让整个插件回滚，但旧实例的路由仍优先，doctor 会
+  报 `routes` 降级——看到它就该重启，而不是以为已经生效。
+
+### 仍未做
+
+- 板子进程仍由脚本/计划任务守护，没有做成 Windows 服务；`install-board.ps1` 重启期间
+  有 1–2 秒不可用（面板会短暂报错）。
+- doctor 只做诊断，不自动修复（例如不会自己重启板子或重读配置）。
+
 ## v1.3.11 — 2026-11-09
 
 安全修补第三批（复核清单里的 D6 / M1 / M2 / M4 / L2 / F10）。板子改动同样只在本机共享盘

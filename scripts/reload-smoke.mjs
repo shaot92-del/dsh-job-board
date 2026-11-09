@@ -94,7 +94,7 @@ console.log('— 场景 A：apply → cleanup → apply（正常重载）')
   const a = makeCtx(ws)
   const clean1 = apply(a.ctx, cfg)
   check(typeof clean1 === 'function', 'A1 apply 返回 cleanup 函数')
-  check(ws.exact.size === 12, `A2 首次注册 12 条路由（实际 ${ws.exact.size}）`)
+  check(ws.exact.size === 13, `A2 首次注册 13 条路由（实际 ${ws.exact.size}）`)
   const toolCount = a.tools.size
   check(toolCount > 0, `A3 工具已注册（${toolCount} 个）`)
 
@@ -112,38 +112,64 @@ console.log('— 场景 A：apply → cleanup → apply（正常重载）')
     err = e
   }
   check(!err, `A7 重载到同一 webserver 不撞名${err ? '：' + err.message : ''}`)
-  check(ws.exact.size === 12, `A8 新实例注册 12 条路由（实际 ${ws.exact.size}）`)
+  check(ws.exact.size === 13, `A8 新实例注册 13 条路由（实际 ${ws.exact.size}）`)
   if (typeof clean2 === 'function') clean2()
 }
 
 /* 场景 B：旧实例没被 dispose —— 面板「禁用→启用」的真实形态 */
-console.log('\n— 场景 B：旧实例未 cleanup 就再 apply（DSH 重载实测形态）')
+console.log('\n— 场景 B：旧实例未 cleanup 就再 apply（DSH 重载实测形态，v1.4.0 起降级）')
 {
   const ws = new FakeWebServer()
   const a = makeCtx(ws)
   apply(a.ctx, cfg) // 故意不调用 cleanup，模拟宿主没卸载旧实例
+
   const b = makeCtx(ws)
   let err = null
+  let clean2 = null
   try {
-    apply(b.ctx, cfg)
+    clean2 = apply(b.ctx, cfg)
   } catch (e) {
     err = e
   }
-  console.log(
-    err
-      ? `ℹ️ 第二次 apply 抛出：${err.message}`
-      : 'ℹ️ 第二次 apply 没抛错（说明已做自愈）',
-  )
-  console.log(`ℹ️ 路由表里现在 ${ws.exact.size} 条（12 = 旧实例仍在提供服务）`)
-  // v1.3.3（复核 F12）：以前这里只 console.log，连"撞名"这种最该抓的形态都不判。
-  // 宿主的真实行为是「旧实例不 dispose 就再 apply」：这时第二次 apply 必须抛出
-  // duplicate 路由错误（插件侧无法自愈），否则说明注册路径悄悄覆盖了别人的路由。
-  check(Boolean(err), `B1 旧实例未 cleanup 时第二次 apply 必须失败${err ? '' : '（实际没抛错）'}`)
-  check(
-    Boolean(err) && /duplicate\s+exact\s+route/i.test(String(err.message)),
-    `B2 失败原因是路由撞名${err ? '：' + err.message : '（没有异常）'}`,
-  )
-  check(ws.exact.size === 12, `B3 撞名后路由表仍是旧实例那一套（实际 ${ws.exact.size}）`)
+  // v1.4.0：以前这里整体 rollback，宿主只能整机重启。现在逐条降级——工具、定时器、
+  // 调度器照常起来，只是 UI 路由仍由旧实例应答（doctor 会报出来）。
+  check(!err, `B1 撞名时降级加载而不是抛错${err ? '：' + err.message : ''}`)
+  check(ws.exact.size === 13, `B2 旧实例的路由仍在（实际 ${ws.exact.size}）`)
+  check(b.tools.size > 0, `B3 降级时新实例的工具仍然注册（${b.tools.size} 个）`)
+  if (typeof clean2 === 'function') clean2()
+  check(ws.exact.size === 13, `B4 降级实例 cleanup 不会误删旧实例的路由（实际 ${ws.exact.size}）`)
+}
+
+/* 场景 D：只有个别路由撞名 —— 其余照常注册 */
+console.log('\n— 场景 D：doctor 路由撞名，其余 12 条照常注册')
+{
+  class OneDupWebServer extends FakeWebServer {
+    constructor() {
+      super()
+      this.dup = true
+    }
+    register(route) {
+      if (this.dup && route.path === '/api/board/ui/doctor') {
+        this.dup = false
+        throw new Error(`webserver: duplicate exact route "${route.path}"`)
+      }
+      return super.register(route)
+    }
+  }
+  const ws = new OneDupWebServer()
+  const a = makeCtx(ws)
+  let err = null
+  let clean = null
+  try {
+    clean = apply(a.ctx, cfg)
+  } catch (e) {
+    err = e
+  }
+  check(!err, `D1 单条撞名不影响整体装载${err ? '：' + err.message : ''}`)
+  check(ws.exact.size === 12, `D2 其余 12 条路由已注册（实际 ${ws.exact.size}）`)
+  check(a.tools.size > 0, `D3 工具全部注册（${a.tools.size} 个）`)
+  if (typeof clean === 'function') clean()
+  check(ws.exact.size === 0, `D4 cleanup 清空本实例注册的 12 条（实际 ${ws.exact.size}）`)
 }
 
 /* 场景 C：注册到一半失败 —— 必须整体回滚，不能留半套工具/路由在宿主上 */

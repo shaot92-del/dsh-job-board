@@ -326,7 +326,7 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteOwne
     if (during) await during({ journalFile: jf, pendingFile: pf })
     await sleep(waitMs)
     const journal = readJson(jf)
-    const info = { journal, stats: srv.stats, tasks, remoteTasks: srv.remoteTasks, dispatchCalls: srv.dispatchCalls, pendingAttach: readJson(pf) || [] }
+    const info = { journal, stats: srv.stats, tasks, remoteTasks: srv.remoteTasks, dispatchCalls: srv.dispatchCalls, pendingAttach: readJson(pf) || [], remoteOwners: readJson(ownersFile(machine)) || [] }
     if (settle) await settle(info)
     return info
   } finally {
@@ -355,6 +355,25 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteOwne
     check('R24 远端缺失时把任务标成 failed', info.tasks['bd-r24'].status === 'failed', info.tasks['bd-r24'].status)
     check('R24 不是 409 卡在 claimed', info.tasks['bd-r24'].status !== 'claimed', info.tasks['bd-r24'].status)
     check('R24 待补绑记录已清空', Array.isArray(info.pendingAttach) && info.pendingAttach.length === 0, JSON.stringify(info.pendingAttach))
+  }
+
+  // ── R25（v1.4.0 D6 尾巴）：板上已终态的任务，账本条目要被清掉 ─────────────
+  // 板子自己的 reconcile_once 常常先一步把任务标 done，插件 syncRemote 的终态分支
+  // 不会再执行；以前账本条目要等下一次写入的 12h TTL 才过期。
+  {
+    const info = await scenario('R25', {
+      machine: 'smoke-r25',
+      extraCfg: { remoteSyncMs: 300 },
+      tasks: { 'bd-r25': { status: 'done', machine: 'GT14', remote_id: 'ui-r25', goal: 'R25 goal' } },
+      seedRemoteOwners: (now) => [
+        { taskId: 'bd-r25', remoteId: 'ui-r25', machine: 'GT14', at: now },
+        { taskId: 'bd-r25-other', remoteId: 'ui-r25b', machine: 'MB14', at: now },
+      ],
+      waitMs: 2200,
+    })
+    const left = (info.remoteOwners || []).map((r) => String(r.taskId))
+    check('R25 已终态任务的账本条目被清理', !left.includes('bd-r25'), JSON.stringify(left))
+    check('R25 其它任务条目不受影响', left.includes('bd-r25-other'), JSON.stringify(left))
   }
 
 function summary() {

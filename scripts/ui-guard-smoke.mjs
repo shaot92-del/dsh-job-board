@@ -110,6 +110,12 @@ r = await call(createPath, {
 })
 check('合规写请求放行', r.status !== 403, 'status=' + r.status + ' body=' + r.body.slice(0, 80))
 
+// 8) v1.4.0：doctor 也是 /api/board/ui/* 路由，同样要过闸门
+r = await call('/api/board/ui/doctor', { headers: { host: 'evil.example' } })
+check('doctor 外部 Host 拒绝', r.status === 403 && r.body.includes('host'), 'status=' + r.status)
+r = await call('/api/board/ui/doctor', { headers: base })
+check('doctor 回环放行', r.status === 200 && r.body.includes('checks'), 'status=' + r.status + ' body=' + r.body.slice(0, 80))
+
 cleanup()
 await new Promise((r) => setTimeout(r, 100))
 

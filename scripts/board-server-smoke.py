@@ -11,7 +11,7 @@
     python scripts/board-server-smoke.py
     GP_BOARD_SERVER=/path/to/board_server.py python scripts/board-server-smoke.py
 
-没有板子脚本时（例如 CI 的 Linux runner）直接跳过并以 0 退出。
+默认用仓库内的 tools/board_server.py（v1.4.0 起随包发布）；找不到时才跳过并以 0 退出。
 """
 from __future__ import annotations
 
@@ -30,7 +30,9 @@ try:
 except Exception:
     pass
 
-SERVER = os.environ.get("GP_BOARD_SERVER", r"L:\云盘\gp_video_xfer\_tools\board_server.py")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO_SERVER = os.path.join(os.path.dirname(_HERE), "tools", "board_server.py")
+SERVER = os.environ.get("GP_BOARD_SERVER") or _REPO_SERVER
 TOKEN = "smoke-" + os.urandom(8).hex()
 FAILS: list[str] = []
 
