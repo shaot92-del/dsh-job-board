@@ -1,5 +1,51 @@
 # 变更日志
 
+## v1.3.11 — 2026-11-09
+
+安全修补第三批（复核清单里的 D6 / M1 / M2 / M4 / L2 / F10）。板子改动同样只在本机共享盘
+`_tools` 那份权威副本里，git 只记录插件与测试。
+
+### 插件（`lib/index.js`）
+
+- **D6 跨 Host 回写护栏不再是死代码**：板子 `do_attach` 会把 `taker`/`holder` pop 掉，
+  旧护栏 `t.taker` 在真板上从来没成立过。新增本机「远端任务账本」
+  `remote-owners-<machine>.json`（12 小时 TTL）：attach 成功记 `{taskId, remoteId}`，
+  `syncRemote` 发现板上的 `remote_id` 与本机记的不一致 → 判定被别的 Host 重派，跳过回写；
+  写回终态后清账。
+- **M4 板子地址 pin**：自动探测只在第一次做，成功后写 `<state>/board-url.json`，以后启动
+  先试 pin（不再广播式问 `DESKTOP-NJ6NG3V` / `192.168.3.40` / `127.0.0.1`）。要重新探测
+  就设 `DSH_TEAM_BOARD_REPIN=1` 启动一次（或在状态目录删掉 `board-url.json`）。
+- **F10 注释修正**：在线判定的心跳来自插件（`remoteSyncMs=6s`），不是计划任务
+  `gp_presence` —— 那个任务从来没装过，注释与文档都不该那么写。
+
+### 板子（`board_server.py`，部署在共享盘 `_tools`）
+
+- **M1 身份校验**：`do_mark` / `do_release` 在任务已有 `machine` 时，**非回环**调用必须带
+  `machine`（执行机）或 `holder`，否则 400 `identity-required`。以前「双方都提供才比较」
+  意味着省略字段就能绕过 —— 持 token 者可关掉任意任务。`do_POST` 注入 `__client`
+  供判断，本机 GUI/插件走回环不受影响。
+- **M2 抗打**：连接 `settimeout(15)`（半开连接最多占 15 秒）；并发槽
+  `BoundedSemaphore`（`GP_BOARD_MAX_CONN`，默认 32），满了回 `503 Busy`。
+- **L2 大小上限**：`caps` 8 KB、`metrics.live` 4 KB（超了 413）、`seed` 单次最多 200 条、
+  任务总数最多 5000。合并后的 caps 也卡 2× 上限。
+
+### 测试
+
+- `dispatch-recovery-smoke` **74/74**：R19 改成账本语义（板上 `remote_id` 被改写 →
+  `mark=0`、板上状态不被覆盖）。
+- `board-server-smoke.py` **17 项**：新增 L1（无 token 的 health 只有 `ok`）、M1（局域网
+  匿名 mark/release 400、带 machine 放行）、L2（caps/metrics/seed 三个 413）。
+- plugcheck `tools=16 routes=12`；reload-smoke A/B/C；state-file 16/16；ui-guard 7/7；
+  acceptance（fixtures）11/11。
+
+### 仍未做
+
+- D6 的账本只覆盖「本机派过的任务」；从未由本机派过的任务不追踪（这是预期：本机本来
+  就不该回写它）。
+- M2 只限并发、不排队；L2 的 seed 上限是条数不是字节。
+- 板子改动需要重启进程才生效（`board_server.py` 不在 git 里，部署说明见
+  `docs/issue-10/08-exec-policy.md` §13.3）。
+
 ## v1.3.10 — 2026-11-09
 
 安全修补第二批（上一轮复核里"能当场改代码"的 7 项），外加两处测试保真修复。

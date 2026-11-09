@@ -41,12 +41,14 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         FAILS.append(name)
 
 
-def call(port: int, path: str, body: dict | None = None) -> tuple[int, dict]:
+def call(port: int, path: str, body: dict | None = None, host: str = "127.0.0.1",
+         token: str | None = TOKEN) -> tuple[int, dict]:
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
-        "http://127.0.0.1:%d%s" % (port, path), data=data, method="POST" if data is not None else "GET"
+        "http://%s:%d%s" % (host, port, path), data=data, method="POST" if data is not None else "GET"
     )
-    req.add_header("x-board-token", TOKEN)
+    if token:
+        req.add_header("x-board-token", token)
     if data is not None:
         req.add_header("content-type", "application/json")
     try:
@@ -67,10 +69,24 @@ def free_port() -> int:
     return port
 
 
-def start(state: str, port: int) -> subprocess.Popen:
+def lan_ip() -> str:
+    """取本机对外 IPv4（连 UDP 不真正发包）；拿不到返回空串。"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        return "" if ip.startswith("127.") else ip
+    except Exception:
+        return ""
+
+
+def start(state: str, port: int, bind: str = "127.0.0.1") -> subprocess.Popen:
     env = dict(os.environ, GP_BOARD_TOKENS=TOKEN, PYTHONIOENCODING="utf-8")
     return subprocess.Popen(
-        [sys.executable, SERVER, "--bind", "127.0.0.1", "--port", str(port), "--state", state],
+        [sys.executable, SERVER, "--bind", bind, "--port", str(port), "--state", state],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -97,7 +113,7 @@ def main() -> int:
 
     tmp = tempfile.mkdtemp(prefix="board-smoke-")
     port = free_port()
-    p1 = start(os.path.join(tmp, "a", "state.json"), port)
+    p1 = start(os.path.join(tmp, "a", "state.json"), port, bind="0.0.0.0")
     try:
         check("F1 第一实例启动并健康", wait_health(port), "port=%d" % port)
 
@@ -121,6 +137,38 @@ def main() -> int:
 
         code, body = call(port, "/api/release", {"task_id": tid, "machine": "gt14", "status": "done"})
         check("F3 gt14 可以交付", code == 200, "%s %s" % (code, body))
+
+        # M1（v1.3.11）：非回环客户端改状态必须带 machine/holder，不能靠省略字段绕过
+        lan = lan_ip()
+        if lan:
+            code, body = call(port, "/api/health", token=None, host=lan)
+            check("L1 无 token 的 health 只有 ok", code == 200 and set(body.keys()) == {"ok"},
+                  "%s %s" % (code, body))
+            tid2 = "m1-" + os.urandom(4).hex()
+            call(port, "/api/create", {"task_id": tid2, "title": "m1", "goal": "echo hi", "machine": "GT14"})
+            call(port, "/api/claim", {"task_id": tid2, "machine": "GT14", "minutes": 5})
+            code, body = call(port, "/api/mark", {"task_id": tid2, "note": "no identity"}, host=lan)
+            check("M1 局域网匿名 mark 被拒（400）", code == 400 and body.get("error") == "identity-required",
+                  "%s %s" % (code, body))
+            code, body = call(port, "/api/mark",
+                              {"task_id": tid2, "machine": "GT14", "note": "with identity"}, host=lan)
+            check("M1 带 machine 的 mark 仍然放行", code == 200, "%s %s" % (code, body))
+            code, body = call(port, "/api/release", {"task_id": tid2, "status": "done"}, host=lan)
+            check("M1 局域网匿名 release 被拒（400）", code == 400 and body.get("error") == "identity-required",
+                  "%s %s" % (code, body))
+            code, body = call(port, "/api/release", {"task_id": tid2, "machine": "GT14", "status": "done"}, host=lan)
+            check("M1 带 machine 的 release 放行", code == 200, "%s %s" % (code, body))
+        else:
+            print("SKIP 找不到非回环 IPv4，跳过 M1 局域网用例")
+
+        # L2（v1.3.11）：caps / metrics / seed 都有大小上限
+        big = "x" * (9 * 1024)
+        code, body = call(port, "/api/caps", {"machine": "GT14", "caps": {"blob": big}})
+        check("L2 超大 caps 被拒（413）", code == 413, "%s %s" % (code, body))
+        code, body = call(port, "/api/metrics", {"machine": "GT14", "live": {"blob": "y" * (5 * 1024)}})
+        check("L2 超大 metrics 被拒（413）", code == 413, "%s %s" % (code, body))
+        code, body = call(port, "/api/seed", {"tasks": [{"taskId": "z%d" % i, "goal": "g"} for i in range(250)]})
+        check("L2 超量 seed 被拒（413）", code == 413, "%s %s" % (code, body))
 
         # F1：同端口、不同 state 的第二实例必须拒绝绑定
         p2 = start(os.path.join(tmp, "b", "state.json"), port)

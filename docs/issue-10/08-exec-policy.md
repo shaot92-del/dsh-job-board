@@ -510,3 +510,31 @@ commit sha。重跑（20:41:22）：**`files=1989 errors=0 infos=40`，exit 0**�
 
 > 记住这个判断口径：ERROR 只该在"有效凭据"上出现；把作废值和 URL 指纹也当 ERROR，会让每天的
 > 告警变成噪音，真出事时没人看。
+
+## 14. 第三批修补（v1.3.11）：D6 / M1 / M2 / M4 / L2 / F10
+
+### 14.1 触发条件 → 影响 → 修法
+
+| 项 | 触发条件 | 影响 | 修法 |
+| --- | --- | --- | --- |
+| D6 | 板子任务被另一个 Host 重新派过 | 旧 Host 仍按自己的 hub 结果回写终态，覆盖别人正在跑的进度；原护栏读 `t.taker`，而 `do_attach` 会 pop 掉它，等于死代码 | 新增 `remote-owners-<machine>.json` 账本（attach 记 `{taskId, remoteId}`，12h TTL）；`syncRemote` 比对板上 `remote_id`，不一致就跳过；写回终态清账 |
+| M1 | 任务已有 `machine`，调用方省略 `machine`/`holder` | `if t.get("machine") and ...` 短路成放行（板子源码 `do_mark`/`do_release`），持 token 者可关闭/改写任意任务 | 非回环调用必须带 `machine`（按 `_canon_machine` 比对）或 `holder`，否则 400 `identity-required`；`do_POST` 注入 `__client` |
+| M2 | 半开连接 / 并发打满 | 无限线程，默认 `0.0.0.0` 可达 | 连接 15 秒超时；`BoundedSemaphore`（`GP_BOARD_MAX_CONN`，默认 32）满则 503 |
+| M4 | 插件启动时自动探测板子地址 | 按候选名单广播式发问，同网段可抢答并拿到 board token | 探测成功即 pin 到 `<state>/board-url.json`；`DSH_TEAM_BOARD_REPIN=1` 才重探 |
+| L2 | `caps` / `metrics.live` / `seed` 无上限 | 可把 `state.json` 撑大、读板子越来越慢 | caps 8 KB、metrics 4 KB、seed 200 条/次、任务总数 5000（超限 413） |
+| F10 | 注释声称「四台已装 5 分钟心跳 gp_presence」 | 与事实不符（计划任务从不存在），排障时指错方向 | 代码注释改为插件的 `remoteSyncMs=6s` 心跳；文档核对无同样说法 |
+
+### 14.2 测试与验收
+
+- `dispatch-recovery-smoke` 74/74（R19 改为账本语义：`mark=0` 且板上状态不被覆盖）。
+- `board-server-smoke.py` 17 项全过，其中 M1 用非回环地址（本机 LAN IP）模拟局域网调用：
+  匿名 `mark`/`release` → 400 `identity-required`，带 `machine` → 200。
+- plugcheck 16/12、reload A/B/C、state-file 16/16、ui-guard 7/7、acceptance 11/11。
+
+### 14.3 部署注意
+
+`board_server.py` 不在 git 里，权威副本是 `L:\云盘\gp_video_xfer\_tools\board_server.py`。
+改完必须重启板子进程（`Stop-Process` 旧 pid 后重新拉起，`GP_BOARD_TOKENS` 从
+`~/.dsh/board-tokens.txt` 读）。插件侧改动（D6/M4/F10）要重启 DSH 才生效 —— 本轮 DSH 的
+热重载已知会撞 `duplicate exact route "/api/board/ui/summary"`，别指望它。
+

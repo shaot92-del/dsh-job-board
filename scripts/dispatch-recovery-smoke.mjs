@@ -33,6 +33,7 @@ const journalFile = (machine, boardUrl) =>
     STATE_DIR,
     `dispatch-journal-${machine}-${crypto.createHash('sha1').update(String(boardUrl || 'auto')).digest('hex').slice(0, 8)}.json`,
   )
+const ownersFile = (machine) => path.join(STATE_DIR, `remote-owners-${machine}.json`)
 const pendingFile = (machine, boardUrl) =>
   path.join(
     STATE_DIR,
@@ -284,7 +285,7 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
   })
 }
 
-async function scenario(name, { hub, tasks, machine, seedJournal, seedPendingAttach, seedRemoteTasks, during, markStatus, extraCfg, waitMs = 2600, settle }) {
+async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteOwners, seedPendingAttach, seedRemoteTasks, during, markStatus, extraCfg, waitMs = 2600, settle }) {
   const boardUrl = null
   let srv = null
   let cleanup = null
@@ -296,6 +297,12 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedPendingAtt
     if (seedJournal) {
       fs.mkdirSync(STATE_DIR, { recursive: true })
       fs.writeFileSync(jf, JSON.stringify(seedJournal(Date.now())), 'utf8')
+    }
+    if (seedRemoteOwners) {
+      fs.mkdirSync(STATE_DIR, { recursive: true })
+      fs.writeFileSync(ownersFile(machine), JSON.stringify(seedRemoteOwners(Date.now())), 'utf8')
+    } else {
+      fs.rmSync(ownersFile(machine), { force: true })
     }
     if (seedPendingAttach) {
       fs.mkdirSync(STATE_DIR, { recursive: true })
@@ -806,7 +813,8 @@ async function main() {
       `status=${info.tasks['bd-r18'] && info.tasks['bd-r18'].status}`)
   }
 
-  // ── R19（#10-2 · 跨 Host 收敛）：任务已被别的机器重新认领 → 本机不再回写终态 ──
+  // ── R19（#10-2 · 跨 Host 收敛 / v1.3.11 D6）：板上的 remote_id 已被别的 Host 改写
+  //    —— 本机 journal 记的还是当初那条 ui-r19-old，此时绝不回写终态。──
   {
     const tasks = {
       'bd-r19': {
@@ -820,9 +828,12 @@ async function main() {
       machine: 'smoke-r19',
       extraCfg: { remoteSyncMs: 300 },
       seedRemoteTasks: [{ taskId: 'ui-r19', nodeId: 'smoke-node', goal: 'R19 goal', status: 'completed', createdAt: Date.now() - 5000, updatedAt: Date.now() }],
+      seedRemoteOwners: (now) => [{
+        taskId: 'bd-r19', remoteId: 'ui-r19-old', machine: 'smoke-r19', at: now,
+      }],
       waitMs: 2600,
     })
-    check('R19 被别的机器认领后不回写', info.stats.mark === 0, `mark=${info.stats.mark}`)
+    check('R19 板上 remote_id 变过就不回写', info.stats.mark === 0, `mark=${info.stats.mark}`)
     check('R19 板上状态没被覆盖', info.tasks['bd-r19'].status === 'running', `status=${info.tasks['bd-r19'].status}`)
   }
 
