@@ -5,3 +5,5 @@ node_modules/
 _patch_*.py
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
