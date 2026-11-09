@@ -493,3 +493,20 @@ private（PR 与市场投稿一并消失）。除非决定"不再公开发布"�
 
 复验（合成文件，不碰 live patch）：未知键 + `timeoutMs: 9500` 全保留、`allowedRoots` 更新；
 不给 `-Machine`/`-Role` 时 `MB14`/`observer` 保留；无 team 块时追加整块、其它块不动。
+
+### 13.7 共享盘令牌扫描：从 41 条告警到 0
+
+`GPShareSecretScan`（每天 09:30）首跑（2026-11-09 09:30）结果 `files=1984 errors=41`，逐条看下来
+全是两类误报，没有一条是有效凭据：
+
+1. `_remote-logs\{gt14,mb14}\tasks\*.json` 里的 `6e247852…` / `23aa47ef…` —— 早期两代板子令牌，
+   早已轮换作废。这些文件由镜像层托管，**写进去约 15 秒就被还原**（`*.bak-scrub` 不在镜像范围，
+   所以只有它们能被真正清掉），没法作为"可删除"的对象处理。
+2. `_收件箱\手机传过来的\dsh-team-implementation-plan.md` 里的 `c4a106dc…` —— GitHub 链接里的
+   commit sha（`/tree/`、`/blob/`、`/commit/`）。
+
+改法：扫描器加两个豁免 —— 已作废世代令牌列表（`$retired`，命中记 INFO）、以及 GitHub URL 里的
+commit sha。重跑（20:41:22）：**`files=1989 errors=0 infos=40`，exit 0**。
+
+> 记住这个判断口径：ERROR 只该在"有效凭据"上出现；把作废值和 URL 指纹也当 ERROR，会让每天的
+> 告警变成噪音，真出事时没人看。
