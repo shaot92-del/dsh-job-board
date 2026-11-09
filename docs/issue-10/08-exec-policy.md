@@ -419,3 +419,50 @@ private（PR 与市场投稿一并消失）。除非决定"不再公开发布"�
   任务级 claimSecret、exec 白名单）。
 - 板子仍绑 `0.0.0.0:8965`（防火墙收窄需要管理员权限，尚未做）。
 - 明文 HTTP；events 与 state 仍同库。
+
+---
+
+## §13 第二批：D3/D4/F1/F3/F5/F7/F9（v1.3.10，2026-11-09）
+
+### 13.1 这一批改了什么
+
+| 编号 | 位置 | 触发条件 | 影响 | 修法 |
+| --- | --- | --- | --- | --- |
+| D3 | `lib/client.js` `runCleanup` | 暂停接口 404 / 宿主回 `paused:false` | 继续 release，副机在跑、板上作废且不再被 watch（幽灵任务） | 两次暂停都失败即中止，只提示不动数据 |
+| D4 | `lib/client.js` `runCleanup` | fetch 抛错 | `cleanBusy` 卡 true（按钮永久变灰）、调度器停 2 分钟 | 整段 try/catch/finally，finally 复位并尽力恢复调度 |
+| F1 | `board_server.py` 单实例锁 | 同一端口、不同 `--state` 起第二实例 | Windows `SO_REUSEADDR` 允许双 bind，两份内存态互相覆盖 | 锁名带端口 + `SO_EXCLUSIVEADDRUSE` + `allow_reuse_address=False` |
+| F3 | `do_mark`/`do_beat`/`do_release` | 机器名大小写不同（`GT14` vs `gt14`） | 409「不是你占的」，客户端再也更新不了自己的任务 | 两侧都过 `_canon_machine` 再比 |
+| F5 | `team-hardening.ps1` | 跑加固脚本 | 整块重写，`writeTimeoutMs`/`dispatchTickMs`/`unknownGraceMs` 静默丢失 | 键级 upsert，只改自己管理的 9 个键 |
+| F7 | `自驱.ps1` 四处 release | 板子抖动 / 网络失败 | 以码表外的 exit 1 退出，任务永远 claimed | `Release-Task` 捕获 + `_pending-releases.jsonl` 补报 |
+| F9 | `reconcile_once` | `listdir` 异常 | 静默 `return 0`，远端跑完的任务在板上永远 running | 写 `RECONCILE_ERROR`，health 回显 + stderr 一行 |
+
+### 13.2 测试
+
+- `dispatch-recovery-smoke` 新增 **R24**（待补绑任务归执行机 MB14、调度器 host、远端已消失 →
+  必须按执行机名 mark 成 failed 并清掉记录）：**74/74**。
+- `fake-board.mjs` 的 `/api/mark` 补归属校验 —— 没有它，D2 这类"传错机器名"的 bug 在
+  smoke 里永远测不出来。
+- 新增 `scripts/board-server-smoke.py`：真板子契约（同端口第二实例必须拒绝；`GT14` 认领后
+  `gt14` 可 beat/mark/release、`MB14` 仍 409）。无板子脚本时跳过。
+
+### 13.3 板子补丁的部署方式（重要）
+
+`board_server.py` 不在 git 仓库里，唯一权威副本是
+`L:\云盘\gp_video_xfer\_tools\board_server.py`（副机 `Z:\_tools\board_server.py`）。这一批改了
+4 处：锁名/`BoardServer` 独占绑定、`RECONCILE_ERROR`、`_canon_machine` 三处比较、health 的
+`reconcileError`。改完必须重启板子进程，旧进程不会热加载。
+
+### 13.4 事故记录：profile 管理插件重写了 cordis.patch.yml
+
+2026-11-09 20:10 左右，`@hyzyn/dsh-profile` 重写了
+`C:\Users\17827\.dsh\profiles\desktop\cordis.patch.yml`，把 `- id: remote-agent` 与
+`- id: team` 两个块**整块丢掉**（文件从 ~7 KB 变成 2 KB）。运行中的实例还是旧配置，所以当时
+没立刻断；插件在 20:21 热重载后按新 patch 启动，于是 `_runtime.log` 出现
+`读板子失败 unauthorized` / `caps ... status=401`，调度器空转，hub 也没有 `nodeToken`。
+
+处置与教训：
+1. 恢复时从 `cordis.patch.yml.bak-1794226190114`（11-08 22:54，含两块）取回，只把 token 行
+   换成当前值（team = gen3、remote-agent = `nt_21a48471…`），其余键原样保留。
+2. **任何 profile 级操作之后都要检查这两块还在不在**：
+   `Select-String cordis.patch.yml -Pattern '^- id: (team|remote-agent)$'`。
+3. 这两个块丢了不会在界面上报错，只会表现成"板子 401 / 副机不连"。

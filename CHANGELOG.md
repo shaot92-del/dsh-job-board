@@ -1,5 +1,52 @@
 # 变更日志
 
+## v1.3.10 — 2026-11-09
+
+安全修补第二批（上一轮复核里"能当场改代码"的 7 项），外加两处测试保真修复。
+
+### 插件（`lib/client.js`）
+
+- **D3 暂停失败不再继续归档**：以前宿主回 `paused:false` 或暂停接口 404 时，`paused`
+  恒为 false 却继续 release —— 副机在跑、板上已 superseded，同步器也不再 watch 它（幽灵
+  任务）。现在两次暂停都没成功就**直接中止**并给出可读提示。
+- **D4 `runCleanup` 补 try/catch/finally**：任何一步抛错都不会再把 `cleanBusy` 卡在 true
+  （按钮永久变灰），`finally` 里统一 `setCleanBusy(false)` 并尽力 `pauseDispatch(0)`。
+
+### 板子（`board_server.py`，部署在共享盘 `_tools`）
+
+- **F1 单实例锁按端口隔离**：锁文件名从 `state.json.lock` 改成 `state.json.<port>.lock` ——
+  只按 state 路径加锁时，换一个 `--state` 就能再起一个进程绑同一端口。另加
+  `BoardServer(ThreadingHTTPServer)`：`allow_reuse_address=False` + Windows
+  `SO_EXCLUSIVEADDRUSE`，绑定失败打印「绑定 xxx 失败」并以 1 退出。
+- **F3 机器名大小写归一**：`do_mark` / `do_beat` / `do_release` 两侧都过 `_canon_machine`
+  再比 —— 以前 `GT14` 认领的任务，`gt14` 永远 409，客户端再也更新不了自己的任务。
+- **F9 reconcile 失败不再静默**：扫描异常写入 `RECONCILE_ERROR` 并在 `/api/health`
+  的 `reconcileError` 回显、stderr 打一行；恢复后自动清空。
+
+### 脚本
+
+- **F5 `team-hardening.ps1` 键级 upsert**：只改自己负责的 9 个键，`writeTimeoutMs` /
+  `dispatchTickMs` / `unknownGraceMs` 等未被管理的键与注释原样保留（以前整块重写会静默丢掉）。
+- **F7 `自驱.ps1` release 失败不再带走守护进程**：四处 `Invoke-BoardAction '/api/release'`
+  收敛成 `Release-Task`，失败写 `_pending-releases.jsonl`，下一轮 `Replay-PendingReleases`
+  自动补报；不再以码表外的 exit 1 退出。
+
+### 测试
+
+- `scripts/fake-board.mjs` 的 `/api/mark` 补上归属校验（以前完全不校验，D2 那类 bug
+  在 smoke 里永远测不出来）：machine 规范化比较、holder 精确比较，均只在双方给值时生效。
+- `dispatch-recovery-smoke` 新增 **R24**：待补绑任务归执行机（MB14）、调度器是 host，
+  远端任务已消失 → 必须按执行机名 mark 成 failed 并清掉待补绑记录（**74/74**）。
+- 新增 `scripts/board-server-smoke.py`：真板子契约测试 —— ①同端口不同 state 的第二实例
+  必须拒绝启动；②`GT14` 认领后 `gt14` 可 beat/mark/release、`MB14` 仍 409。找不到板子
+  脚本（CI 的 Linux runner）时跳过并 exit 0。
+
+### 仍未做（下一轮）
+
+D6（`syncRemote` 的 taker 护栏是死代码）、M1（mark/release 省略字段绕过归属）、
+M2（无 socket 超时/并发上限）、M4（boardUrl 自动探测）、L2（caps/metrics 无上限）、
+F10（`gp_presence` 计划任务仍不存在）。
+
 ## v1.3.9 — 2026-11-08
 
 安全修补第一批（三专家复审的必改项 + 共享盘秘密清理）。这一版的目标不是"再加功能"，而是把

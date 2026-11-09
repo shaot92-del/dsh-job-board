@@ -284,7 +284,7 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
   })
 }
 
-async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTasks, during, markStatus, extraCfg, waitMs = 2600, settle }) {
+async function scenario(name, { hub, tasks, machine, seedJournal, seedPendingAttach, seedRemoteTasks, during, markStatus, extraCfg, waitMs = 2600, settle }) {
   const boardUrl = null
   let srv = null
   let cleanup = null
@@ -296,6 +296,10 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTask
     if (seedJournal) {
       fs.mkdirSync(STATE_DIR, { recursive: true })
       fs.writeFileSync(jf, JSON.stringify(seedJournal(Date.now())), 'utf8')
+    }
+    if (seedPendingAttach) {
+      fs.mkdirSync(STATE_DIR, { recursive: true })
+      fs.writeFileSync(pf, JSON.stringify(seedPendingAttach(Date.now())), 'utf8')
     }
     const ctx = makeCtx(srv.url)
     cleanup = apply(ctx, {
@@ -315,7 +319,7 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTask
     if (during) await during({ journalFile: jf, pendingFile: pf })
     await sleep(waitMs)
     const journal = readJson(jf)
-    const info = { journal, stats: srv.stats, tasks, remoteTasks: srv.remoteTasks, dispatchCalls: srv.dispatchCalls }
+    const info = { journal, stats: srv.stats, tasks, remoteTasks: srv.remoteTasks, dispatchCalls: srv.dispatchCalls, pendingAttach: readJson(pf) || [] }
     if (settle) await settle(info)
     return info
   } finally {
@@ -328,6 +332,23 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteTask
     void boardUrl
   }
 }
+
+  // ── R24（v1.3.10 D2）：待补绑的任务归执行机所有，mark 必须按执行机名发 ──────
+  // 以前 attachTask / retryPendingAttach 传 cfg.machine（调度器名），多机部署下板子
+  // 回 409「不是你占的」，任务永远卡 claimed、待补绑记录 6 小时才过期。
+  {
+    const info = await scenario('R24', {
+      machine: 'host',                 // 调度器名
+      tasks: { 'bd-r24': { status: 'claimed', machine: 'MB14', goal: 'R24 goal', remote_id: '' } },
+      seedPendingAttach: (now) => [
+        // 远端任务已经不存在（hub 查不到）→ 走 mark 标 failed 的那条分支
+        { taskId: 'bd-r24', remoteId: 'ui-gone-r24', machine: 'MB14', tries: 1, at: now - 1000 },
+      ],
+    })
+    check('R24 远端缺失时把任务标成 failed', info.tasks['bd-r24'].status === 'failed', info.tasks['bd-r24'].status)
+    check('R24 不是 409 卡在 claimed', info.tasks['bd-r24'].status !== 'claimed', info.tasks['bd-r24'].status)
+    check('R24 待补绑记录已清空', Array.isArray(info.pendingAttach) && info.pendingAttach.length === 0, JSON.stringify(info.pendingAttach))
+  }
 
 function summary() {
   const ok = results.filter((r) => r.ok).length

@@ -219,6 +219,19 @@ const ROUTES = {
   'POST /api/mark': async (req, res, b) => {
     const t = state.tasks[b.task_id]
     if (!t) return send(res, 404, { ok: false, error: 'no such task' })
+    // v1.3.10（复核 D2 的测试保真）：真板子 do_mark 会校验 machine/holder 归属，这里以前
+    // 完全不校验 —— 所以「mark 传错机器名」在 smoke 里永远测不出来。只在双方都给值时比较，
+    // 与真板子保持一致（升级期兼容：旧插件不带这两个字段）。
+    const saidMachine = String(b.machine || '')
+    const heldMachine = String(t.machine || '')
+    if (saidMachine && heldMachine && saidMachine.toLowerCase() !== heldMachine.toLowerCase()) {
+      return send(res, 409, { ok: false, error: '不是你占的', holder: heldMachine })
+    }
+    const saidHolder = String(b.holder || '')
+    const heldHolder = String(t.holder || '')
+    if (heldHolder && saidHolder && heldHolder !== saidHolder) {
+      return send(res, 409, { ok: false, error: '已被同机的另一个实例占住', holder: heldHolder })
+    }
     // B4（三方复审）：与真板子 do_mark 对齐 —— status 白名单 + queued 清干净。
     const STATUSES = ['queued', 'claimed', 'running', 'done', 'failed', 'blocked', 'superseded', 'stale']
     if (b.status && !STATUSES.includes(String(b.status))) {
