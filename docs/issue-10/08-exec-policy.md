@@ -466,3 +466,30 @@ private（PR 与市场投稿一并消失）。除非决定"不再公开发布"�
 2. **任何 profile 级操作之后都要检查这两块还在不在**：
    `Select-String cordis.patch.yml -Pattern '^- id: (team|remote-agent)$'`。
 3. 这两个块丢了不会在界面上报错，只会表现成"板子 401 / 副机不连"。
+
+### 13.5 重启验收（v1.3.10 上线后实测）
+
+热重载装不回 dsh-team（`route register FAILED: duplicate exact route "/api/board/ui/summary"`
+→ `apply aborted before ready, rolling back 16 resource(s)`），必须整机重启。20:36 重启后实测：
+
+- `_runtime.log`：`apply start` → 12 条 `route registered` → `ready` → `host dispatcher started tick=4000ms`，
+  随后 `caps reported ok=true machine=host`、`board auto-detected`，不再出现 `unauthorized`。
+- hub：`19387` 由新进程监听，**服务端视角** `LocalPort=19387` 有 `192.168.3.73`、`192.168.3.75`
+  两条 Established（别用 `-RemotePort 19387` 查，那是客户端视角，会误判为 0）。
+- 板子：host / GT14 / MB14 的 `last_seen` 都在 20 秒内（PC2 与 `?` 是历史条目）。
+- 端到端派工：建一条 MB14 任务，4 秒内被派给 `desktop-2gh05s7`，回 `v1.3.10 alive 20:39:36`。
+
+恢复用的 patch 副本另存在 `C:\Users\17827\.dsh\cordis-patch-good-20261109.yml`。
+
+### 13.6 `team-hardening.ps1` 的第二个丢配置点（已修）
+
+13.1 的 F5 修掉了"整块重写丢未知键"，但合成 YAML 复验又发现：**受管键里的数值也会被重置**。
+`timeoutMs` / `shellTimeoutMs` / `maxOutputBytes` / `remoteSyncMs` 没有参数入口，旧实现一律返回
+硬编码默认值，于是 `timeoutMs: 9000` 跑一次加固就变回 `8000`。
+
+修法：解析旧块时把受管键现值收进 `$oldValues`，`Keep-Or(key, fallback)` 有旧值就沿用；
+`dispatchRole` 只显式传 `-Role` 时才覆盖。另把 `"$key: ..."` 改成 `"${key}: ..."`（`$key:` 会被
+当成作用域引用，直接 ParserError）。
+
+复验（合成文件，不碰 live patch）：未知键 + `timeoutMs: 9500` 全保留、`allowedRoots` 更新；
+不给 `-Machine`/`-Role` 时 `MB14`/`observer` 保留；无 team 块时追加整块、其它块不动。
