@@ -1,5 +1,28 @@
 # 变更日志
 
+## v2.0.1 — 2026-11-11
+
+修 v2.0.0 漏掉的一处改名：**包内 `cordis.patch.yml` 的 `name` 还是 `dsh-team`**。
+
+### 为什么会这样
+
+`package.json` 的 `name` 只决定 npm 包名和安装目录；真正让 loader 去解析哪个模块的，是
+包内 bundle patch 里 `- insert: - name: '...'` 这一行。v2.0.0 改了前者、漏了后者，于是：
+- 本机：profile 里原来的 `dsh-team` 还在，旧实例继续跑，看不出问题；
+- PC2：从 git 装了 `dsh-job-board`，但 patch 让 loader 去找 `dsh-team` 模块，
+  找不到（或找到另一个同名 npm 包），表现就是「装了但名字还是旧的 / 起不来」。
+
+### 改法
+
+- `cordis.patch.yml` 的 `name: 'dsh-team'` → `name: 'dsh-job-board'`；
+- 文件头注释同步改名；
+- 版本 2.0.1。
+
+### 验证
+
+`npm pack --dry-run` 里 `cordis.patch.yml` 内容已更新；本地 profile 的 `- id: team`
+覆盖块不受影响（它只覆盖 config，不声明 name）。装完仍需重启 DSH。
+
 ## v2.0.0 — 2026-11-11
 
 改名：`dsh-team` → **`dsh-job-board`**（仓库同名）。功能不变，只动名字与安装方式。

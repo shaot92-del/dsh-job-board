@@ -1,4 +1,4 @@
-# dsh-team 组合包补丁：把「团队 · 作业板」插件行插入 profile 的 loader。
+# dsh-job-board 组合包补丁：把「团队 · 作业板」插件行插入 profile 的 loader。
 #
 # 为什么插入必须写在包里、而不是只写在 profile 的 cordis.patch.yml 里：
 # profile patch 是「按 id 覆盖已存在的行」。把 `- insert:` 只写在 profile patch 里，
@@ -11,7 +11,7 @@
 # 运行时用 ctx.inject() 也不行（子 fiber 会被回收，路由注册完随即 DISPOSED）。
 - insert:
     - id: team
-      name: 'dsh-team'
+      name: 'dsh-job-board'
       inject: ['webServer', 'tools']
       config:
         # 留空 = 自动探测（主机名 → 192.168.3.40 → 本机回环）；写死会让副机永远指向自己。
