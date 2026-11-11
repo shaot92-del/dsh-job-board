@@ -1,5 +1,29 @@
 # 变更日志
 
+## v1.5.3 — 2026-11-11
+
+把 R21 从「看时序」改成「看结果」，并把 holder 语义补到真板子的 smoke 里。
+
+### 修了什么
+
+- **R21 在 ubuntu-latest 上偶发失败**（v1.5.2 的 CI）。断言原来是
+  `holderConflict >= 1`，但两个实例的 tick 谁先谁后决定了第二个实例会不会真的
+  发出第二次 take：A 先 take 成功后任务就是 `claimed`，B 的候选过滤只取
+  `queued/stale`，会直接跳过、不产生 409。于是同一条正确行为有时 0 次冲突、
+  有时 1 次。现在断言的是可观测结果：`dispatch === 1 && remoteTasks.length === 1`
+  （只派一次、远端只有一条任务），时序细节只写进失败信息。
+- **真板子 smoke 补 holder 用例**：同机两个实例（holder 不同）对同一条任务先后
+  `/api/take`，第二个必须 409「已被同机的另一个实例占住」。这条以前只在
+  fake-board 里测过，真板子没覆盖；R21 放软之后就由它来守 409 语义。
+  用例里 `/api/create` 需要显式 `dispatch: 'auto'`，否则 `do_take` 会以
+  「不是自动派发任务」拒绝（第一次跑就踩到了）。
+
+### 验证
+
+plugcheck 16/13、reload A/B/C、ui-guard 10/10、state-file 16/16、
+config-persist 9/0、solo 10+5、dispatch **76/76**、board smoke 19 项全过、
+acceptance 11/11。`windows-latest` 与 `ubuntu-latest` 双绿。
+
 ## v1.5.2 — 2026-11-11
 
 市场复验的第一条收尾 + 配置脚本。

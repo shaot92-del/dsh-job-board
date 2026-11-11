@@ -163,6 +163,22 @@ def main() -> int:
         else:
             print("SKIP 找不到非回环 IPv4，跳过 M1 局域网用例")
 
+        # R21 的板子侧语义（v1.5.3）：同机不同实例（holder 不同）再 take 必须 409，
+        # 否则同一条任务会被两个 DSH 进程各派一遍。
+        tid3 = "hold-" + os.urandom(4).hex()
+        call(port, "/api/create", {"task_id": tid3, "title": "holder", "goal": "echo hi",
+                                   "dispatch": "auto", "machine": "GT14"})
+        code, body = call(port, "/api/take",
+                          {"task_id": tid3, "machine": "GT14", "holder": "inst-a", "minutes": 5})
+        check("同机实例 A 认领成功", code == 200, "%s %s" % (code, body))
+        code, body = call(port, "/api/take",
+                          {"task_id": tid3, "machine": "GT14", "holder": "inst-b", "minutes": 5})
+        check("同机实例 B 被 holder 挡住（409）", code == 409 and "另一个实例" in str(body.get("error", "")),
+              "%s %s" % (code, body))
+        code, body = call(port, "/api/release",
+                          {"task_id": tid3, "machine": "GT14", "holder": "inst-a", "status": "done"})
+        check("实例 A 可以交付", code == 200, "%s %s" % (code, body))
+
         # L2（v1.3.11）：caps / metrics / seed 都有大小上限
         big = "x" * (9 * 1024)
         code, body = call(port, "/api/caps", {"machine": "GT14", "caps": {"blob": big}})

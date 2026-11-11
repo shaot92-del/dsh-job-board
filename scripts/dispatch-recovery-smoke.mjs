@@ -966,8 +966,11 @@ async function main() {
       await sleep(2600)
       const journal = readJson(jf)
       check('R21 同机两实例只派一次', srv.stats.dispatch === 1, `dispatch=${srv.stats.dispatch}`)
-      check('R21 第二个实例被 holder 挡住', srv.stats.holderConflict >= 1,
-        `holderConflict=${srv.stats.holderConflict} take=${srv.stats.take}`)
+      // 第二个实例是否撞上 holder 取决于两次 tick 的先后：A 先完成 take 后任务就是 claimed，
+      // B 的候选过滤（只取 queued/stale）会直接跳过，不产生 409。真正要保证的是「只认领一次、
+      // 只派一次」，holder 冲突只是其中一种时序；板子侧的 409 语义由 board-server-smoke 覆盖。
+      check('R21 第二个实例没有派出去', srv.stats.dispatch === 1 && srv.remoteTasks.length === 1,
+        `dispatch=${srv.stats.dispatch} take=${srv.stats.take} holderConflict=${srv.stats.holderConflict} remote=${srv.remoteTasks.length}`)
       check('R21 远端只有一条任务', srv.remoteTasks.length === 1, JSON.stringify(srv.remoteTasks.map((t) => t.taskId)))
       check('R21 journal 最终清空', (Array.isArray(journal) ? journal.length : 0) === 0, JSON.stringify(journal))
     } finally {

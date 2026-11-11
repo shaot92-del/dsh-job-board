@@ -734,3 +734,33 @@ solo 只实现 solo 需要的子集（create/claim/take/untake/attach/mark/beat/
 ### 19.4 验证
 
 AST 解析通过；临时 profile 上「更新已有块」「追加新块」两条路径实测通过；回归 16/13、10+5、76/76、17/17、11/11。
+
+## 20. v1.5.3：R21 的时序依赖与 holder 语义的真板子覆盖
+
+### 20.1 现象
+
+v1.5.2 的 CI 只有 `ubuntu-latest` 红，失败点是 `dispatch-recovery-smoke` 的 R21：
+`FAIL R21 第二个实例被 holder 挡住 — holderConflict=0 take=1`。本地 Windows 复跑多为绿，
+所以它不是「代码坏了」，而是**测试断言绑在时序上**。
+
+### 20.2 根因
+
+R21 起两个实例 A/B 抢同一条 queued 任务，断言「B 必须拿到 409」。但 A 先 `take` 成功后，
+任务状态变成 `claimed`；插件派工候选过滤只取 `queued/stale`（`lib/index.js` 的
+`(t.status === 'queued' || t.status === 'stale') && !t.remote`），B 直接跳过这条任务，
+根本不会发第二次 `take`——于是 `holderConflict` 是 0 而不是 1。两个 tick 的相对快慢
+决定了走哪条分支，runner 越快越容易跳过。
+
+### 20.3 改法
+
+- 断言改成可观测结果：`dispatch === 1 && remoteTasks.length === 1`（只派一次、
+  远端只有一条），时序值只放进失败信息里。
+- 把「同机不同 holder 的 409」搬到真板子的 `board-server-smoke.py`：create 一条
+  `dispatch: "auto"` 的任务，实例 A `take` 成功，实例 B `take` 必须 409
+  「已被同机的另一个实例占住」。fake-board 早就有这条，真板子此前没覆盖。
+  注意 `/api/create` 不传 `dispatch` 时默认不是自动派发，`do_take` 会先以
+  「不是自动派发任务」拒绝——用例必须显式写 `dispatch: "auto"`。
+
+### 20.4 验证
+
+dispatch 76/76；board smoke 19 项全过（含新增两条）；其余回归见 CHANGELOG v1.5.3。
