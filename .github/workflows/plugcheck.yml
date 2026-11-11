@@ -24,7 +24,13 @@ jobs:
       # 重载契约：apply→cleanup→apply 不撞名、cleanup 之后工具/路由/订阅归零、
       # 半装载失败要整体回滚（复刻 dsh-host-webserver 的重复路由语义，见 v1.1.11）
       - run: node scripts/reload-smoke.mjs
-      # 派工恢复（#10-1，v1.2.0）：结果未知先查询不重派、已认领未发出直接补发。
+      # v2.0.2：配置持久化 / solo 自举（含同目录二次 apply）/ shell 白名单 fail-closed。
+      # 这几个都是「装完第一次用」的路径，回归一次就能挡住 PC2 那类事故。
+      - run: node scripts/config-persist-smoke.mjs
+      - run: node scripts/solo-board-smoke.mjs
+      - run: node scripts/solo-bootstrap-smoke.mjs
+      - run: node scripts/shell-guard-smoke.mjs
+      - run: node scripts/ui-guard-smoke.mjs      # 派工恢复（#10-1，v1.2.0）：结果未知先查询不重派、已认领未发出直接补发。
       # 假板子 + 假 hub，同样不连真环境。
       - run: node scripts/dispatch-recovery-smoke.mjs
       # 状态文件的跨进程锁（v1.3.1）：真起 4 个子进程并发读改写同一个文件，断言一次
