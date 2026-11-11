@@ -789,3 +789,14 @@ npm 上的 `dsh-team` 已被另一个「Agent Teams」插件占用（0.2.11）�
 
 改名后重新按 `github:shaot92-del/dsh-job-board` 装；装前把旧的 `dsh-team` bundle 从
 profile 的 `dsh.profile.bundles` 与 dependencies 里去掉，避免两个包同时加载抢同一批路由。
+
+### 21.5 v2.0.1：漏改的 bundle patch name
+
+`package.json` 的 `name` 决定 npm 包名与安装目录；**loader 决定加载哪个模块，看的是包内
+`cordis.patch.yml` 里 `- insert: - name: '...'`**。v2.0.0 只改了前者，后者仍是 `dsh-team`：
+- 本机看不出问题，是因为 profile 里原来就装着 `dsh-team`，旧实例继续跑；
+- PC2 从 git 装了 `dsh-job-board`，patch 却让 loader 去找 `dsh-team`，于是「装上了但名字
+  还是旧的 / 起不来」。
+
+v2.0.1 把这一行改成 `dsh-job-board`。判断一个包到底会被哪个名字加载，看
+`node_modules/<包>/cordis.patch.yml` 的 `name`，不是看目录名。
