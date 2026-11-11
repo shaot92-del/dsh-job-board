@@ -57,6 +57,10 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 装完确认 profile 的 `package.json` 里 `dsh.profile.bundles` 有 `dsh-team` 这一行，
 然后重启 DSH（Host 半边改动只有重启才生效；只改 `lib/client.js` 的话刷新页面即可）。
 
+> 要接入别人已经在跑的板子，不用手改 YAML：
+> `pwsh -File scripts\set-team-config.ps1 -Profile desktop -BoardUrl 'http://<主机>:8965' -Token '<token>' -Machine '<本机名>' -Role observer`
+> （写前自动备份，写后复核；`-List` 只看不写。）
+
 > **板子有两种，按场景选。**
 >
 > - **单机 / 第一次用**：v1.5.0 起零配置会自动在 `127.0.0.1` 上起一个随包最小板子

@@ -712,3 +712,25 @@ solo 只实现 solo 需要的子集（create/claim/take/untake/attach/mark/beat/
 ### 18.6 部署
 
 插件改动需重启 DSH 才装载（热重载会撞 duplicate route）；solo 板子随插件启停，无需额外进程或 Python。
+
+## 19. v1.5.2：内网候选地址下线 + set-team-config（2026-11-11）
+
+### 19.1 触发
+
+市场第一次复验还留了一条：`lib/index.js` 的 `BOARD_CANDIDATES` 硬编码了作者的局域网地址（`DESKTOP-NJ6NG3V:8965`、`192.168.3.40:8965`）。公开包里不该带作者内网信息；自动探测也不该把请求打到别人家网段。
+
+### 19.2 修法
+
+默认候选只剩 `http://127.0.0.1:8965`；内网/远程地址用 `DSH_TEAM_BOARD_CANDIDATES`（逗号分隔）或 `DSH_BOARD_URL` 指定。显式 `boardUrl` 仍然最优先，行为对已配置的机器无变化。
+
+### 19.3 set-team-config.ps1
+
+手粘 YAML 时聊天工具会替换引号（直引号变弯引号），PowerShell 字符串不闭合，终端卡在 `>>`。脚本改为按行 upsert：
+
+- `-List`：列 profile、team 块数量（0/1/重复）；
+- `-Profile foo -BoardUrl ... -Token ... -Machine PC2 -Role observer`：更新已有块或追加新块，写前 `*.bak-setteam-*`，写后复核；
+- `-DryRun`：只打印。
+
+### 19.4 验证
+
+AST 解析通过；临时 profile 上「更新已有块」「追加新块」两条路径实测通过；回归 16/13、10+5、76/76、17/17、11/11。

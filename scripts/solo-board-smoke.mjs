@@ -30,18 +30,23 @@ const call = async (base, p, body, token) => {
   const headers = { accept: 'application/json' }
   if (body !== undefined) headers['content-type'] = 'application/json'
   if (token) headers['x-board-token'] = token
-  const res = await fetch(base + p, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
-  let data = null
   try {
-    data = await res.json()
+    const res = await fetch(base + p, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    let data = null
+    try {
+      data = await res.json()
+    } catch {
+      data = null
+    }
+    return { status: res.status, data }
   } catch {
-    data = null
+    // 端口被关掉/被 undici 判为 bad port 时不要炸整个测试，交给断言报 FAIL。
+    return { status: 0, data: null }
   }
-  return { status: res.status, data }
 }
 
 const b1 = await startSoloBoard({ stateDir: dir, port: 0 })

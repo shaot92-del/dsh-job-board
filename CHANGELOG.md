@@ -1,5 +1,28 @@
 # 变更日志
 
+## v1.5.2 — 2026-11-11
+
+市场复验的第一条收尾 + 配置脚本。
+
+### 改动
+
+- `lib/index.js` 的 `BOARD_CANDIDATES` 不再硬编码作者的局域网地址
+  （`DESKTOP-NJ6NG3V:8965`、`192.168.3.40:8965`）。默认只探 `127.0.0.1:8965`；
+  内网/远程候选地址改用环境变量 `DSH_TEAM_BOARD_CANDIDATES`（逗号分隔）或
+  `DSH_BOARD_URL` 指定。这是市场第一次复验留下的最后一条（「删掉两条内网候选地址」）。
+- 新增 `scripts/set-team-config.ps1`：自动找 profile、upsert `team` 块、写前备份、
+  写后复核。起因是手粘 YAML 时聊天工具会把 `'` 换成弯引号 `‘ ’`，PowerShell
+  字符串永远不闭合，终端卡在 `>>` 续行——这种问题不该让人靠手改文件解决。
+  - `-List` 只看各 profile 有没有/重不重复 team 块；
+  - `-Profile desktop -BoardUrl ... -Token ... -Machine PC2 -Role observer` 写入；
+  - `-DryRun` 只打印不落盘。
+
+### 验证
+
+`set-team-config.ps1` AST 解析通过；临时 profile 上实测两条路径（更新已有块、追加新块）
+均通过，字段与其它条目保持不动。回归全绿：plugcheck 16/13、solo smoke 10+5、
+dispatch 76/76、board smoke 17/17、acceptance 11/11。
+
 ## v1.5.1 — 2026-11-11
 
 打包漏文件：`package.json` 的 `files` 里没有 `lib/state-file.mjs`。
