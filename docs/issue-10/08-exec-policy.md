@@ -676,3 +676,39 @@ doctor 的检查写的是 `if (!cfg.boardToken)`，而配置字段一直叫 `tok
 
 plugcheck 16/13；ui-guard 10/10；reload A/B/C；state-file 16/16；config-persist 9/9；dispatch-recovery 76/76；board-server-smoke 17/17；acceptance 11/11（fixtures）。
 
+
+## 18. v1.5.0：Solo 自举（2026-11-11）
+
+### 18.1 触发
+
+用户从插件市场装完 dsh-team 直接启用，profile 里没有 team 配置（市场安装不带配置），面板全空、板子 401。要跑起来得同时凑齐三样：一台机器跑 Python 板子、拿到 board token、手改 `cordis.patch.yml`。PC2 上就是这样卡住的——不是用户操作错，是首次启用路径不存在。
+
+### 18.2 设计：两档板子
+
+| 场景 | 板子 | 启动方式 |
+| --- | --- | --- |
+| 单机 / 第一次用 | `lib/solo-board.mjs`（随包 Node） | 插件零配置时自动起在 `127.0.0.1:<随机端口>` |
+| 多机团队 | `tools/board_server.py` | 宿主机常驻进程 + 共享 token（`scripts/install-board.ps1`） |
+
+solo 只实现 solo 需要的子集（create/claim/take/untake/attach/mark/beat/release/caps/metrics/say/seen），语义对齐 Python 板子（`take` 守 `dispatch=auto`、holder 冲突 409、mark 身份校验与状态白名单、release 归属、caps 8KB / metrics 4KB 上限）。**只绑 127.0.0.1**，token 随机生成并 `timingSafeEqual` 比较，状态写 `<stateDir>/solo-board.json`（tmp+rename、0600）。
+
+### 18.3 行为
+
+- 触发条件：`!cfg.token && !cfg.boardUrl`；`DSH_TEAM_SOLO=0` 或配置 `solo: false` 可关。
+- 启动后把 token/boardUrl 写进第二层配置 `~/.dsh/dsh-team/config.json`（v1.4.1 的兜底机制），并 trace `solo 板子已启动 …`。
+- doctor 增加 `solo` 信息项与响应字段 `solo`；有 solo 板子时不再报 `config-token`。
+- cleanup 关闭监听；状态文件保留，下次启动任务还在。
+
+### 18.4 测试
+
+`solo-board-smoke.mjs` 10 项、`solo-bootstrap-smoke.mjs` 5 项全过；回归 plugcheck 16/13、reload A/B/C/D、ui-guard 10/10、state-file 16/16、config-persist 9/9、dispatch-recovery 76/76、board-server-smoke 17/17、acceptance 11/11。
+
+### 18.5 边界与下一步
+
+- solo 只在进程内、只本机可用，**不能**替代多机作业板；接团队仍要 Python 板子 + token。
+- 邀请码（打包 boardUrl+token+hubUrl+nodeToken）与首次启用向导尚未做，下一版再做。
+- 已知限制：同一台机器多个 DSH 实例各起一个 solo 板子，任务互不可见（solo 的定位就是单实例）。
+
+### 18.6 部署
+
+插件改动需重启 DSH 才装载（热重载会撞 duplicate route）；solo 板子随插件启停，无需额外进程或 Python。

@@ -1,5 +1,47 @@
 # 变更日志
 
+## v1.5.0 — 2026-11-11
+
+零配置也能用：第一次启用时，插件自己在 127.0.0.1 上起一个最小板子。
+
+### 为什么
+
+用户从插件市场装完 dsh-team 直接启用时，profile 里没有 `team` 配置（没有 token、
+没有 boardUrl），过去的体验是**面板全空 + 板子 401**。要用起来得同时凑齐三样：
+一台机器上跑着 Python 板子、拿到 board token、手改 `cordis.patch.yml`。这三道门槛
+对「只想在一台机器上看看」的人完全不成立，PC2 上就是这样卡住的。
+
+### 改动
+
+- 新增 `lib/solo-board.mjs`：随包的 Node 最小板子，只做 solo 需要的子集——
+  `create / claim / take / untake / attach / mark / beat / release / caps / metrics /
+  say / seen`，语义对齐 `tools/board_server.py`（take 守 `dispatch=auto`、holder 冲突
+  409、mark 的身份校验与状态白名单、release 归属、caps/metrics 大小上限）。
+  **只绑 `127.0.0.1`**，token 默认 `randomBytes(24)` 随机生成，`timingSafeEqual` 比较；
+  状态写 `<stateDir>/solo-board.json`（tmp+rename、0600）。
+- `lib/index.js`：零配置（`!cfg.token && !cfg.boardUrl`）时自动 `startSoloBoard`，
+  把生成的 token/boardUrl 写进第二层配置 `config.json` 并 trace
+  `solo 板子已启动 …（仅 127.0.0.1，token 自动生成）`；`baseUrl()` 首次调用前 await 它
+  就绪；cleanup 时关闭监听（状态文件留着，下次接着用）。
+- doctor：新增 `solo` 信息项（显示地址与状态目录），响应带 `solo: true|false`；
+  有 solo 板子时不再误报 `config-token`。
+- 显式配了 token/boardUrl 的用户完全不受影响；`DSH_TEAM_SOLO=0` 或配置
+  `solo: false` 可关掉自举。
+
+### 边界
+
+- solo 板子只能本机用（进程内、127.0.0.1、随机端口），**不能**替代多机作业板：
+  接团队仍要用 `tools/board_server.py` + 共享 token。
+- 邀请码 / 首次启用向导还没做（下一版）；现在要接入团队仍是手填 boardUrl+token。
+
+### 验证
+
+新增 `scripts/solo-board-smoke.mjs`（10 项：起板/无 token 只回 ok/401/建认领心路/
+重启持久化/close 后不应答）与 `scripts/solo-bootstrap-smoke.mjs`（5 项：零配置自举、
+config 写入、无 token 401、cleanup 关监听、显式配置不启 solo），全部通过；回归：
+plugcheck `tools=16 routes=13`、reload A/B/C/D、ui-guard 10/10、state-file 16/16、
+config-persist 9/9、dispatch-recovery 76/76、board-server-smoke 17/17、acceptance 11/11。
+
 ## v1.4.2 — 2026-11-11
 
 doctor 的一个假警报。

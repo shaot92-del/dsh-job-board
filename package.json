@@ -1,6 +1,6 @@
 {
   "name": "dsh-team",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "DSH 插件：把「团队 · 作业板」接进 DSH —— 作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
   "type": "module",
   "main": "./lib/index.js",
@@ -26,6 +26,7 @@
     "lib/index.js",
     "lib/client.js",
     "lib/shell.js",
+    "lib/solo-board.mjs",
     "cordis.patch.yml",
     "assets/pet.png",
     "assets/icon-180.png",
@@ -36,7 +37,9 @@
     "tools/",
     "scripts/install-board.ps1",
     "scripts/board-server-smoke.py",
-    "scripts/config-persist-smoke.mjs"
+    "scripts/config-persist-smoke.mjs",
+    "scripts/solo-board-smoke.mjs",
+    "scripts/solo-bootstrap-smoke.mjs"
   ],
   "keywords": [
     "dsh",
