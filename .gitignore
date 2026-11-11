@@ -7,3 +7,6 @@ _patch_*.py
 Thumbs.db
 __pycache__/
 *.pyc
+
+# 临时提交信息文件
+_msg.txt

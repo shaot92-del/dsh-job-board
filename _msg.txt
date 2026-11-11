@@ -1,8 +1,0 @@
-fix: v1.4.2 — doctor 的 config-token 假警报
-
-- doctor 检查读的是不存在的 cfg.boardToken，配好 token 也永远报错；改成 cfg.token。
-- ui-guard-smoke 增加回归断言：传了 token 后 checks 里不得再出现 config-token。
-- reload-smoke / ui-guard-smoke 在 apply 前隔离 DSH_TEAM_STATE_DIR，
-  不再把测试配置写进真实的 ~/.dsh/dsh-team/config.json。
-- 测试：plugcheck 16/13、ui-guard 10/10、reload A/B/C、state-file 16/16、
-  config-persist 9/9、dispatch-recovery 76/76、board smoke 17/17、acceptance 11/11。
