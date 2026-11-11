@@ -1,5 +1,51 @@
 # 变更日志
 
+## v2.0.3 — 2026-11-12
+
+两位复审专家（AI 生成代码安全审计师 / 代码审查工程师）对 v2.0.2 改动逐行复核后，
+确认了 2 个高危、1 个中高、4 个中危和若干低级问题。这一版全部修掉，并**纠正 v2.0.2
+里一条记错的结论**：Python 板子的 `do_claim` 本来就允许「认领未知任务时自动建单」
+（Host 统一派工靠它占位），v2.0.2 改成 404 反而与它不一致，本版恢复自动建单。
+
+### 改了什么
+
+1. **solo 自举不再把存档降级成 `solo:false`（高）**——首次 `persistTeamConfig()` 在
+   solo 启动前执行，旧写法 `snap.solo = !!soloBoard` 此刻恒为 false；只要 solo 启动
+   失败、临时设置 `DSH_TEAM_SOLO=0`、或进程在 listen 前退出，存档就永久停在
+   `solo:false` + 旧随机端口，下次启动判定「已配置」不再起板子，用户再也连不上。
+   现在单独维护 `soloIntent`（存档意图，含 2.0.1 无 `solo` 键的兼容判定），
+   只有「显式配置 token/boardUrl」才写 `solo:false`；启动失败只记日志，不改存档。
+2. **`allowAllRoots` / `envPassthrough` 真正接进 apply（中高）**——这两个键以前只在
+   `registerShellTools` 的参数里存在，`cfg` 与 `TEAM_CONFIG_KEYS` 都没有，写进 patch
+   也不生效；`envPassthrough` 完全不可用。现在两者进入 `cfg` 与存档白名单，
+   两处 `registerShellTools` 调用都显式传参；`shell-guard-smoke` 增加 G5/G5b，
+   从 `apply` 一路测到 `sh_read`，不再绕开接线。
+3. **claim 恢复自动建单**（中）——见上；`create` 校验 `TASK_ID_RE`，非法 id 返回 400。
+4. **任务上限只算活跃任务**（中）——`MAX_TASKS` 改为 `MAX_ACTIVE_TASKS = 5000`
+   （只计非终态），加载时清理 30 天前的终态任务（`pruneTerminal`），5000 条 done
+   不再把新任务永久卡在 413。
+5. **solo 任务的键安全**（低）——`tasks` 改为 `Object.create(null)`，`hasOwn`/`getTask`
+   替换裸取键，`__proto__` / `constructor` 不会再造幻影任务或误报「已存在」。
+6. **shell 拒绝文案分情况**（中）——空白名单时说「没有配置 allowedRoots」并给出两条
+   放行路径，不再误报「路径不在白名单」。
+7. **`set-team-config.ps1` 备份不覆盖**（低）——备份名精确到毫秒，重名自动加 `-1`、
+   `-2`，`Copy-Item` 去掉 `-Force`。
+8. **POSIX 环境变量补齐**（中）——`ENV_KEEP` 增加 `HOME`/`TMPDIR`/`USER`/`LOGNAME`/
+   `PWD`/`LC_ALL`，以及代理变量与 `SSH_AUTH_SOCK`、`NODE_EXTRA_CA_CERTS` 等。
+9. **文档纠正**——README 与 `docs/issue-10/08-exec-policy.md` 里「`allowedRoots` 空 =
+   不限制」改为「空白名单默认拒绝，需显式 `allowAllRoots`」；`lib/index.js` 导出的
+   `name` 改为 `dsh-job-board`；`package.json` 的 `files` 补 `scripts/ui-guard-smoke.mjs`。
+
+### 测试
+
+- `solo-board-smoke`：S3b/S3c 覆盖「未知任务自动建单」，S3d 原型键、S3e 非法 id，
+  S7 预置 5001 条 done 仍可建单。
+- `solo-bootstrap-smoke`：B6 断言 `solo:true` + 可达 + token 沿用 + 任务跨重启仍在；
+  B7 覆盖「临时 `DSH_TEAM_SOLO=0` 不降级存档、恢复后仍起板子」。
+- `shell-guard-smoke`：G5/G5b 走 `apply` 集成路径。
+- 全量回归：plugcheck 16/13、reload A/B/C、ui-guard 10/10、state-file 16/16、
+  config-persist 9/0、dispatch 76/76、board smoke 19 项、acceptance 11 项全过。
+
 ## v2.0.2 — 2026-11-12
 
 一次「审计 + 事故」合并修复：1 个高危（solo 重启失联）、1 个改名遗留（PC2 起不来）、

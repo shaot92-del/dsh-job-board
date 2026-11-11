@@ -113,7 +113,7 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
     machine: 'host'          # 副机改成 gt14 / mb14 / pc2
     token: ''                # 板子开了 GP_BOARD_TOKEN 时填同一个值
     petImage: ''             # 留空=用随包立绘 assets/pet.png
-    allowedRoots: []         # sh_* 只允许访问这些目录（realpath 比较）；空=不限制。
+    allowedRoots: []         # sh_* 只允许访问这些目录（realpath 比较）；空白名单默认拒绝，需 allowAllRoots: true 显式放行。
                              # 注意这是路径白名单，不是沙箱：命令内容本身不受限。
                              # 部署前请读 docs/issue-10/08-exec-policy.md（谁能在这几台
                              # 机器上跑命令、板子该怎么配 token）。

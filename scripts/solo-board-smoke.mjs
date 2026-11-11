@@ -58,9 +58,18 @@ check('S2 无 token health 只回 ok', r.status === 200 && r.data.ok === true &&
 r = await call(b1.url, '/api/board')
 check('S3 无 token 读板子被拒', r.status === 401, 'status=' + r.status)
 
-// v2.0.2：不存在的任务不能靠 claim 凭空造出来（Python 板子是 404）。
+// v2.0.3（复核 C）：claim 未知任务要跟 Python 板子一样自动建单（Host 统一派工靠它占位），
+// 不是 404；v2.0.2 在这里改错了，测试也跟着错。
 r = await call(b1.url, '/api/claim', { task_id: 'ghost-task', machine: 'host' }, b1.token)
-check('S3b claim 不存在的任务 → 404', r.status === 404, 'status=' + r.status)
+check('S3b claim 未知任务自动建单', r.status === 200 && r.data.ok === true, 'status=' + r.status)
+r = await call(b1.url, '/api/board', undefined, b1.token)
+check('S3c 自动建单的任务在快照里', r.status === 200 && !!r.data.tasks['ghost-task'] && r.data.tasks['ghost-task'].status === 'claimed')
+
+// v2.0.3（复核 L1）：原型键不能造幻影任务，非法 id 直接拒绝。
+r = await call(b1.url, '/api/claim', { task_id: '__proto__', machine: 'host' }, b1.token)
+check('S3d 原型键作为任务 id 也只会建出普通任务', r.status === 200 && r.data.ok === true, 'status=' + r.status)
+r = await call(b1.url, '/api/create', { task_id: 'bad id', goal: 'x' }, b1.token)
+check('S3e 非法 task_id 被拒', r.status === 400, 'status=' + r.status)
 
 r = await call(b1.url, '/api/create', { task_id: 'solo-1', goal: 'solo 自检', title: 'solo 自检' }, b1.token)
 check('S4a create', r.status === 200 && r.data.ok, JSON.stringify(r.data))
@@ -82,6 +91,17 @@ const b2 = await startSoloBoard({ stateDir: dir, token: b1.token, port: 0 })
 r = await call(b2.url, '/api/board', undefined, b2.token)
 check('S5 重启后任务仍在', r.status === 200 && r.data.tasks['solo-1'] && r.data.tasks['solo-1'].status === 'done')
 await b2.close()
+
+// ── S7：终态任务不占活跃额度（v2.0.3 复核 D）──────────────────────────
+const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-solo-smoke2-'))
+const many = { updated: Math.floor(Date.now() / 1000), machines: {}, events: [], tasks: {} }
+for (let i = 0; i < 5001; i++) many.tasks['done-' + i] = { status: 'done', machine: 'host', updated_at: 0 }
+fs.writeFileSync(path.join(dir2, 'solo-board.json'), JSON.stringify(many))
+const b3 = await startSoloBoard({ stateDir: dir2, port: 0 })
+r = await call(b3.url, '/api/create', { task_id: 'after-5000', goal: '还有额度' }, b3.token)
+check('S7 终态任务不占上限（5001 条 done 仍可建单）', r.status === 200 && r.data.ok === true, 'status=' + r.status)
+await b3.close()
+fs.rmSync(dir2, { recursive: true, force: true })
 
 fs.rmSync(dir, { recursive: true, force: true })
 if (failed) {

@@ -122,8 +122,12 @@ if ($DryRun) {
   exit 0
 }
 
-$bak = "$path.bak-setteam-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-Copy-Item -LiteralPath $path -Destination $bak -Force
+# v2.0.3（复核 L3）：备份名精确到毫秒且不覆盖已有文件 —— 它可能是唯一能恢复原状的副本。
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+$bak = "$path.bak-setteam-$stamp"
+$n = 1
+while (Test-Path -LiteralPath $bak) { $bak = "$path.bak-setteam-$stamp-$n"; $n++ }
+Copy-Item -LiteralPath $path -Destination $bak
 # v2.0.2：先写临时文件再原子替换，避免写一半崩溃把 patch 截断（这个项目已经丢过两次配置）。
 $tmp = "$path.tmp-setteam"
 Set-Content -LiteralPath $tmp -Value $lines -Encoding utf8

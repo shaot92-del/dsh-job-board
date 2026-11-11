@@ -105,6 +105,22 @@ if (saved && saved.boardUrl) {
 check('B1 solo 板子在 127.0.0.1 应答', boardOk, saved ? saved.boardUrl : '')
 check('B3 无 token 读板子被拒', noToken === 401, 'status=' + noToken)
 
+// v2.0.3：留一条任务，供 B6c 验证「重启后任务不丢」。
+let taskId = ''
+if (saved && saved.boardUrl) {
+  try {
+    const r = await fetch(saved.boardUrl + '/api/create', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-board-token': saved.token },
+      body: JSON.stringify({ task_id: 'b6-task', goal: '跨重启检查', machine: 'solo-smoke' }),
+    })
+    const j = await r.json()
+    taskId = r.ok && j.ok ? 'b6-task' : ''
+  } catch {
+    taskId = ''
+  }
+}
+
 const port = saved && saved.boardUrl ? Number(new URL(saved.boardUrl).port) : 0
 cleanup()
 await new Promise((r) => setTimeout(r, 300))
@@ -119,32 +135,82 @@ if (port) {
 check('B4 cleanup 关闭 solo 监听', closed, 'port=' + port)
 
 // ── B6：同一个状态目录二次启动（v2.0.2：solo 端口是随机的，存档里是死地址）──
-// 真实用户会重启 DSH：第二次 apply 必须凭 config.json 的 solo:true 重新起板子，
-// 而不是拿上次那个随机端口当板子地址（那样面板会永远连不上）。
+// v2.0.3（复核 E）：必须断言「这是新起的板子」而不是读到旧快照 —— 断言 solo 标记、
+// 新地址 ≠ 旧地址、token 沿用、任务跨重启还在，否则测试绿但重启可能没发生。
 const cleanup3 = apply(makeCtx(), { machine: 'solo-smoke', dispatchRole: 'observer', autoDispatch: false, timeoutMs: 300 })
 let cfg3 = null
-for (let i = 0; i < 40 && !cfg3; i++) {
+for (let i = 0; i < 60 && !cfg3; i++) {
   await new Promise((r) => setTimeout(r, 100))
   try {
     const j = JSON.parse(fs.readFileSync(cfgFile, 'utf8'))
-    if (j.boardUrl) cfg3 = j
+    if (j.solo === true && j.boardUrl && j.token) cfg3 = j
   } catch {
     /* 还没写 */
   }
 }
 let rebootOk = false
+let taskSurvived = false
 if (cfg3) {
   try {
     const h = await fetch(cfg3.boardUrl + '/api/health', { headers: { 'x-board-token': cfg3.token } })
     const hj = await h.json()
     rebootOk = h.ok && hj.ok === true && hj.solo === true
+    const b = await fetch(cfg3.boardUrl + '/api/board', { headers: { 'x-board-token': cfg3.token } })
+    const bj = await b.json()
+    taskSurvived = !!(taskId && bj.tasks && bj.tasks[taskId])
   } catch {
     rebootOk = false
   }
 }
-check('B6 同目录二次 apply 仍能起 solo', rebootOk, cfg3 ? cfg3.boardUrl : 'no config')
+check('B6 同目录二次 apply 起的是新 solo 板子', rebootOk, cfg3 ? cfg3.boardUrl : 'no new url')
 check('B6b 重启沿用存档 token', !!cfg3 && !!saved && cfg3.token === saved.token)
+check('B6c 任务跨重启仍在', taskSurvived, 'task=' + taskId)
 cleanup3()
+await new Promise((r) => setTimeout(r, 300))
+
+// ── B7：临时关闭 solo（DSH_TEAM_SOLO=0）不能降级存档，下次仍要能起来 ──────
+const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-solo-boot3-'))
+process.env.DSH_TEAM_STATE_DIR = dir3
+const c7a = apply(makeCtx(), { machine: 'solo-smoke-3', dispatchRole: 'observer', autoDispatch: false, timeoutMs: 300 })
+await new Promise((r) => setTimeout(r, 600))
+let saved7 = {}
+try {
+  saved7 = JSON.parse(fs.readFileSync(path.join(dir3, 'config.json'), 'utf8'))
+} catch {
+  /* ignore */
+}
+c7a()
+await new Promise((r) => setTimeout(r, 300))
+process.env.DSH_TEAM_SOLO = '0'
+const c7b = apply(makeCtx(), { machine: 'solo-smoke-3', dispatchRole: 'observer', autoDispatch: false, timeoutMs: 300 })
+await new Promise((r) => setTimeout(r, 300))
+let saved7b = {}
+try {
+  saved7b = JSON.parse(fs.readFileSync(path.join(dir3, 'config.json'), 'utf8'))
+} catch {
+  /* ignore */
+}
+c7b()
+delete process.env.DSH_TEAM_SOLO
+const c7c = apply(makeCtx(), { machine: 'solo-smoke-3', dispatchRole: 'observer', autoDispatch: false, timeoutMs: 300 })
+await new Promise((r) => setTimeout(r, 800))
+let saved7c = {}
+try {
+  saved7c = JSON.parse(fs.readFileSync(path.join(dir3, 'config.json'), 'utf8'))
+} catch {
+  /* ignore */
+}
+let revived = false
+try {
+  const h = await fetch(saved7c.boardUrl + '/api/health', { headers: { 'x-board-token': saved7c.token } })
+  const hj = await h.json()
+  revived = h.ok && hj.solo === true
+} catch {
+  revived = false
+}
+check('B7 临时关闭后存档仍保留 solo 意图', saved7b.solo === true, JSON.stringify(saved7b.solo))
+check('B7b 再次启动仍能起板子（不被降级）', revived, saved7c.boardUrl || 'none')
+c7c()
 await new Promise((r) => setTimeout(r, 300))
 
 // ── B5：显式配置不触发 solo ───────────────────────────────────────────

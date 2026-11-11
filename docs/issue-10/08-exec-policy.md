@@ -49,7 +49,7 @@
 1. **同网段任意设备建单** → 一条 `dispatch:auto` 的 `exec` 任务会真在 GT14/MB14 上
    跑。这是当前最高风险：板子无鉴权 + 默认 `dispatchApproval: auto`。
 2. **误操作的 agent 会话** → agent 手里有 `board_dispatch` / `sh_run`，一句话就能把
-   命令发到另一台机器；`allowedRoots: []`（默认）等于不限制目录。
+   命令发到另一台机器；`allowedRoots: []`（默认）在 v2.0.2 起等于拒绝所有路径，需 `allowAllRoots: true` 才放行。
 3. **副机凭据** → 副机的 DSH 以自己的账号跑 remote-agent worker；派工给它的任务
    与"在那台机器上手敲"等价。
 4. **状态文件** → `state.json`（板子）、`pending-attach-*.json`、`dispatch-journal-*.json`
@@ -72,7 +72,7 @@
 
 Host 侧：
 
-- `allowedRoots` 从 `[]` 换成具体目录 —— 空数组是"不限制"，不是"不许"；
+- `allowedRoots` 从 `[]` 换成具体目录 —— v2.0.2 起空数组是"拒绝"，不是"不限制"；
 - 需要人工把关的机器把 `dispatchApproval` 设 `manual`：exec 任务会在副机上挂起
   等待批准（remote-agent 的默认行为），而不是直接跑；
 - 一台机器只跑一个 DSH 实例（v1.3.1 的锁解决并发写，不解决两个调度器抢任务）。
@@ -848,3 +848,18 @@ state-file 16/16、config-persist 9/0、dispatch 76/76、board smoke 19 项、ac
 
 - `install-board.ps1` 按端口杀进程、带空格路径的处理（低危，下一批）。
 - solo 快照未脱敏、`say '?'` 幻影机器（低危）。
+
+## 23. v2.0.3：专家复审后的修复
+
+两位专家对 v2.0.2 的复核结论集中在「自举状态机」和「配置接线」两处：
+
+- solo 意图不能靠运行时的 `!!soloBoard` 推断（首次写档时板子还没起来），否则一次
+  启动失败就把存档永久降级成 `solo:false`。现在存档里单独记 `solo` 意图，
+  兼容 2.0.1 的「有 token + 回环 boardUrl、无 solo 键」旧档。
+- `allowAllRoots` / `envPassthrough` 加了 `cfg` 与 `TEAM_CONFIG_KEYS`，但忘了传给
+  `registerShellTools` —— 配置写了也不生效。测试改为从 `apply` 走完整链路（G5/G5b），
+  不再直接调 `registerShellTools` 绕过接线。
+- v2.0.2 把 solo 的 `claim` 改成 404 是错的：Python `do_claim` 允许认领未知任务并建单，
+  这是 Host 统一派工占位用的。本版恢复自动建单，并对 `create` 增加 id 格式与活跃数上限。
+- 终态任务不再占任务上限：加载时清理 30 天前终态，`MAX_ACTIVE_TASKS` 只算活跃。
+- 任务表用 null 原型 + `hasOwn`，避免 `__proto__`/`constructor` 造幻影任务。

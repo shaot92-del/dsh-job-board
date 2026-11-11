@@ -71,6 +71,54 @@ try {
 }
 check('G4 envPassthrough 放行指定变量', !!probeJson && probeJson.secret === 'TOP-SECRET-123' && probeJson.board === null, String(r.stdout || r.message || '').trim())
 
+// ── G5：从 apply 到工具的整条线（复核 H3：只测 registerShellTools 会漏掉接线）──
+// 空白名单 + config.allowAllRoots=true 必须真的放行；不传时仍然拒绝。
+const { apply } = await import('../lib/index.js')
+class FakeWebServer {
+  constructor() { this.exact = new Map() }
+  register(route) {
+    if (this.exact.has(route.path)) throw new Error(`webserver: duplicate exact route "${route.path}"`)
+    this.exact.set(route.path, route)
+    return () => { if (this.exact.get(route.path) === route) this.exact.delete(route.path) }
+  }
+}
+function applyWith(extra) {
+  const tools = new Map()
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-shell-apply-'))
+  process.env.DSH_TEAM_STATE_DIR = dir2
+  const base = {
+    tools: { register: (def) => { tools.set(def.name, def); return () => {} } },
+    webServer: new FakeWebServer(),
+    get: () => undefined,
+    on: () => () => {},
+    effect: (fn) => fn(),
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+  }
+  const ctx = new Proxy(base, {
+    set(target, prop, value) {
+      if (prop === 'tools' || prop === 'webServer') throw new Error('cannot set property in multiple fibers')
+      target[prop] = value
+      return true
+    },
+  })
+  const cleanup = apply(ctx, {
+    token: 'x', boardUrl: 'http://127.0.0.1:9', machine: 'shell-smoke',
+    dispatchRole: 'observer', autoDispatch: false, timeoutMs: 300, ...extra,
+  })
+  return { tools, cleanup, dir: dir2 }
+}
+let app = applyWith({ allowedRoots: [], allowAllRoots: true })
+r = await app.tools.get('sh_read').execute({ path: file })
+check('G5 apply 传入 allowAllRoots 后 sh_read 放行', r.ok === true && r.text === 'hello', r.text || r.message || '')
+app.cleanup()
+fs.rmSync(app.dir, { recursive: true, force: true })
+
+app = applyWith({ allowedRoots: [] })
+r = await app.tools.get('sh_read').execute({ path: file })
+check('G5b apply 未传 allowAllRoots 时仍拒绝', r.ok === false && /allowedRoots/.test(r.message || ''), r.message || '')
+app.cleanup()
+fs.rmSync(app.dir, { recursive: true, force: true })
+
 fs.rmSync(dir, { recursive: true, force: true })
 if (failed) {
   console.log(`\nshell-guard-smoke: ${failed} failed`)
