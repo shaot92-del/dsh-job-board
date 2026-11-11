@@ -12,7 +12,14 @@
  */
 import http from 'node:http'
 import { Readable } from 'node:stream'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { apply } from '../lib/index.js'
+
+// v1.4.2：同 reload-smoke —— apply 会写 state dir，必须隔离到临时目录。
+const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-ui-guard-smoke-'))
+process.env.DSH_TEAM_STATE_DIR = STATE_DIR
 
 const results = []
 function check(name, cond, detail) {
@@ -115,6 +122,14 @@ r = await call('/api/board/ui/doctor', { headers: { host: 'evil.example' } })
 check('doctor 外部 Host 拒绝', r.status === 403 && r.body.includes('host'), 'status=' + r.status)
 r = await call('/api/board/ui/doctor', { headers: base })
 check('doctor 回环放行', r.status === 200 && r.body.includes('checks'), 'status=' + r.status + ' body=' + r.body.slice(0, 80))
+// v1.4.2：doctor 的 config-token 检查以前读的是不存在的 cfg.boardToken，配了 token 也永远报错。
+// 这里 apply 时明确传了 token: 'x'，检查里就不该再出现 config-token。
+{
+  let doc = null
+  try { doc = JSON.parse(r.body) } catch { /* ignore */ }
+  const ids = doc && Array.isArray(doc.checks) ? doc.checks.map((c) => c.id) : []
+  check('doctor 配了 token 不再报 config-token', !ids.includes('config-token'), 'ids=' + ids.join(','))
+}
 
 cleanup()
 await new Promise((r) => setTimeout(r, 100))

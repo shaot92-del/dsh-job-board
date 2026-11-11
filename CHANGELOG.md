@@ -1,5 +1,29 @@
 # 变更日志
 
+## v1.4.2 — 2026-11-11
+
+doctor 的一个假警报。
+
+### 修了什么
+
+- `lib/index.js` 的 `doctor` 检查读的是 `cfg.boardToken`，而这个字段从来不存在（配置字段叫
+  `token`）。后果：**即使 token 配好了，面板也永远报 `config-token 没有配置板子 token`**，
+  v1.4.0 上线后一直被当成真的失联。改成 `cfg.token`。
+- `scripts/ui-guard-smoke.mjs` 增加断言：apply 时传了 token，`doctor.checks` 里就不得出现
+  `config-token`（发版前抓这个 bug 的回归测试）。
+
+### 说明
+
+- 这个 bug 只影响 doctor 的显示，不影响实际鉴权：板子读写、派工、同步一直用的是
+  `cfg.token`，所以「面板报错但任务能跑」的怪状态就是它造成的。
+- MB14 本轮未上线（板子 `last_seen` 约 9 小时前，hub 只有 GT14 一条 Established），
+  与本版本无关，等那台机器恢复后重启 DSH 即可。
+
+### 验证
+
+plugcheck `tools=16 routes=13`；ui-guard 10/10；reload A/B/C/D；state-file 16/16；
+config-persist 9/9；dispatch-recovery 76/76；board-server-smoke 17/17；acceptance 11/11。
+
 ## v1.4.1 — 2026-11-09
 
 配置的第二层兜底：profile patch 被整份重写时，插件不再跟着失联。

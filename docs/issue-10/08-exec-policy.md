@@ -652,3 +652,27 @@ team 则完全没有兜底。
 
 - 没查清是哪个宿主组件在重写 patch。下一步：启动时对比 canonical 副本
   （`~/.dsh/cordis-patch-good-*.yml`），缺块即恢复并在 doctor 报 error。
+
+## 17. v1.4.2：doctor 假警报与测试隔离（2026-11-11）
+
+### 17.1 触发
+
+v1.4.1 重启后 doctor 一直报 `config-token 没有配置板子 token`，但板子读写、派工、同步都正常；patch 与 `~/.dsh/dsh-team/config.json` 里 token 都在。
+
+### 17.2 根因
+
+doctor 的检查写的是 `if (!cfg.boardToken)`，而配置字段一直叫 `token`（全仓库仅此一处 `boardToken`）。所以这是**纯显示层 bug**：配好了也永远报错，实际鉴权走的是 `cfg.token`。
+
+### 17.3 修法
+
+- `lib/index.js`：`cfg.boardToken` → `cfg.token`。
+- `scripts/ui-guard-smoke.mjs`：apply 传了 token 后，断言 `doctor.checks` 不含 `config-token`（回归测试）。
+
+### 17.4 同时修掉的测试污染
+
+`reload-smoke.mjs` / `ui-guard-smoke.mjs` 会 `apply` 插件，插件把有效配置写回 state dir；这两个脚本此前没设 `DSH_TEAM_STATE_DIR`，于是把 `token: 'x'`、`machine: 'ui-guard-smoke'` 写进了真实 `~/.dsh/dsh-team/config.json`，下一次启动的兜底会读到脏值。现在两者都在 apply 前 `mkdtemp` 一个临时目录并设 `DSH_TEAM_STATE_DIR`。
+
+### 17.5 验证
+
+plugcheck 16/13；ui-guard 10/10；reload A/B/C；state-file 16/16；config-persist 9/9；dispatch-recovery 76/76；board-server-smoke 17/17；acceptance 11/11（fixtures）。
+

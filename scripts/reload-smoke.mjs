@@ -13,7 +13,15 @@
  *
  * 退出码 0 表示 A/B/C 全过。
  */
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { apply } from '../lib/index.js'
+
+// v1.4.2：这个脚本会 apply 插件，插件会把配置写回 state dir。
+// 不隔离的话会把测试配置（token:'x' 之类）写进真实的 ~/.dsh/dsh-team/config.json。
+const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-reload-smoke-'))
+process.env.DSH_TEAM_STATE_DIR = STATE_DIR
 
 class FakeWebServer {
   constructor() {
