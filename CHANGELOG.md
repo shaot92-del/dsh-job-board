@@ -1,5 +1,46 @@
 # 变更日志
 
+## v2.0.0 — 2026-11-11
+
+改名：`dsh-team` → **`dsh-job-board`**（仓库同名）。功能不变，只动名字与安装方式。
+
+### 为什么
+
+- npm 上 `dsh-team` 已经被另一个无关的「Agent Teams」插件占用（0.2.11，周边还有
+  `dsh-team-control` / `dsh-team-hub`）。从市场或 `dsh plugin add dsh-team` 装，
+  解析到的是别人的包，版本对不上就装不上或装出四不像。
+- 兼容名字里带 `team` 的候选也被占了：`dsh-ops-board` 对应 `ZJR24/dsh-ops-board`
+  （11/06，项目看板）。`dsh-job-board` 在 npm 与 GitHub 都空着。
+
+### 改了什么
+
+- `package.json` 的 `name` → `dsh-job-board`，`repository` / `bugs` / `homepage`
+  指向 `https://github.com/shaot92-del/dsh-job-board`；版本直接跳 **2.0.0**
+  （包名变了，按 semver 算破坏性变更，装法也要跟着换）。
+- GitHub 仓库已改名，旧地址 `shaot92-del/dsh-team` 由 GitHub 重定向；
+  README 的安装命令、`dsh.profile.bundles` 说明同步改。
+- 本机 profile：依赖 `dsh-job-board: file:D:/gp_video/dsh-job-board`，
+  bundles 里把 `dsh-team` 换成 `dsh-job-board`；旧的 `node_modules/dsh-team`
+  不再被任何东西引用（重启后可以删）。
+
+### 没改什么（有意保留，避免老配置失效）
+
+- 状态目录仍是 `~/.dsh/dsh-team`（journal、pendingAttach、config.json、solo 板子状态都在里面）；
+- 环境变量仍是 `DSH_TEAM_*`（`DSH_TEAM_STATE_DIR`、`DSH_TEAM_SOLO`、`DSH_TEAM_BOARD_CANDIDATES` 等）；
+- Cordis patch 的实例 id 仍是 `- id: team`，工具名仍是 `board_*` / `sh_*`；
+- 板子服务、doctor、路由、面板行为与 v1.5.3 完全一致。
+
+### 迁移
+
+```powershell
+$dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd"
+& $dsh plugin --profile desktop add 'github:shaot92-del/dsh-job-board'
+# 确认 profile package.json 的 dsh.profile.bundles 里是 dsh-job-board
+# 重启 DSH
+```
+
+数据不会丢：token、机器名、派工记录都在原来的状态目录里，插件按同一套键读取。
+
 ## v1.5.3 — 2026-11-11
 
 把 R21 从「看时序」改成「看结果」，并把 holder 语义补到真板子的 smoke 里。

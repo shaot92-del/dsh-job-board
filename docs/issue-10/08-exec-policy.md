@@ -764,3 +764,28 @@ R21 起两个实例 A/B 抢同一条 queued 任务，断言「B 必须拿到 409
 ### 20.4 验证
 
 dispatch 76/76；board smoke 19 项全过（含新增两条）；其余回归见 CHANGELOG v1.5.3。
+
+## 21. v2.0.0：改名 dsh-job-board（以及 PC2 装不上的原因）
+
+### 21.1 为什么改名
+
+npm 上的 `dsh-team` 已被另一个「Agent Teams」插件占用（0.2.11），`dsh plugin add dsh-team`
+或市场按名字解析时拿到的不是这份代码；PC2 上「卡着装不上」很可能就是这一步没有明确报错、
+但装出来的包名/版本对不上。`dsh-ops-board` 在 GitHub 也有同名项目，最后选 `dsh-job-board`。
+
+### 21.2 改了什么
+
+- 仓库 `shaot92-del/dsh-team` → `shaot92-del/dsh-job-board`（GitHub 会重定向旧地址）；
+- `package.json`：`name`、`repository`、`bugs`、`homepage` 全部改到新名字，版本 **2.0.0**；
+- README 的安装命令、bundles 说明跟着改；profile 依赖改成
+  `dsh-job-board: file:D:/gp_video/dsh-job-board`。
+
+### 21.3 有意没改
+
+`~/.dsh/dsh-team` 状态目录、`DSH_TEAM_*` 环境变量、patch 实例 id `team`、工具名
+`board_*`/`sh_*` 全部保留——它们不是安装标识，改了只会让老配置与历史数据失效。
+
+### 21.4 PC2
+
+改名后重新按 `github:shaot92-del/dsh-job-board` 装；装前把旧的 `dsh-team` bundle 从
+profile 的 `dsh.profile.bundles` 与 dependencies 里去掉，避免两个包同时加载抢同一批路由。

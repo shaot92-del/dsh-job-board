@@ -1,4 +1,4 @@
-# dsh-team
+# dsh-job-board
 
 把「团队 · 作业板」接进 DSH 的单包插件。一个包装齐四件事：
 
@@ -48,13 +48,13 @@ Host 派出、且板上记录与远程任务对得上。
 $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd"
 
 # 本地开发版
-& $dsh plugin --profile desktop add 'file:D:\gp_video\dsh-team'
+& $dsh plugin --profile desktop add 'file:D:\gp_video\dsh-job-board'
 
 # 从 GitHub（装别人的/你自己的这份）
-& $dsh plugin --profile desktop add 'github:shaot92-del/dsh-team'
+& $dsh plugin --profile desktop add 'github:shaot92-del/dsh-job-board'
 ```
 
-装完确认 profile 的 `package.json` 里 `dsh.profile.bundles` 有 `dsh-team` 这一行，
+装完确认 profile 的 `package.json` 里 `dsh.profile.bundles` 有 `dsh-job-board` 这一行，
 然后重启 DSH（Host 半边改动只有重启才生效；只改 `lib/client.js` 的话刷新页面即可）。
 
 > 要接入别人已经在跑的板子，不用手改 YAML：
@@ -147,7 +147,7 @@ v1.1.3 的 goal 超 300 字被拒、终态 note 带副机最后一条 stdout。
 全程 `stubFetch`，不连真板子。
 
 真板子相关的验收（真派发、多机、桌宠）走 `scripts/acceptance.mjs`，需要板子服务和本机媒体素材。
-产物报表落在 `%TEMP%\dsh-team-*\accept\验收矩阵-*.csv`。
+产物报表落在 `%TEMP%\dsh-job-board-*\accept\验收矩阵-*.csv`。
 
 ## 文档索引
 
