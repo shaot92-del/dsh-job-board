@@ -1,5 +1,43 @@
 # 变更日志
 
+## v2.0.5 — 2026-11-12
+
+PC2 的两个真实问题 + 首次安装的模型指引。这一版没有改协议，只让「坏掉时看得出下一步」。
+
+### 1. 左侧又出现「远程同事」面板
+
+不是作业板新增的 UI，而是 PC2 上的 `dsh-remote-agent` 处于**半旧状态**：`package.json`
+写着 0.9.12，但 `lib/client.js` 里没有 `SHOW_REMOTE_PANEL = false` 这一段（0.9.12 才有），
+于是它按旧代码注册了 `sidebar.panellist` 与 `main` 两个槽。
+
+处置：用主机 0.9.12 的 `lib/client.js` 覆盖 PC2 的同名文件（原文件留 `.bak-panel`），
+刷新页面后入口消失。作业板自己的 DOM 隐藏逻辑仍在，但它只在面板加载后每 1.5s 扫一次，
+不能替代插件侧的开关。
+
+### 2. 第一次安装「拉不起模型」
+
+全新 profile 里常常没有 `agent-default-model` 块，DSH 会退回默认路由
+`deepseek-official`；那台机器上又没有 API key，于是 agent 任务报
+`no API key for provider route "deepseek-official"`。用户看到的是「装完就用不了」。
+
+两处修：
+
+- `pc2-onboard.ps1` 在写 team / remote-agent 之后补一个 `agent-default-model` 块
+  （`provider: deepseek-account`、`model: deepseek-flash`、`reasoningEffort: max`）。
+  账号仍要在那台机器的 DSH 里登录一次——脚本不代持凭据。
+- 插件 `syncRemote` 在把副机失败写回看板时，识别 `no api key` / `no key for provider` /
+  `transport failed` / 裸代码 `TRANSPORT`，追加「该副机模型不可用（未登录/未配置，或网络不通）：
+  在那台机器上登录账号、检查代理后重试」。原始报错保留，只补一句提示；文案同时覆盖
+  鉴权与网络两种可能，不替操作者下结论。
+
+### 验证
+
+- `dispatch-recovery-smoke` 新增 R26（message 形式）、R26b（只有 code=TRANSPORT）、
+  R26c（远端状态为构造器名时不得当成终态写回），**80/80**。
+- `plugcheck` 16 工具 / 13 路由；`ui-guard-smoke` 10/10。
+- 主机与 PC2 均无需改协议；PC2 的 `client.js` 替换已实机执行并复核
+  （`findstr "SHOW_REMOTE_PANEL = false"` 命中）。
+
 ## v2.0.4 — 2026-11-12
 
 一次「测试污染 + 盲信配置」的修复。v2.0.3 重启后 doctor 报 `板子连不上：fetch failed`，

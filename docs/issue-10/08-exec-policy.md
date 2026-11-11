@@ -863,3 +863,42 @@ state-file 16/16、config-persist 9/0、dispatch 76/76、board smoke 19 项、ac
   这是 Host 统一派工占位用的。本版恢复自动建单，并对 `create` 增加 id 格式与活跃数上限。
 - 终态任务不再占任务上限：加载时清理 30 天前终态，`MAX_ACTIVE_TASKS` 只算活跃。
 - 任务表用 null 原型 + `hasOwn`，避免 `__proto__`/`constructor` 造幻影任务。
+
+## §24 v2.0.5：PC2 的两个现场问题
+
+2026-11-12 凌晨，PC2（192.168.3.126）作为副机接入后暴露两个问题。结论先写在这里，
+以后遇到「刚装好的机器不对劲」先按这两条排查。
+
+### 24.1 左侧「远程同事」入口又出现了
+
+- 作业板没有新增这个面板。它来自 `dsh-remote-agent` 的 client bundle：
+  `lib/client.js` 里 `SHOW_REMOTE_PANEL` 为 true 时会注册 `sidebar.panellist` 与 `main`。
+- 0.9.12 的这份文件里是 `const SHOW_REMOTE_PANEL = false`。PC2 上 `package.json`
+  写着 0.9.12，但 `lib/client.js` 没有这一段 —— 典型的「只换了一半的文件」。
+- 处置：用主机的 `node_modules/dsh-remote-agent/lib/client.js` 覆盖 PC2 同名文件
+  （原文件留 `client.js.bak-panel`），刷新页面即消失；不需要重启 DSH。
+- 作业板自己的 DOM 隐藏（每 1.5s 扫一次 + MutationObserver）只是兜底，不能替代
+  插件侧开关：bundle 没加载或 DOM 结构变了它就失效。
+
+### 24.2 第一次安装「拉不起模型」
+
+- 全新 profile 的 `cordis.patch.yml` 往往只有几条 client UI 配置，没有
+  `agent-default-model` 块。DSH 于是退回默认路由 `deepseek-official`；那台机器上
+  没有 API key，agent 任务就报 `no API key for provider route "deepseek-official"`。
+- `pc2-onboard.ps1` 现在会在写完 team / remote-agent 后补一个
+  `agent-default-model` 块（`provider: deepseek-account`、`model: deepseek-flash`、
+  `reasoningEffort: max`）。账号仍要在这台机器的 DSH 里登录一次，脚本不代持凭据。
+- 只补块不登录时，报错会从 `no API key` 变成 `DeepSeek Messages transport failed`
+  （PC2 实测 443 可达，所以更像鉴权/登录问题，不是网络）。
+- 插件 v2.0.5 起，`syncRemote` 把副机失败写回看板时会识别
+  `no api key` / `no key for provider` / `transport failed` / 裸代码 `TRANSPORT`，
+  在原始报错后追加一句「该副机模型不可用（未登录/未配置，或网络不通）……」。
+  提示文案故意同时覆盖鉴权与网络两种可能，不替操作者下结论。
+- 回归：R26（message 形式）、R26b（只有 code=TRANSPORT）、R26c（未知状态不写回）。
+
+### 24.3 这一版没做什么
+
+- 没有自动替副机登录账号，也没有跨机复制凭据 —— 凭据走 DSH 自己的 credential store，
+  跨机复制既不安全也不一定可用。
+- 没有把 `pc2-onboard.ps1` 收进仓库：它含 board token 与 nodeToken，只应存在于
+  受控共享目录；仓库里只保留说明与 `set-team-config.ps1` 这类不含秘密的工具。

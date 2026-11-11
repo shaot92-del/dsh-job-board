@@ -383,6 +383,70 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteOwne
     check('R25 其它任务条目不受影响', left.includes('bd-r25-other'), JSON.stringify(left))
   }
 
+  // ── R26（v2.0.5）：副机模型没配好时，看板 note 要带可执行提示 ─────────────
+  // 原始报错只有 no API key / TRANSPORT，看板上的人不知道该去哪台机器做什么。
+  {
+    const info = await scenario('R26', {
+      machine: 'smoke-r26',
+      extraCfg: { remoteSyncMs: 300 },
+      tasks: { 'bd-r26': { status: 'running', machine: 'GT14', remote_id: 'ui-r26', goal: 'R26 goal' } },
+      seedRemoteTasks: [{
+        taskId: 'ui-r26',
+        nodeId: 'smoke-node',
+        goal: 'R26 goal',
+        status: 'failed',
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now(),
+        error: { message: 'no API key for provider route "deepseek-official"' },
+      }],
+      waitMs: 2600,
+    })
+    const note = String((info.tasks['bd-r26'] || {}).note || '')
+    check('R26 保留原始模型报错', /no API key/.test(note), note)
+    check('R26 附带「模型不可用」提示', /模型不可用/.test(note), note)
+  }
+
+  // ── R26b（v2.0.5）：只有 error.code=TRANSPORT、没有 message 时也要提示 ──────
+  {
+    const info = await scenario('R26b', {
+      machine: 'smoke-r26b',
+      extraCfg: { remoteSyncMs: 300 },
+      tasks: { 'bd-r26b': { status: 'running', machine: 'GT14', remote_id: 'ui-r26b', goal: 'R26b goal' } },
+      seedRemoteTasks: [{
+        taskId: 'ui-r26b',
+        nodeId: 'smoke-node',
+        goal: 'R26b goal',
+        status: 'failed',
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now(),
+        error: { code: 'TRANSPORT' },
+      }],
+      waitMs: 2600,
+    })
+    const note = String((info.tasks['bd-r26b'] || {}).note || '')
+    check('R26b TRANSPORT 裸代码也触发提示', /模型不可用/.test(note) && /TRANSPORT/.test(note), note)
+  }
+
+  // ── R26c（v2.0.5）：远端状态是构造器名时不能当成终态去 mark ────────────────
+  {
+    const info = await scenario('R26c', {
+      machine: 'smoke-r26c',
+      extraCfg: { remoteSyncMs: 300 },
+      tasks: { 'bd-r26c': { status: 'running', machine: 'GT14', remote_id: 'ui-r26c', goal: 'R26c goal' } },
+      seedRemoteTasks: [{
+        taskId: 'ui-r26c',
+        nodeId: 'smoke-node',
+        goal: 'R26c goal',
+        status: 'constructor',
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now(),
+      }],
+      waitMs: 2600,
+    })
+    check('R26c 未知状态不写回板子', info.stats.mark === 0 && info.tasks['bd-r26c'].status === 'running',
+      `mark=${info.stats.mark} status=${info.tasks['bd-r26c'].status}`)
+  }
+
 function summary() {
   const ok = results.filter((r) => r.ok).length
   console.log('')
