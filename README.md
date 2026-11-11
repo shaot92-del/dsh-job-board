@@ -57,10 +57,14 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 装完确认 profile 的 `package.json` 里 `dsh.profile.bundles` 有 `dsh-team` 这一行，
 然后重启 DSH（Host 半边改动只有重启才生效；只改 `lib/client.js` 的话刷新页面即可）。
 
-> **它需要一个板子服务。** 本插件是客户端，数据来自一个 HTTP 任务板。仓库不含该服务；
-> 默认地址 `http://127.0.0.1:8965`，可用 `boardUrl` 指向你自己的实现。
+> **板子有两种，按场景选。**
 >
-> v1.1 需要板子支持两个额外端点（`/api/take` 原子占位、`/api/untake` 放回），否则 Host 调度器
+> - **单机 / 第一次用**：v1.5.0 起零配置会自动在 `127.0.0.1` 上起一个随包最小板子
+>   （`lib/solo-board.mjs`，Node 实现、随机 token、只本机可访问），不需要 Python、不需要手填 token。
+> - **多机团队**：用随包的 `tools/board_server.py`（Python 3）。启动前设置 `GP_BOARD_TOKEN`，
+>   或直接用 `scripts/install-board.ps1` 部署 + 重启 + 自检；再把 `boardUrl` / `token` 指向它。
+>
+> v1.1 起板子还要支持 `/api/take`（原子占位）与 `/api/untake`（放回），否则 Host 调度器
 > 会一直拿不到派发权、任务停在 `queued`（日志里会写 `take failed`）。只想要 v1.0 的行为，
 > 把 `autoDispatch` 关掉即可。
 

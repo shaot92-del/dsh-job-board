@@ -1,6 +1,6 @@
 {
   "name": "dsh-team",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "DSH 插件：把「团队 · 作业板」接进 DSH —— 作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
   "type": "module",
   "main": "./lib/index.js",
@@ -23,10 +23,7 @@
   },
   "license": "MIT",
   "files": [
-    "lib/index.js",
-    "lib/client.js",
-    "lib/shell.js",
-    "lib/solo-board.mjs",
+    "lib/",
     "cordis.patch.yml",
     "assets/pet.png",
     "assets/icon-180.png",

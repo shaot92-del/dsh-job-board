@@ -1,5 +1,26 @@
 # 变更日志
 
+## v1.5.1 — 2026-11-11
+
+打包漏文件：`package.json` 的 `files` 里没有 `lib/state-file.mjs`。
+
+### 为什么
+
+`lib/index.js` 静态 import 了 `./state-file.mjs`，但 `files` 只列了 index/client/shell/solo-board
+四个文件。`dsh plugin add github:...` 走 pnpm 的 git 安装，会按 `files` 打包（packlist），
+装完 Host 半边会因缺模块加载失败——市场 review 也是因为这条打回的。npm 安装同理。
+
+### 改动
+
+- `files` 改成 `"lib/"`，整目录收进来，以后再加 `lib/` 下的文件不会再漏。
+- README「装」一节改正：仓库现在**带** `tools/board_server.py`（多机用），单机则由
+  v1.5.0 的 `lib/solo-board.mjs` 零配置自举；不再写「仓库不含该服务」。
+
+### 验证
+
+`npm pack --dry-run` 确认包含 `lib/state-file.mjs`；`node --check` 全过；回归全绿
+（plugcheck 16/13、solo smoke 10+5、dispatch 76/76、board smoke 17/17、acceptance 11/11）。
+
 ## v1.5.0 — 2026-11-11
 
 零配置也能用：第一次启用时，插件自己在 127.0.0.1 上起一个最小板子。
