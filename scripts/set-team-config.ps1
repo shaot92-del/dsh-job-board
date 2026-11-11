@@ -73,10 +73,16 @@ if ($start -ge 0) {
   }
 }
 
+function YamlQuote([string]$v) {
+  # v2.0.2：值直接塞进单引号会被 ' 或换行破坏（轻则 YAML 解析失败，重则注入别的键）。
+  if ($v -match "[\r\n]") { throw "值里不能有换行：$v" }
+  return "'" + $v.Replace("'", "''") + "'"
+}
+
 function Set-Field {
   param([System.Collections.Generic.List[string]]$Block, [string]$Key, [string]$Value)
   if (-not $Value) { return }
-  $line = "    ${Key}: '$Value'"
+  $line = "    ${Key}: $(YamlQuote $Value)"
   for ($i = 0; $i -lt $Block.Count; $i++) {
     if ($Block[$i] -match "^\s{2,4}${Key}:") { $Block[$i] = $line; return }
   }
@@ -100,11 +106,11 @@ if ($start -ge 0) {
   $block = [System.Collections.Generic.List[string]]@(
     '- id: team',
     '  config:',
-    "    boardUrl: '$BoardUrl'"
+    "    boardUrl: $(YamlQuote $BoardUrl)"
   )
-  if ($Machine) { $block.Add("    machine: '$Machine'") }
-  if ($Token) { $block.Add("    token: '$Token'") }
-  if ($Role) { $block.Add("    dispatchRole: '$Role'") }
+  if ($Machine) { $block.Add("    machine: $(YamlQuote $Machine)") }
+  if ($Token) { $block.Add("    token: $(YamlQuote $Token)") }
+  if ($Role) { $block.Add("    dispatchRole: $(YamlQuote $Role)") }
   $lines.Add('')
   $lines.AddRange($block)
   $action = '追加新 team 块'
@@ -118,7 +124,10 @@ if ($DryRun) {
 
 $bak = "$path.bak-setteam-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 Copy-Item -LiteralPath $path -Destination $bak -Force
-Set-Content -LiteralPath $path -Value $lines -Encoding utf8
+# v2.0.2：先写临时文件再原子替换，避免写一半崩溃把 patch 截断（这个项目已经丢过两次配置）。
+$tmp = "$path.tmp-setteam"
+Set-Content -LiteralPath $tmp -Value $lines -Encoding utf8
+Move-Item -LiteralPath $tmp -Destination $path -Force
 
 # 复核
 $check = Get-Content -LiteralPath $path

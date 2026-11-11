@@ -1,5 +1,46 @@
 # 变更日志
 
+## v2.0.2 — 2026-11-12
+
+一次「审计 + 事故」合并修复：1 个高危（solo 重启失联）、1 个改名遗留（PC2 起不来）、
+3 个中危（任务凭空生成、脚本注入/半截写、shell 白名单 fail-open），外加一个环境变量收敛。
+
+### 改了什么
+
+1. **client bundle 的模块 id 改成包名**（`lib/client.js`）——这是 PC2「装完重启 DSH
+   客户端起不来、要屏蔽插件才能启动」的原因。改名后 loader 按包名注册客户端模块，
+   而 `id` 还是 `dsh-team`，客户端找不到模块就整个界面挂住。现在 `id: 'dsh-job-board'`，
+   跟 `dsh-remote-agent` 的写法一致。
+2. **solo 第二次启动不再失联**（`lib/index.js` + `persistTeamConfig`）——solo 板子用
+   `port: 0` 随机端口，第一次启动把 `boardUrl` 写进 `config.json`；重启后 `cfg.token` /
+   `cfg.boardUrl` 都有值，旧逻辑判定「已配置」就不起板子，结果指向一个已经死掉的端口。
+   现在存档里带 `solo: true` 时视为自举用户，照样重新起板子、沿用存档 token、把新地址
+   写回去（任务在 `solo-board.json` 里，不会丢）。
+3. **`claim` 不再凭空造任务**（`lib/solo-board.mjs`）——对不存在的 `task_id` 返回 404，
+   与 `tools/board_server.py` 对齐；`create` 增加 `MAX_TASKS = 5000` 上限。
+4. **`set-team-config.ps1` 防注入 + 原子写**——值统一经 `YamlQuote`（拒绝换行、
+   单引号转义成 `''`），写盘改为 `$path.tmp-setteam` + `Move-Item -Force`，
+   避免写一半把 patch 截断（这个项目已经丢过两次配置）。
+5. **shell 白名单 fail-closed + 环境变量收敛**（`lib/shell.js`）——`allowedRoots` 为空
+   且没有显式 `allowAllRoots: true` 时，`sh_read` / `sh_write` / `sh_list` / `sh_run`
+   的 `cwd` 一律拒绝（以前空白名单等于全盘放行）；子进程不再继承整个 `process.env`，
+   只透传 `PATH`、`SystemRoot`、`TEMP` 等基础变量，需要别的用 `envPassthrough` 显式列。
+
+### 测试
+
+- 新增 `scripts/shell-guard-smoke.mjs`（G1–G4，8 项）：空白名单拒绝、显式放行、
+  私密环境变量不外泄、`envPassthrough` 生效。
+- `solo-board-smoke` 增加 S3b（claim 不存在 → 404）；`solo-bootstrap-smoke` 增加
+  B6/B6b（同目录二次 apply 仍能起 solo、token 沿用存档）。
+- 全量回归：plugcheck 16/13、reload A/B/C/D、ui-guard 10/10、state-file 16/16、
+  config-persist 9/0、dispatch 76/76、board smoke 19 项、acceptance 11 项全过。
+
+### 升级注意
+
+- **PC2 / 从 git 安装的机器**：删掉旧的 `node_modules/dsh-team`（如果还在），
+  重新 `dsh plugin add github:shaot92-del/dsh-job-board`，重启 DSH。
+- 主机：本次也要重启 DSH 才会加载 2.0.2（旧进程里还是 1.4.1）。
+
 ## v2.0.1 — 2026-11-11
 
 修 v2.0.0 漏掉的一处改名：**包内 `cordis.patch.yml` 的 `name` 还是 `dsh-team`**。

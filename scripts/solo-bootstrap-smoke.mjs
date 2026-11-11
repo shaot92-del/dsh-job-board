@@ -118,6 +118,35 @@ if (port) {
 }
 check('B4 cleanup 关闭 solo 监听', closed, 'port=' + port)
 
+// ── B6：同一个状态目录二次启动（v2.0.2：solo 端口是随机的，存档里是死地址）──
+// 真实用户会重启 DSH：第二次 apply 必须凭 config.json 的 solo:true 重新起板子，
+// 而不是拿上次那个随机端口当板子地址（那样面板会永远连不上）。
+const cleanup3 = apply(makeCtx(), { machine: 'solo-smoke', dispatchRole: 'observer', autoDispatch: false, timeoutMs: 300 })
+let cfg3 = null
+for (let i = 0; i < 40 && !cfg3; i++) {
+  await new Promise((r) => setTimeout(r, 100))
+  try {
+    const j = JSON.parse(fs.readFileSync(cfgFile, 'utf8'))
+    if (j.boardUrl) cfg3 = j
+  } catch {
+    /* 还没写 */
+  }
+}
+let rebootOk = false
+if (cfg3) {
+  try {
+    const h = await fetch(cfg3.boardUrl + '/api/health', { headers: { 'x-board-token': cfg3.token } })
+    const hj = await h.json()
+    rebootOk = h.ok && hj.ok === true && hj.solo === true
+  } catch {
+    rebootOk = false
+  }
+}
+check('B6 同目录二次 apply 仍能起 solo', rebootOk, cfg3 ? cfg3.boardUrl : 'no config')
+check('B6b 重启沿用存档 token', !!cfg3 && !!saved && cfg3.token === saved.token)
+cleanup3()
+await new Promise((r) => setTimeout(r, 300))
+
 // ── B5：显式配置不触发 solo ───────────────────────────────────────────
 const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-solo-boot2-'))
 process.env.DSH_TEAM_STATE_DIR = dir2

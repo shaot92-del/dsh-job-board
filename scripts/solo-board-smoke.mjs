@@ -58,6 +58,10 @@ check('S2 无 token health 只回 ok', r.status === 200 && r.data.ok === true &&
 r = await call(b1.url, '/api/board')
 check('S3 无 token 读板子被拒', r.status === 401, 'status=' + r.status)
 
+// v2.0.2：不存在的任务不能靠 claim 凭空造出来（Python 板子是 404）。
+r = await call(b1.url, '/api/claim', { task_id: 'ghost-task', machine: 'host' }, b1.token)
+check('S3b claim 不存在的任务 → 404', r.status === 404, 'status=' + r.status)
+
 r = await call(b1.url, '/api/create', { task_id: 'solo-1', goal: 'solo 自检', title: 'solo 自检' }, b1.token)
 check('S4a create', r.status === 200 && r.data.ok, JSON.stringify(r.data))
 r = await call(b1.url, '/api/claim', { task_id: 'solo-1', machine: 'host', minutes: 5 }, b1.token)

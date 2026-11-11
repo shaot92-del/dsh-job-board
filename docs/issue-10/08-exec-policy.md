@@ -800,3 +800,51 @@ profile 的 `dsh.profile.bundles` 与 dependencies 里去掉，避免两个包�
 
 v2.0.1 把这一行改成 `dsh-job-board`。判断一个包到底会被哪个名字加载，看
 `node_modules/<包>/cordis.patch.yml` 的 `name`，不是看目录名。
+
+## 22. v2.0.2：审计修复与 PC2 启动事故
+
+### 22.1 事故：改名后客户端起不来
+
+`lib/client.js` 的 client bundle `id` 仍是 `dsh-team`。DSH 客户端按包名解析 client 模块，
+`dsh-job-board` 这个包注册了 `dsh-team` 的 id，重启后界面挂住，只有屏蔽插件才能启动。
+主机一直跑着 11 号加载的旧实例，所以没暴露；PC2 全新安装立刻踩到。
+
+修法：`id: 'dsh-job-board'`，与 `dsh-remote-agent` 的写法一致。教训：**改名要同时改三处**
+——`package.json.name`、`cordis.patch.yml` 的 `- name`、client bundle 的 `id`。
+
+### 22.2 solo 重启失联
+
+solo 板子 `port: 0` 随机端口，第一次启动把地址写进 `config.json`；重启后旧逻辑看到
+`cfg.token` / `cfg.boardUrl` 就认为「已配置」，不再起板子，面板指向死端口。
+
+修法：`persistTeamConfig` 写 `solo: true`；`soloRequested` 在存档 `solo` 为真时仍然成立，
+并沿用存档 token 重新起板子、回写新地址。判据优先级：loader 显式 `token`/`boardUrl`
+> 存档 `solo:true` > 空配置。回归：`solo-bootstrap-smoke` 的 B6/B6b（同一状态目录二次 apply）。
+
+### 22.3 其余三处
+
+- `solo-board.mjs`：`claim` 对不存在的任务返回 404（以前 `|| {status:'queued'}` 造任务）；
+  `create` 增加 `MAX_TASKS = 5000`。
+- `set-team-config.ps1`：`YamlQuote` 拒绝换行、转义单引号；写盘改 tmp + `Move-Item -Force`。
+- `shell.js`：空白名单从 fail-open 改 fail-closed（需显式 `allowAllRoots: true`）；
+  子进程环境变量改为白名单透传（`ENV_KEEP` + `envPassthrough`），不再带出模型 key / 板子 token。
+
+### 22.4 测试
+
+新增 `scripts/shell-guard-smoke.mjs`（G1–G4）；`solo-board-smoke` 增加 S3b；
+`solo-bootstrap-smoke` 增加 B6/B6b。全量：plugcheck 16/13、reload A/B/C/D、ui-guard 10/10、
+state-file 16/16、config-persist 9/0、dispatch 76/76、board smoke 19 项、acceptance 11 项全过。
+
+### 22.5 PC2 的恢复路径
+
+1. 先在**不启动 DSH** 的情况下改 profile（或直接删掉旧包）：
+   `C:\Users\17827\.dsh\profiles\<名字>\node_modules\dsh-team` 整个删掉；
+   profile 的 `package.json` 里 `dsh.profile.bundles` / `dependencies` 去掉 `dsh-team`。
+2. `dsh plugin add github:shaot92-del/dsh-job-board`（2.0.2 起 client id 正确）。
+3. 启动 DSH，打开面板看 doctor：应显示 `version=2.0.2`，没有 `config-token` 报错（solo 自举）。
+4. 若仍起不来，把 `%LOCALAPPDATA%\DeepSeek Harness\logs` 或 `_runtime.log` 的最后 80 行发我。
+
+### 22.6 仍未做
+
+- `install-board.ps1` 按端口杀进程、带空格路径的处理（低危，下一批）。
+- solo 快照未脱敏、`say '?'` 幻影机器（低危）。

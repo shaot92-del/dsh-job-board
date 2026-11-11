@@ -1,6 +1,6 @@
 {
   "name": "dsh-job-board",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "DSH 插件：把「团队 · 作业板」接进 DSH —— 作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
   "type": "module",
   "main": "./lib/index.js",
@@ -37,7 +37,8 @@
     "scripts/config-persist-smoke.mjs",
     "scripts/set-team-config.ps1",
     "scripts/solo-board-smoke.mjs",
-    "scripts/solo-bootstrap-smoke.mjs"
+    "scripts/solo-bootstrap-smoke.mjs",
+    "scripts/shell-guard-smoke.mjs"
   ],
   "keywords": [
     "dsh",
