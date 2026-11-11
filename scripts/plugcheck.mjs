@@ -26,6 +26,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { apply, name } from '../lib/index.js'
 
+// v2.0.4：plugcheck 也会 apply 插件，必须隔离状态目录 —— 以前它把 boardUrl=http://127.0.0.1:1 和测试 token 写进真实 ~/.dsh/dsh-team/config.json，重启后插件就永远连不上板子。
+const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-plugcheck-'))
+process.env.DSH_TEAM_STATE_DIR = STATE_DIR
+
 const LONG_GOAL = 'x'.repeat(300) // 板子允许 300 字；snapshot 不能把它裁成 160
 const BOARD = {
   now: 0,
@@ -451,6 +455,7 @@ globalThis.clearInterval = realClearInterval
 
 try {
   fs.rmSync(root, { recursive: true, force: true })
+  fs.rmSync(STATE_DIR, { recursive: true, force: true })
 } catch {
   /* 清理失败不影响结论 */
 }

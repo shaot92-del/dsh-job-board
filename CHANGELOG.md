@@ -1,5 +1,31 @@
 # 变更日志
 
+## v2.0.4 — 2026-11-12
+
+一次「测试污染 + 盲信配置」的修复。v2.0.3 重启后 doctor 报 `板子连不上：fetch failed`，
+板子本身正常（127.0.0.1:8965 与 192.168.3.40:8965 都返回 200），根因是两件事叠加：
+
+1. `scripts/plugcheck.mjs` 也 `apply` 插件，但没隔离 `DSH_TEAM_STATE_DIR`，把
+   `boardUrl: http://127.0.0.1:1`（故意不可达）和测试 token 写进了真实
+   `~/.dsh/dsh-team/config.json`；配置文件又比 patch 优先，重启后插件就拿着死地址。
+2. `baseUrl()` 对 `config.boardUrl` 是**盲信**的（`if (boardBase) return boardBase`），
+   不探活、不回落 —— 死地址会让整个插件永远连不上板子，面板只显示 fetch failed，
+   看不出是配置问题。
+
+### 改了什么
+
+- `baseUrl()` 对来自配置的地址先 `probeBoard`，不可达就 trace 并重新探测（pin → 候选）。
+- `plugcheck.mjs` 使用临时状态目录，并在结束时清理；同类 smoke（reload/ui-guard/
+  config-persist/dispatch/solo/shell）此前已隔离，这次补齐最后一个漏网的。
+- 已把宿主真实 `config.json` 的 `boardUrl` 从 `http://127.0.0.1:1` 修回
+  `http://127.0.0.1:8965`。
+
+### 测试
+
+- plugcheck 16/13、reload A/B/C、ui-guard 10/10、state-file 16/16、config-persist 9/9、
+  dispatch 76/76、solo 10+5、shell-guard 10 项、board smoke 19 项、acceptance 11 项。
+- 重启后 doctor 应无 `board` error（MB14 离线仍会给 workers 警告）。
+
 ## v2.0.3 — 2026-11-12
 
 两位复审专家（AI 生成代码安全审计师 / 代码审查工程师）对 v2.0.2 改动逐行复核后，
