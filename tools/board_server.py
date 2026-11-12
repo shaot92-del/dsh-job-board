@@ -245,6 +245,15 @@ def _canon_machine(name: str) -> str:
     return name
 
 
+_ALIAS_STRIP = re.compile(r"[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
+
+
+def _alias_key(v: str) -> str:
+    """显示名归一：去控制/零宽/bidi，只留字母数字，用于唯一性比较。"""
+    s = _ALIAS_STRIP.sub("", str(v or ""))
+    return re.sub(r"[^0-9a-z]", "", s.casefold())
+
+
 def touch_machine(machine: str, current: str = "", note: str = "") -> None:
     machine = _canon_machine(machine)
     m = STATE["machines"].get(machine) or {}
@@ -742,16 +751,25 @@ def do_caps(body: dict) -> tuple[int, dict]:
         al = caps.get("alias")
         al = al.strip() if isinstance(al, str) else ""
         if al:
-            low = al.lower()
+            mine = _alias_key(al)
             for k, mm in STATE["machines"].items():
                 if k == key:
                     continue
                 other = ((mm.get("caps") or {}).get("alias") or "") if isinstance(mm, dict) else ""
-                if isinstance(other, str) and other.strip().lower() == low:
-                    return 409, {"error": "显示名已被使用", "alias": al, "conflict": k}
+                if _alias_key(k) == mine or (isinstance(other, str) and other.strip() and _alias_key(other) == mine):
+                    # 显示名冲突只丢弃 alias，不能让整条 caps 上报失败（否则机器会被判离线）。
+                    caps = dict(caps)
+                    caps.pop("alias", None)
+                    break
         m = STATE["machines"].setdefault(key, {})
+        previous_alias = (m.get("caps") or {}).get("alias") if isinstance(m.get("caps"), dict) else None
         merged = dict(m.get("caps") or {})
         merged.update(caps)
+        if isinstance(previous_alias, str) and previous_alias.strip():
+            # 板子侧显示名是权威：机器自己的 caps 不能把它洗掉。
+            merged["alias"] = previous_alias
+        elif not (isinstance(merged.get("alias"), str) and merged["alias"].strip()):
+            merged.pop("alias", None)
         # 合并后也要有上限：以前不停上报能把 state.json 撑大，读板子越来越慢。
         if len(json.dumps(merged, ensure_ascii=False).encode("utf-8")) > MAX_CAPS_BYTES * 2:
             merged = dict(caps)
@@ -772,7 +790,7 @@ def do_alias(body: dict) -> tuple[int, dict]:
         alias = ""
     if not isinstance(alias, str):
         return 400, {"error": "alias 必须是字符串"}
-    alias = " ".join(alias.split())[:32]
+    alias = _ALIAS_STRIP.sub("", " ".join(alias.split()))[:32]
     key = _canon_machine(machine)
     with STATE_LOCK:
         m = STATE["machines"].get(key)
@@ -780,20 +798,23 @@ def do_alias(body: dict) -> tuple[int, dict]:
             return 404, {"error": "板子上没有这台机器", "machine": machine,
                          "hint": "先让那台机器上报一次 caps，或确认机器名"}
         if alias:
-            low = alias.lower()
+            mine = _alias_key(alias)
             for k, mm in STATE["machines"].items():
                 if k == key or not isinstance(mm, dict):
                     continue
                 other = ((mm.get("caps") or {}).get("alias") or "")
-                if isinstance(other, str) and other.strip().lower() == low:
+                if _alias_key(k) == mine or (isinstance(other, str) and other.strip() and _alias_key(other) == mine):
                     return 409, {"error": "显示名已被使用", "alias": alias, "conflict": k}
+        old_alias = (m.get("caps") or {}).get("alias") or ""
         caps = dict(m.get("caps") or {})
         if alias:
             caps["alias"] = alias
         else:
             caps.pop("alias", None)
         m["caps"] = caps
-        touch_machine(key)
+        # 改名不是心跳：只记 caps 时间，避免把离线机器“救活”。
+        m["caps_at"] = now()
+        add_event("alias", key, "", (str(old_alias) or "(空)") + " -> " + (alias or "(空)"))
         save_state()
     return 200, {"ok": True, "machine": key, "alias": alias}
 
@@ -808,14 +829,20 @@ def do_forget_machine(body: dict) -> tuple[int, dict]:
         m = STATE["machines"].get(key)
         if not isinstance(m, dict):
             return 404, {"error": "板子上没有这台机器", "machine": machine}
-        last = float(m.get("last_seen") or 0)
-        if (now() - last) < ONLINE_WINDOW and not body.get("force"):
-            return 409, {"error": "这台机器还在线，先停掉它的 DSH 或显式 force",
+        try:
+            last = float(m.get("last_seen") or 0)
+        except Exception:
+            last = 0.0
+        if (now() - last) < ONLINE_WINDOW and body.get("force") is not True:
+            return 409, {"error": "这台机器最近还有心跳，先停掉它的 DSH；它再次上报时会重新出现",
                          "machine": key, "last_seen": last}
+        n = sum(1 for t in STATE["tasks"].values()
+                if isinstance(t, dict) and _canon_machine(t.get("machine") or "") == key)
         STATE["machines"].pop(key, None)
         STATE["updated"] = now()
+        add_event("forget", key, "", "force=%s last_seen=%s tasks=%d" % (body.get("force") is True, last, n))
         save_state()
-    return 200, {"ok": True, "machine": key, "forgotten": True}
+    return 200, {"ok": True, "machine": key, "forgotten": True, "tasks": n}
 
 
 def do_release(body: dict) -> tuple[int, dict]:

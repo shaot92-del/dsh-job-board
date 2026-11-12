@@ -276,7 +276,7 @@ def main() -> int:
             c6, b6 = call(p6_port, "/api/caps", {"machine": "GT14", "caps": {"os": "windows", "alias": "GT14 工作机"}})
             check("B1 上报显示名", c6 == 200, "%s %s" % (c6, b6))
             c6, b6 = call(p6_port, "/api/caps", {"machine": "MB14", "caps": {"alias": "gt14 工作机"}})
-            check("B1 显示名冲突被拒（409）", c6 == 409, "%s %s" % (c6, b6))
+            check("B1 caps 撞名只丢 alias（200）", c6 == 200, "%s %s" % (c6, b6))
             c6, b6 = call(p6_port, "/api/create", {"task_id": "b1-1", "goal": "g", "machine": "GT14"})
             check("B1 建单", c6 == 200, "%s %s" % (c6, b6))
             c6, b6 = call(p6_port, "/api/attach", {"task_id": "b1-1", "remote_id": "ui-b1", "machine": "GT14 工作机"})
@@ -296,6 +296,14 @@ def main() -> int:
             check("A1 看板改显示名（200）", c6 == 200 and b6.get("alias") == "GT14 新名字", "%s %s" % (c6, b6))
             _, board6 = call(p6_port, "/api/board")
             check("A1 快照出现新显示名", ((board6 or {}).get("machines") or {}).get("GT14", {}).get("caps", {}).get("alias") == "GT14 新名字", "")
+            # A1b：机器自己的 caps 上报（空 alias）不能把看板侧改的名字洗掉
+            c6, b6 = call(p6_port, "/api/caps", {"machine": "GT14", "caps": {"os": "windows"}})
+            board6 = call(p6_port, "/api/board", token=TOKEN)[1]
+            got = ((board6.get("machines") or {}).get("GT14", {}).get("caps", {}).get("alias") or "")
+            check("A1b caps 不覆盖看板改名", c6 == 200 and got == "GT14 新名字", "%s %r" % (c6, got))
+            # A1c：改名不算心跳（离线机器不会因为改名变在线）——用 force:"false" 字符串验证严格布尔
+            c6, b6 = call(p6_port, "/api/forget-machine", {"machine": "GT14", "force": "false"})
+            check("A1c force 字符串不生效（409）", c6 == 409, "%s %s" % (c6, b6))
             c6, b6 = call(p6_port, "/api/alias", {"machine": "MB14", "alias": "GT14 新名字"})
             check("A1 改显示名撞名被拒（409）", c6 == 409, "%s %s" % (c6, b6))
             c6, b6 = call(p6_port, "/api/forget-machine", {"machine": "MB14"})
