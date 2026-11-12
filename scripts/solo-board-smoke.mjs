@@ -103,6 +103,17 @@ check('S7 终态任务不占上限（5001 条 done 仍可建单）', r.status ==
 await b3.close()
 fs.rmSync(dir2, { recursive: true, force: true })
 
+// ── S8：写盘失败必须返回错误，不能 200 后丢任务（v2.0.6 复核 P1-6）────
+const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-solo-smoke3-'))
+fs.mkdirSync(path.join(dir3, 'solo-board.json')) // 让 rename 的目标是目录 → 必失败
+const b4 = await startSoloBoard({ stateDir: dir3, port: 0 })
+r = await call(b4.url, '/api/create', { task_id: 'ghost', goal: '不该被接受' }, b4.token)
+check('S8 写盘失败返回 500', r.status === 500, 'status=' + r.status + ' body=' + JSON.stringify(r.data))
+r = await call(b4.url, '/api/board', undefined, b4.token)
+check('S8 写盘失败不在内存里留下任务', r.status === 200 && !r.data.tasks.ghost)
+await b4.close()
+fs.rmSync(dir3, { recursive: true, force: true })
+
 fs.rmSync(dir, { recursive: true, force: true })
 if (failed) {
   console.log(`\nsolo-board-smoke: ${failed} failed`)

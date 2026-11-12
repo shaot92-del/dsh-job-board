@@ -635,6 +635,11 @@ def reconcile_once() -> int:
             cur = STATE["tasks"].get(tid)
             if not cur:
                 continue
+            # 复核（v2.0.6，P1-4）：读日志到写回之间任务可能已被重排并绑定新的
+            # remote_id（新的执行轮次）。只检查"任务还在"会把上一轮的旧结果写到
+            # 新一轮上 —— 必须复核 remote_id 与 running 状态都没变。
+            if (cur.get("remote_id") or "").strip() != rid or cur.get("status") != "running":
+                continue
             cur["status"] = fin
             cur["note"] = note
             cur["updated_at"] = now()
