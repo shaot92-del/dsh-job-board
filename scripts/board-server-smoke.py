@@ -232,6 +232,40 @@ def main() -> int:
                 p4.wait(timeout=5)
             except Exception:
                 p4.kill()
+
+        # P2-16（v2.0.7）：终态任务不修剪时，MAX_TASKS 实际是"历史总量"上限，
+        # 跑到 5000 之后新任务永远建不出来。这里预置 3 条 40 天前的 done，
+        # 上限设 2 —— 容量检查前必须先 prune，否则 create 必 413。
+        p5_port = free_port()
+        p5_state = os.path.join(tmp, "d", "state.json")
+        os.makedirs(os.path.dirname(p5_state), exist_ok=True)
+        old_ts = time.time() - 40 * 24 * 3600
+        with open(p5_state, "w", encoding="utf-8") as fh:
+            json.dump({
+                "updated": int(time.time()),
+                "tasks": {
+                    "old-1": {"status": "done", "updated_at": old_ts},
+                    "old-2": {"status": "failed", "updated_at": old_ts},
+                    "old-3": {"status": "superseded", "updated_at": old_ts},
+                },
+                "machines": {},
+                "events": [],
+            }, fh)
+        p5 = start(p5_state, p5_port, env_extra={"GP_BOARD_MAX_TASKS": "2"})
+        try:
+            check("P2-16 修剪实例启动", wait_health(p5_port))
+            c5, b5 = call(p5_port, "/api/create", {"task_id": "fresh-1", "goal": "g"})
+            check("P2-16 过期终态被清后仍可建单", c5 == 200, "%s %s" % (c5, b5))
+            gb, board = call(p5_port, "/api/board")
+            tasks = (board or {}).get("tasks") or {}
+            left = [k for k in ("old-1", "old-2", "old-3") if k in tasks]
+            check("P2-16 40 天前的终态已清掉", not left, "left=%s" % left)
+        finally:
+            p5.terminate()
+            try:
+                p5.wait(timeout=5)
+            except Exception:
+                p5.kill()
     finally:
         for proc in (p1,):
             try:

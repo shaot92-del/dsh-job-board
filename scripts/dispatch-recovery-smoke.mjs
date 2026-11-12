@@ -222,7 +222,7 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
         }
         return send(200, { tasks: rows })
       }
-      return send(200, { tasks: remoteTasks })
+      return send(200, { tasks: remoteTasks.filter((t) => !t.hidden) })
     }
 
     if (p === '/api/remote-agent/ui/task') {
@@ -232,6 +232,10 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
       if (hub && hub.probeMissing) return send(404, { error: 'TASK_UNKNOWN', taskId })
       const t = remoteTasks.find((x) => String(x.taskId) === taskId)
       if (!t) return send(404, { error: 'TASK_UNKNOWN', taskId })
+      // R29（v2.0.7）：单条查询的失败必须保住三态 —— 通用 404（不是 TASK_UNKNOWN）
+      // 与连接被掐断都不能被插件当成「任务不存在」，否则会把仍在跑的板任务判死。
+      if (t.fault === 'generic404') return send(404, { error: 'not-found' })
+      if (t.fault === 'drop') { try { req.destroy() } catch {} ; return }
       return send(200, { task: Object.assign({ logs: [] }, t), handoff: null })
     }
 
@@ -445,6 +449,105 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteOwne
     })
     check('R26c 未知状态不写回板子', info.stats.mark === 0 && info.tasks['bd-r26c'].status === 'running',
       `mark=${info.stats.mark} status=${info.tasks['bd-r26c'].status}`)
+  }
+
+  // ── R27（v2.0.7 P2-9）：remote 被挤出 hub /tasks 200 条窗口，仍能收尾 ────────
+  // 以前 syncRemote 只看列表，`!r` 直接 continue，板上永远 running（单条 /task 接口
+  // 其实查得到）。这里用 hidden 让列表里没有它，单条查询仍返回 done。
+  {
+    const info = await scenario('R27', {
+      machine: 'smoke-r27',
+      extraCfg: { remoteSyncMs: 300 },
+      tasks: { 'bd-r27': { status: 'running', machine: 'GT14', remote_id: 'ui-r27', goal: 'R27 goal' } },
+      seedRemoteTasks: [{
+        taskId: 'ui-r27',
+        nodeId: 'smoke-node',
+        goal: 'R27 goal',
+        status: 'completed',
+        hidden: true,
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now(),
+      }],
+      waitMs: 2600,
+    })
+    check('R27 列表缺失但单条可查 → 板上 done', info.tasks['bd-r27'].status === 'done',
+      `status=${info.tasks['bd-r27'].status} mark=${info.stats.mark} probe=${JSON.stringify(info.remoteTasks)}`)
+  }
+
+  // ── R28（v2.0.7 P1-5）：过期日志不认领窗口外/已被占用的远端 ─────────────────
+  // 同一 goal、时间也在 3 小时前，但那条 remote 已经被 bd-other 占用 —— 过期条目
+  // 不能把它抢过来"补绑"，否则两条板任务指向同一条远端，bd-r28 会假完成。
+  {
+    const TTL_AGO = 3 * 60 * 60 * 1000
+    const info = await scenario('R28', {
+      machine: 'smoke-r28',
+      tasks: {
+        'bd-r28': { status: 'claimed', machine: '', goal: 'R28 goal', remote_id: '' },
+        'bd-other': { status: 'running', machine: 'GT14', goal: 'R28 other goal', remote_id: 'ui-r28' },
+      },
+      seedJournal: (now) => [{
+        taskId: 'bd-r28', nodeId: 'smoke-node', machine: 'smoke-r28', goal: 'R28 goal', mode: 'agent',
+        workspace: '', phase: 'claimed', attempts: 1, sentAt: now - TTL_AGO, at: now - TTL_AGO, lastError: '',
+      }],
+      seedRemoteTasks: [{
+        taskId: 'ui-r28',
+        nodeId: 'smoke-node',
+        goal: 'R28 goal',
+        status: 'running',
+        createdAt: Date.now() - TTL_AGO,
+        updatedAt: Date.now(),
+      }],
+      waitMs: 2600,
+    })
+    check('R28 不抢别的任务已占用的 remote', String(info.tasks['bd-r28'].remote_id) === '',
+      `remote_id=${info.tasks['bd-r28'].remote_id}`)
+    check('R28 没有把两条板任务绑到同一条远端', info.stats.attach === 0, `attach=${info.stats.attach}`)
+    check('R28 bd-other 的远程绑定未被改动', String(info.tasks['bd-other'].remote_id) === 'ui-r28',
+      String(info.tasks['bd-other'].remote_id))
+  }
+
+  // ── R29/R29b（v2.0.7 P2-9 负向）：单条查询失败不能判死 ───────────────────
+  // probeRemoteTask 只有「404 且 body 明说 task-unknown」才返回 known:false。这里把
+  // 另两种失败（通用 404、连接被断）各跑一遍，板上必须保持 running 且一次 mark 都不发。
+  {
+    const info = await scenario('R29', {
+      machine: 'smoke-r29',
+      extraCfg: { remoteSyncMs: 300 },
+      tasks: { 'bd-r29': { status: 'running', machine: 'GT14', remote_id: 'ui-r29', goal: 'R29 goal' } },
+      seedRemoteTasks: [{
+        taskId: 'ui-r29',
+        nodeId: 'smoke-node',
+        goal: 'R29 goal',
+        status: 'completed',
+        hidden: true,
+        fault: 'generic404',
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now(),
+      }],
+      waitMs: 2600,
+    })
+    check('R29 通用 404 不判死', info.tasks['bd-r29'].status === 'running' && info.stats.mark === 0,
+      `status=${info.tasks['bd-r29'].status} mark=${info.stats.mark}`)
+  }
+  {
+    const info = await scenario('R29b', {
+      machine: 'smoke-r29b',
+      extraCfg: { remoteSyncMs: 300 },
+      tasks: { 'bd-r29b': { status: 'running', machine: 'GT14', remote_id: 'ui-r29b', goal: 'R29b goal' } },
+      seedRemoteTasks: [{
+        taskId: 'ui-r29b',
+        nodeId: 'smoke-node',
+        goal: 'R29b goal',
+        status: 'completed',
+        hidden: true,
+        fault: 'drop',
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now(),
+      }],
+      waitMs: 2600,
+    })
+    check('R29b 查询断连不判死', info.tasks['bd-r29b'].status === 'running' && info.stats.mark === 0,
+      `status=${info.tasks['bd-r29b'].status} mark=${info.stats.mark}`)
   }
 
 function summary() {

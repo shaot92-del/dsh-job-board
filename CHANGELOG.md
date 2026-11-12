@@ -1,5 +1,58 @@
 # 变更日志
 
+## v2.0.7 — 2026-11-12
+
+第二轮代码审阅的最后三项（P1-5 / P2-9 / Python 终态不修剪），外加市场维护者提的
+一条示例占位符建议。没有改看板/派工协议，也没有改任务字段语义。
+
+### 1. 过期恢复日志会绑错远端（P1-5）
+
+`escalateExpiredJournal` 以前用 `rows.find` 只按 goal + **时间下界**匹配：既没有上界，
+也不排除已经被别的板任务占用的远端任务。一条 3 小时前的过期日志，可以"认领"另一条
+板任务正在用的 `ui-new`，于是从未完成的任务借别人的结果变成假完成。
+
+现在统一走 `dispatchMatchWindow(rec)` + `matchRemoteCandidates(...)`：
+
+- 窗口同时有下界（`sentAt - SEND_SKEW_MS`）与上界（`at + SEND_SKEW_MS`）；
+- 候选排除本轮已认领的（`matched`）与板上已被任何任务占用的 `remote_id`（`occupied`）；
+- 板子上本任务已经回绑 → 只清日志，不再重复 attach；
+- 候选 >1 → 推迟 60 秒（不猜），0 条且窗口覆盖 → 才标 blocked。
+
+### 2. 终态同步只取 hub 最近 200 条（P2-9）
+
+hub `/tasks` 是 `slice(0, 200)`。板上 running 的任务一旦被挤出窗口，`syncRemote`
+以前直接 `continue`，板上永远显示"进行中"。
+
+现在对列表里缺失的已知 `remote_id` 做**有限并发 4** 的 `/task?taskId=` 单条查询：
+
+- 查得到 → 用单条结果正常回写终态；
+- 明确 `task-unknown` → 板上标 `failed` 并说明"远端已不存在（可能被回收）"，不再永久 running；
+- 查询失败/旧 hub 404 → 不动（不能把可能在跑的任务判死）。
+
+顺带修掉一个前置问题：列表为空时以前在探测前就 `return 0`，整段逻辑永远走不到。
+
+### 3. Python 终态任务不修剪（P2-9 尾部）
+
+`MAX_TASKS` 统计的是全部任务，终态任务只增不减 —— 到 5000 后 create 与未知 claim
+全部 413。新增 `prune_terminal_tasks()`：容量检查前清掉 **30 天前**的
+`done/failed/blocked/superseded`，未终态一律不动。仍可用 `GP_BOARD_MAX_TASKS` 覆盖上限。
+
+### 4. 市场建议：示例去掉真实值
+
+`scripts/set-team-config.ps1` 的用法示例里还有内网 IP、截断 token 与具体机器名，
+现在改成 `<board-host>` / `<board-token>` / `<machine-name>` 占位符。
+
+### 测试
+
+- `dispatch-recovery-smoke` 新增 **R27**（远端被 200 条窗口挤出，单条查询仍能收尾）
+  与 **R28**（过期日志不抢别的任务占用的 remote）、以及 **R29/R29b**（通用 404 与
+  查询断连都不能把在跑任务判死），**86/86**。
+- `board-server-smoke` 新增 **P2-16**（3 条 40 天前终态 + 上限 2：先修剪再建单），
+  全过。
+- 其余回齐全绿：plugcheck 16/13、reload A/B/C、ui-guard 12/12、state-file 16/16、
+  config-persist 9/9、solo-board、solo-bootstrap、shell-guard、acceptance 11 项。
+- 测试钩子：fake hub 的 `/tasks` 支持 `hidden` 任务，便于模拟被挤出窗口。
+
 ## v2.0.6 — 2026-11-12
 
 第二轮代码审阅（基线 `11f4d68`）里的 P2 七项。全部是边界行为，没有改协议，也没有改

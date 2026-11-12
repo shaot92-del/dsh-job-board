@@ -61,7 +61,29 @@ MAX_CAPS_BYTES = 8 * 1024     # v1.3.11（L2）：caps 对象上限
 MAX_METRICS_BYTES = 4 * 1024  # v1.3.11（L2）：metrics live 对象上限
 MAX_SEED_ITEMS = 200          # v1.3.11（L2）：一次最多导入多少条
 MAX_TASKS = int(os.environ.get("GP_BOARD_MAX_TASKS") or 5000)  # v1.3.11（L2）：总数上限；环境变量供测试覆盖
+TERMINAL_STATUS = {"done", "failed", "blocked", "superseded"}
+TERMINAL_TTL_SEC = 30 * 24 * 3600  # v2.0.7：终态任务保留 30 天，超期才清（审计需要往回看）
 MINUTES_MIN, MINUTES_MAX = 1, 1440  # 租约分钟数收敛到 1–1440，负数会让任务立刻过期
+
+
+def prune_terminal_tasks() -> int:
+    """v2.0.7（审阅 P2-9 尾部）：终态任务不会自己消失，MAX_TASKS 于是变成
+    "历史总量"上限 —— 跑到 5000 之后连新任务都建不出来。这里只清 30 天前的终态，
+    未终态（queued/claimed/running/stale 等）一律不动。返回清掉的条数。"""
+    cut = time.time() - TERMINAL_TTL_SEC
+    removed = 0
+    for tid in list(STATE["tasks"].keys()):
+        t = STATE["tasks"].get(tid) or {}
+        if (t.get("status") or "") not in TERMINAL_STATUS:
+            continue
+        try:
+            ts = float(t.get("updated_at") or 0)
+        except (TypeError, ValueError):
+            ts = 0
+        if ts and ts < cut:
+            STATE["tasks"].pop(tid, None)
+            removed += 1
+    return removed
 
 # ---------------------------------------------------------------- 秘密脱敏
 # v3.2（安全审计 C1）：远端日志是不可信输入，板子把它拼进 note、再经 /api/board 广播，
@@ -294,6 +316,7 @@ def do_claim(body: dict) -> tuple[int, dict]:
 
         took_over = eff["status"] == "stale"
         # 复核（v2.0.6，P2-15）：未知任务可以自动建单，但也必须受总数上限约束。
+        prune_terminal_tasks()
         if task_id not in STATE["tasks"] and len(STATE["tasks"]) >= MAX_TASKS:
             return 413, {"error": "板子任务数到上限", "limit": MAX_TASKS}
         # 2026-10-31：改成**原地合并**。旧实现整条 dict 覆盖，认领会把
@@ -341,6 +364,7 @@ def do_create(body: dict) -> tuple[int, dict]:
         if task_id in STATE["tasks"]:
             return 409, {"error": "task_id 已存在", "task_id": task_id}
         # 复核（v2.0.6，P2-15）：容量检查以前只在 seed，create/claim 都能绕过。
+        prune_terminal_tasks()
         if len(STATE["tasks"]) >= MAX_TASKS:
             return 413, {"error": "板子任务数到上限", "limit": MAX_TASKS}
         STATE["tasks"][task_id] = {
@@ -794,6 +818,7 @@ def do_seed(body: dict) -> tuple[int, dict]:
             if not tid:
                 continue
             if tid not in STATE["tasks"]:
+                prune_terminal_tasks()
                 if len(STATE["tasks"]) >= MAX_TASKS:
                     return 413, {"error": "板子任务数到上限", "limit": MAX_TASKS}
                 STATE["tasks"][tid] = {

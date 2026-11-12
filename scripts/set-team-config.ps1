@@ -7,9 +7,9 @@
 #   # 只看有哪些 profile、各自有没有 team 块
 #   pwsh -File set-team-config.ps1 -List
 #
-#   # 配置某个 profile 接入团队板子
+#   # 配置某个 profile 接入团队板子（把占位符换成你自己的值）
 #   pwsh -File set-team-config.ps1 -Profile desktop `
-#     -BoardUrl 'http://192.168.3.40:8965' -Token '762299df...' -Machine 'PC2' -Role observer
+#     -BoardUrl 'http://<board-host>:8965' -Token '<board-token>' -Machine '<machine-name>' -Role observer
 #
 # 不传 -Profile 时：只有一个 profile 就直接用它，多个则要求显式指定。
 # 写前会备份成 cordis.patch.yml.bak-setteam-<时间戳>；写完会复核 team 块数量与字段。

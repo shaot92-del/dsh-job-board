@@ -933,3 +933,35 @@ state-file 16/16、config-persist 9/0、dispatch 76/76、board smoke 19 项、ac
 
 - 没有改 `uiAllowedHosts` 的默认值：空数组仍然只允许回环，内网访问必须显式配置。
 - 没有把 `MAX_TASKS` 的默认值调小：5000 是总量，solo 的终态清理逻辑在 v2.0.3 已有。
+
+## §26 v2.0.7：P1-5 / P2-9 / 终态修剪
+
+### 26.1 三项与修法
+
+| # | 问题 | 修法 |
+|---|------|------|
+| P1-5 | 过期恢复日志按 goal + 时间下界匹配，会绑定同 goal 的新任务或已被占用 remote | 统一 `dispatchMatchWindow` + `matchRemoteCandidates`：上下界、排除 matched/occupied、已回绑只清账、多候选推迟 |
+| P2-9 | hub `/tasks` 只回最近 200 条，被挤出窗口的任务永远 running | 缺失项做有限并发 4 的单条 `/task?taskId=` 查询；`task-unknown` 才标 failed，查询失败不动 |
+| P2-9b | Python `MAX_TASKS` 统计全部任务，终态不回收 | 容量检查前 `prune_terminal_tasks()` 清 30 天前 `done/failed/blocked/superseded` |
+
+### 26.2 为什么 P1-5 不按轮次重建
+
+审阅建议把 `attempts` 与远端 `remote_id` 一起入档、reconciler 按轮次比对。实际实现里
+journal 的 `attempts` 只增不减，远端任务不携带"第几次派发"字段，按轮次比对需要改
+remote-agent 协议。当前实现用**时间窗 + 占用集合 + 唯一性**达到同样目的：宁可推迟
+（60 秒后重判）也不猜一条。
+
+### 26.3 测试
+
+- R27：`hidden` 远端任务（列表里没有）仍能通过单条查询收尾。
+- R28：同 goal、时间在 3 小时前，但 remote 已被 `bd-other` 占用 → 不 attach、不改绑。
+- R29/R29b：单条查询返回「非 task-unknown 的 404」或连接被掐断 → 不允许判死，
+  板上仍 running、无 mark（对应 `probeRemoteTask` 的三态契约）。
+- P2-16：3 条 40 天前终态 + `GP_BOARD_MAX_TASKS=2` → 先修剪，create 200。
+- 其余回齐全绿。
+
+### 26.4 已知边界
+
+- 单条查询的并发是 4；`watched` 很长时会串行多轮，但每轮最多 4 个请求。
+- `prune_terminal_tasks` 以 `updated_at` 为准；老状态文件没有该字段的任务不会被清。
+- 被标 failed 的"远端已不存在"依赖 hub 明确回 `task-unknown`；旧 hub 的通用 404 不动。
