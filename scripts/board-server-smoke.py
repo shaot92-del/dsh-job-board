@@ -312,6 +312,11 @@ def main() -> int:
             check("A2 force 移除在线机器（200）", c6 == 200, "%s %s" % (c6, b6))
             _, board6 = call(p6_port, "/api/board")
             check("A2 快照里已没有 MB14", "MB14" not in ((board6 or {}).get("machines") or {}), ",".join(((board6 or {}).get("machines") or {}).keys()))
+            # A3：say 不带 machine 时不能凭空造一台 "?" 幻影机器
+            c6, b6 = call(p6_port, "/api/say", {"text": "hello"})
+            _, board7 = call(p6_port, "/api/board")
+            check("A3 say 不带机器不造 ? 幻影机", c6 == 200 and "?" not in ((board7 or {}).get("machines") or {}),
+                  "%s %s" % (c6, ",".join(((board7 or {}).get("machines") or {}).keys())))
         finally:
             p6.terminate()
             try:

@@ -912,7 +912,10 @@ def do_say(body: dict) -> tuple[int, dict]:
     machine = (body.get("machine") or "?").strip()
     text = _txt((body.get("text") or "").strip(), 300)
     with STATE_LOCK:
-        touch_machine(machine)
+        # 空机器名/占位符不建机器：以前缺省会写一个 ? 的幻影机器，
+        # 面板上会多出一台永远离线的机器，还会把在线数算错。
+        if machine and machine != "?":
+            touch_machine(machine)
         add_event("say", machine, "", text)
         save_state()
     return 200, {"ok": True}
