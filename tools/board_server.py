@@ -761,6 +761,63 @@ def do_caps(body: dict) -> tuple[int, dict]:
         save_state()
     return 200, {"ok": True, "machine": key, "caps": merged, "caps_at": now()}
 
+
+def do_alias(body: dict) -> tuple[int, dict]:
+    """改某台机器的显示名（看板侧）。身份键不动，只改 caps.alias。"""
+    machine = (body.get("machine") or "").strip()
+    alias = body.get("alias")
+    if not machine:
+        return 400, {"error": "需要 machine（身份名）"}
+    if alias is None:
+        alias = ""
+    if not isinstance(alias, str):
+        return 400, {"error": "alias 必须是字符串"}
+    alias = " ".join(alias.split())[:32]
+    key = _canon_machine(machine)
+    with STATE_LOCK:
+        m = STATE["machines"].get(key)
+        if not isinstance(m, dict):
+            return 404, {"error": "板子上没有这台机器", "machine": machine,
+                         "hint": "先让那台机器上报一次 caps，或确认机器名"}
+        if alias:
+            low = alias.lower()
+            for k, mm in STATE["machines"].items():
+                if k == key or not isinstance(mm, dict):
+                    continue
+                other = ((mm.get("caps") or {}).get("alias") or "")
+                if isinstance(other, str) and other.strip().lower() == low:
+                    return 409, {"error": "显示名已被使用", "alias": alias, "conflict": k}
+        caps = dict(m.get("caps") or {})
+        if alias:
+            caps["alias"] = alias
+        else:
+            caps.pop("alias", None)
+        m["caps"] = caps
+        touch_machine(key)
+        save_state()
+    return 200, {"ok": True, "machine": key, "alias": alias}
+
+
+def do_forget_machine(body: dict) -> tuple[int, dict]:
+    """把不在线的机器从看板移除（不改任务记录）。在线机器需要显式 force。"""
+    machine = (body.get("machine") or "").strip()
+    if not machine:
+        return 400, {"error": "需要 machine（身份名）"}
+    key = _canon_machine(machine)
+    with STATE_LOCK:
+        m = STATE["machines"].get(key)
+        if not isinstance(m, dict):
+            return 404, {"error": "板子上没有这台机器", "machine": machine}
+        last = float(m.get("last_seen") or 0)
+        if (now() - last) < ONLINE_WINDOW and not body.get("force"):
+            return 409, {"error": "这台机器还在线，先停掉它的 DSH 或显式 force",
+                         "machine": key, "last_seen": last}
+        STATE["machines"].pop(key, None)
+        STATE["updated"] = now()
+        save_state()
+    return 200, {"ok": True, "machine": key, "forgotten": True}
+
+
 def do_release(body: dict) -> tuple[int, dict]:
     task_id = (body.get("task_id") or "").strip()
     machine = (body.get("machine") or "").strip()
@@ -1100,6 +1157,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/attach": do_attach,
             "/api/take": do_take,
             "/api/untake": do_untake,
+            "/api/alias": do_alias,
+            "/api/forget-machine": do_forget_machine,
         }.get(u.path)
         if not route:
             self._json(404, {"error": "not found"})

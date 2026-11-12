@@ -1044,3 +1044,31 @@ remote-agent 协议。当前实现用**时间窗 + 占用集合 + 唯一性**达
 - `scripts/board-server-smoke.py` 新增 B1：显示名折回身份、任务 machine 落身份、无 ghost、
   未知显示名 attach 400、重复显示名 409；当前 **38 项**。
 - 全量回归见 CHANGELOG；`board_options` 的返回在 27.2 的数据流图里。
+
+## 28. v2.2.0 看板操作补全
+
+### 28.1 触发
+
+用户在使用面板时提出五件事：移除不在线的机器、给别的机器改名、展开任务详情、评估完把评估卡收起来、自检横幅没事不要弹。都属于“面板能用”而不是协议层的改动，单独发一版。
+
+### 28.2 行为
+
+| 操作 | 入口 | 后端 | 约束 |
+|---|---|---|---|
+| 移除离线机器 | 机器卡片「移除」 | `POST /api/board/ui/forget-machine` → 板子 `/api/forget-machine` | 仅 `last_seen` 超过 `ONLINE_WINDOW`；在线需 `force`（面板不给）；任务记录不删 |
+| 改别的机器显示名 | 机器卡片「改名」 | `/api/board/ui/machine-alias` → 板子 `/api/alias` | 清洗 + ≤32 字 + 跨机唯一；只写 `caps.alias`，身份 `machine` 不变 |
+| 改本机显示名 | 顶部「改名」 | 本地 `/alias`（写 `cfg.machineAlias`） | 重启后仍生效；板子侧 caps 上报覆盖 |
+| 任务详情 | 点任务标题展开 | 无 | 模型/模式/远端 id/占位/目标/进度 + 复制 JSON |
+| 评估卡 | 完成后自动收起；工具栏「评估」重开 | `/assess` | 成功才收；失败保留 |
+| 自检横幅 | 只渲染 error/warn | `/doctor` | `config-saved`、部分离线、暂停、machine 为空降为 `info` |
+
+### 28.3 为什么移除要限制离线
+
+机器条目同时承载 `last_seen`、`caps`、`current`。在线机器被移除后，下一次心跳会重新建条目，看起来“删了又回来”，还会丢掉 `current` 的占用状态。所以默认只允许删离线；在线必须显式 `force`，面板不提供这个入口。
+
+### 28.4 测试
+
+- `scripts/board-server-smoke.py` **45 项**（新增：改显示名 200、快照出现新名、撞名 409、在线移除 409、`force` 200、移除后快照没有该机）。
+- `scripts/reload-smoke.mjs` 路由 **16**（场景 D 15）；`plugcheck` 17 工具 / 16 路由。
+- 其余套件见 CHANGELOG v2.2.0。
+

@@ -102,7 +102,7 @@ console.log('— 场景 A：apply → cleanup → apply（正常重载）')
   const a = makeCtx(ws)
   const clean1 = apply(a.ctx, cfg)
   check(typeof clean1 === 'function', 'A1 apply 返回 cleanup 函数')
-  check(ws.exact.size === 14, `A2 首次注册 14 条路由（实际 ${ws.exact.size}）`)
+  check(ws.exact.size === 16, `A2 首次注册 16 条路由（实际 ${ws.exact.size}）`)
   const toolCount = a.tools.size
   check(toolCount > 0, `A3 工具已注册（${toolCount} 个）`)
 
@@ -120,7 +120,7 @@ console.log('— 场景 A：apply → cleanup → apply（正常重载）')
     err = e
   }
   check(!err, `A7 重载到同一 webserver 不撞名${err ? '：' + err.message : ''}`)
-  check(ws.exact.size === 14, `A8 新实例注册 14 条路由（实际 ${ws.exact.size}）`)
+  check(ws.exact.size === 16, `A8 新实例注册 16 条路由（实际 ${ws.exact.size}）`)
   if (typeof clean2 === 'function') clean2()
 }
 
@@ -142,14 +142,14 @@ console.log('\n— 场景 B：旧实例未 cleanup 就再 apply（DSH 重载实�
   // v1.4.0：以前这里整体 rollback，宿主只能整机重启。现在逐条降级——工具、定时器、
   // 调度器照常起来，只是 UI 路由仍由旧实例应答（doctor 会报出来）。
   check(!err, `B1 撞名时降级加载而不是抛错${err ? '：' + err.message : ''}`)
-  check(ws.exact.size === 14, `B2 旧实例的路由仍在（实际 ${ws.exact.size}）`)
+  check(ws.exact.size === 16, `B2 旧实例的路由仍在（实际 ${ws.exact.size}）`)
   check(b.tools.size > 0, `B3 降级时新实例的工具仍然注册（${b.tools.size} 个）`)
   if (typeof clean2 === 'function') clean2()
-  check(ws.exact.size === 14, `B4 降级实例 cleanup 不会误删旧实例的路由（实际 ${ws.exact.size}）`)
+  check(ws.exact.size === 16, `B4 降级实例 cleanup 不会误删旧实例的路由（实际 ${ws.exact.size}）`)
 }
 
 /* 场景 D：只有个别路由撞名 —— 其余照常注册 */
-console.log('\n— 场景 D：doctor 路由撞名，其余 13 条照常注册')
+console.log('\n— 场景 D：doctor 路由撞名，其余 15 条照常注册')
 {
   class OneDupWebServer extends FakeWebServer {
     constructor() {
@@ -174,10 +174,10 @@ console.log('\n— 场景 D：doctor 路由撞名，其余 13 条照常注册')
     err = e
   }
   check(!err, `D1 单条撞名不影响整体装载${err ? '：' + err.message : ''}`)
-  check(ws.exact.size === 13, `D2 其余 13 条路由已注册（实际 ${ws.exact.size}）`)
+  check(ws.exact.size === 15, `D2 其余 15 条路由已注册（实际 ${ws.exact.size}）`)
   check(a.tools.size > 0, `D3 工具全部注册（${a.tools.size} 个）`)
   if (typeof clean === 'function') clean()
-  check(ws.exact.size === 0, `D4 cleanup 清空本实例注册的 13 条（实际 ${ws.exact.size}）`)
+  check(ws.exact.size === 0, `D4 cleanup 清空本实例注册的 15 条（实际 ${ws.exact.size}）`)
 }
 
 /* 场景 C：注册到一半失败 —— 必须整体回滚，不能留半套工具/路由在宿主上 */
