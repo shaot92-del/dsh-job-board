@@ -1094,3 +1094,22 @@ remote-agent 协议。当前实现用**时间窗 + 占用集合 + 唯一性**达
 - 32 字符上限在 UTF-16 code unit 与 Python 码点之间仍有边界差异；
 - 板子没有按机器/角色的授权，持共享 token 仍可改任意机器（能力扩张，记录在案）。
 
+
+## §30 v2.2.2 评估卡修复（2026-11-13）
+
+### 30.1 现象与根因
+
+- 面板点“开始评估”后卡片消失，但重开仍是“未评估”。
+- `POST /api/board/ui/assess` 缺 `content-type: application/json`，被 `uiGuard` 以 403 `{"error":"forbidden","why":"content-type"}` 拒绝；客户端未检查 `ok`，误当成功。
+- 真实身份文件 `C:\Users\17827\.dsh-board\identity.json` 曾被 `ui-guard-smoke` 写成 `machine=ui-guard-smoke`，与运行配置的 `host` 不一致，`needsAssessment` 恒真。
+
+### 30.2 修法与验证
+
+- 请求补 JSON 内容类型与空对象 body；失败保留卡片。
+- 两个 UI 冒烟脚本隔离 `DSH_TEAM_IDENTITY_DIR`，跑完删除。
+- 真机重新评估后 `identity` 返回 `assessed:true, needsAssessment:false`；重启 DSH 后以新客户端为准。
+
+### 30.3 边界
+
+- 评估结果仍只写本机；多机各自的评估互不影响。
+- 测试隔离只覆盖 UI/reload 两个脚本，`acceptance` 已用独立 identity 目录。

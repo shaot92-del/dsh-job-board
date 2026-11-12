@@ -1,3 +1,12 @@
+## v2.2.2 — 2026-11-13
+
+### 修复：评估卡点击后仍显示“未评估”
+
+- 根因：面板 `runAssess` 的 `POST /api/board/ui/assess` 只带了自定义头 `x-dsh-team-ui`，没有 `content-type: application/json`，被 UI 闸门以 403 `forbidden` 挡下；旧逻辑不检查 `ok`，把 403 当成完成，卡片虽隐藏但评估结果从未写盘，重开仍是未评估。
+- 修法：`lib/client.js` 的评估请求补 `content-type: application/json` 与空 JSON body；失败时保留卡片并提示（v2.2.1 已加）。
+- 测试隔离：`scripts/ui-guard-smoke.mjs`、`scripts/reload-smoke.mjs` 除 `DSH_TEAM_STATE_DIR` 外，再隔离 `DSH_TEAM_IDENTITY_DIR` 到临时目录并在结束时删除，避免把真实 `~/.dsh-board/identity.json` 写成测试机名（本次真机就被写成了 `ui-guard-smoke`，导致 `needsAssessment` 恒为真）。
+- 真机清理：真实身份文件已通过重新评估恢复为 `machine=host`；重启 DSH 后生效。
+
 # 变更日志
 
 ## v2.2.1 — 2026-11-12

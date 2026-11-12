@@ -22,6 +22,8 @@ import { apply } from '../lib/index.js'
 // 不隔离的话会把测试配置（token:'x' 之类）写进真实的 ~/.dsh/dsh-team/config.json。
 const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-reload-smoke-'))
 process.env.DSH_TEAM_STATE_DIR = STATE_DIR
+const IDENTITY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-reload-identity-'))
+process.env.DSH_TEAM_IDENTITY_DIR = IDENTITY_DIR
 
 class FakeWebServer {
   constructor() {
@@ -209,5 +211,7 @@ console.log('\n— 场景 C：注册第 5 条路由时抛错（半装载回滚�
   check(a.subs.length === 0, `C4 失败后事件订阅被退订（剩 ${a.subs.length}）`)
 }
 
+fs.rmSync(STATE_DIR, { recursive: true, force: true })
+fs.rmSync(IDENTITY_DIR, { recursive: true, force: true })
 console.log(failed ? `\n${failed} 项未通过` : '\n场景 A/B/C 全部通过')
 process.exit(failed ? 1 : 0)

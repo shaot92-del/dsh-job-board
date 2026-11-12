@@ -20,6 +20,8 @@ import { apply } from '../lib/index.js'
 // v1.4.2：同 reload-smoke —— apply 会写 state dir，必须隔离到临时目录。
 const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-ui-guard-smoke-'))
 process.env.DSH_TEAM_STATE_DIR = STATE_DIR
+const IDENTITY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-ui-guard-identity-'))
+process.env.DSH_TEAM_IDENTITY_DIR = IDENTITY_DIR
 
 const results = []
 function check(name, cond, detail) {
@@ -195,6 +197,8 @@ await new Promise((r) => setTimeout(r, 100))
   await new Promise((r) => setTimeout(r, 100))
 }
 
+fs.rmSync(STATE_DIR, { recursive: true, force: true })
+fs.rmSync(IDENTITY_DIR, { recursive: true, force: true })
 const failed = results.filter((x) => !x.cond)
 console.log(`\nui-guard-smoke: ${results.length - failed.length}/${results.length} passed`)
 if (failed.length) {
