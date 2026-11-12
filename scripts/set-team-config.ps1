@@ -11,6 +11,9 @@
 #   pwsh -File set-team-config.ps1 -Profile desktop `
 #     -BoardUrl 'http://<board-host>:8965' -Token '<board-token>' -Machine '<machine-name>' -Role observer
 #
+#   # 可选：给这台机器指定派工默认模型（空=跟随副机默认）
+#   pwsh -File set-team-config.ps1 -Profile desktop -DefaultModel 'deepseek-account/deepseek-flash'
+#
 # 不传 -Profile 时：只有一个 profile 就直接用它，多个则要求显式指定。
 # 写前会备份成 cordis.patch.yml.bak-setteam-<时间戳>；写完会复核 team 块数量与字段。
 param(
@@ -20,6 +23,7 @@ param(
   [string]$Machine = '',
   [ValidateSet('owner', 'observer', '')]
   [string]$Role = '',
+  [string]$DefaultModel = '',
   [switch]$List,
   [switch]$DryRun
 )
@@ -98,6 +102,7 @@ if ($start -ge 0) {
   Set-Field -Block $block -Key 'machine' -Value $Machine
   Set-Field -Block $block -Key 'token' -Value $Token
   Set-Field -Block $block -Key 'dispatchRole' -Value $Role
+  Set-Field -Block $block -Key 'defaultModel' -Value $DefaultModel
   $lines.RemoveRange($start, $end - $start)
   $lines.InsertRange($start, $block)
   $action = "更新已有 team 块（第 $($start + 1) 行）"
@@ -111,6 +116,7 @@ if ($start -ge 0) {
   if ($Machine) { $block.Add("    machine: $(YamlQuote $Machine)") }
   if ($Token) { $block.Add("    token: $(YamlQuote $Token)") }
   if ($Role) { $block.Add("    dispatchRole: $(YamlQuote $Role)") }
+  if ($DefaultModel) { $block.Add("    defaultModel: $(YamlQuote $DefaultModel)") }
   $lines.Add('')
   $lines.AddRange($block)
   $action = '追加新 team 块'
@@ -137,7 +143,7 @@ Move-Item -LiteralPath $tmp -Destination $path -Force
 $check = Get-Content -LiteralPath $path
 $teamCount = @($check | Select-String -Pattern '^- id: team\s*$').Count
 $ok = $teamCount -eq 1
-foreach ($need in @(@('boardUrl', $BoardUrl), @('machine', $Machine), @('token', $Token), @('dispatchRole', $Role))) {
+foreach ($need in @(@('boardUrl', $BoardUrl), @('machine', $Machine), @('token', $Token), @('dispatchRole', $Role), @('defaultModel', $DefaultModel))) {
   if ($need[1]) {
     $hit = @($check | Select-String -Pattern ("^\s{2,4}" + $need[0] + ":")).Count
     if ($hit -lt 1) { $ok = $false }

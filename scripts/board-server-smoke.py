@@ -266,6 +266,37 @@ def main() -> int:
                 p5.wait(timeout=5)
             except Exception:
                 p5.kill()
+        # B1（v2.1.0 复审）：显示名只当查找键，attach 落库必须是身份；未知显示名 400；alias 全局唯一
+        p6_port = free_port()
+        p6_state = os.path.join(tmp, "e", "state.json")
+        os.makedirs(os.path.dirname(p6_state), exist_ok=True)
+        p6 = start(p6_state, p6_port)
+        try:
+            check("B1 实例启动", wait_health(p6_port))
+            c6, b6 = call(p6_port, "/api/caps", {"machine": "GT14", "caps": {"os": "windows", "alias": "GT14 工作机"}})
+            check("B1 上报显示名", c6 == 200, "%s %s" % (c6, b6))
+            c6, b6 = call(p6_port, "/api/caps", {"machine": "MB14", "caps": {"alias": "gt14 工作机"}})
+            check("B1 显示名冲突被拒（409）", c6 == 409, "%s %s" % (c6, b6))
+            c6, b6 = call(p6_port, "/api/create", {"task_id": "b1-1", "goal": "g", "machine": "GT14"})
+            check("B1 建单", c6 == 200, "%s %s" % (c6, b6))
+            c6, b6 = call(p6_port, "/api/attach", {"task_id": "b1-1", "remote_id": "ui-b1", "machine": "GT14 工作机"})
+            check("B1 attach 显示名折回身份", c6 == 200, "%s %s" % (c6, b6))
+            _, board6 = call(p6_port, "/api/board")
+            t6 = ((board6 or {}).get("tasks") or {}).get("b1-1") or {}
+            check("B1 任务 machine 是身份", t6.get("machine") == "GT14", repr(t6.get("machine")))
+            mach6 = (board6 or {}).get("machines") or {}
+            check("B1 没有 ghost 机器", "GT14 工作机" not in mach6, ",".join(mach6.keys()))
+            c6, b6 = call(p6_port, "/api/create", {"task_id": "b1-2", "goal": "g", "machine": "GT14"})
+            check("B1 第二单", c6 == 200, "%s %s" % (c6, b6))
+            c6, b6 = call(p6_port, "/api/attach", {"task_id": "b1-2", "remote_id": "ui-b1b", "machine": "GT14 工作机二"})
+            check("B1 未知显示名 attach 被拒（400）", c6 == 400, "%s %s" % (c6, b6))
+        finally:
+            p6.terminate()
+            try:
+                p6.wait(timeout=5)
+            except Exception:
+                p6.kill()
+
     finally:
         for proc in (p1,):
             try:

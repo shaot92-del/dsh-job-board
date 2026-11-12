@@ -131,6 +131,14 @@ check('doctor 回环放行', r.status === 200 && r.body.includes('checks'), 'sta
   check('doctor 配了 token 不再报 config-token', !ids.includes('config-token'), 'ids=' + ids.join(','))
 }
 
+// 10) v2.2.0：改名路由同样过闸门；回环写入后返回新别名。
+r = await call('/api/board/ui/alias', { method: 'POST', headers: { host: 'evil.example', 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: JSON.stringify({ alias: 'x' }) })
+check('alias 外部 Host 拒绝', r.status === 403 && r.body.includes('host'), 'status=' + r.status)
+r = await call('/api/board/ui/alias', { method: 'POST', headers: { ...base, 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: JSON.stringify({ alias: '改名测试机' }) })
+check('alias 回环放行', r.status === 200 && r.body.includes('改名测试机'), 'status=' + r.status + ' body=' + r.body.slice(0, 120))
+r = await call('/api/board/ui/alias', { method: 'POST', headers: { ...base, 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: JSON.stringify({ alias: 'x'.repeat(33) }) })
+check('alias 超长拒绝', r.status === 400, 'status=' + r.status)
+
 cleanup()
 await new Promise((r) => setTimeout(r, 100))
 

@@ -231,8 +231,16 @@ def _canon_machine(name: str) -> str:
     alias = MACHINE_ALIASES.get(_norm_machine(name))
     if alias:
         return alias
+    low = name.lower()
     for k in STATE["machines"]:
-        if k.lower() == name.lower():
+        if k.lower() == low:
+            return k
+    # v2.1.0 复审 B1：显示名（caps.alias）也必须折回身份 id，否则 attach/beat/release
+    # 用显示名写进来会造出 ghost 机器，后续任务永远排不到。
+    for k, m in STATE["machines"].items():
+        caps = m.get("caps") if isinstance(m, dict) else None
+        al = caps.get("alias") if isinstance(caps, dict) else None
+        if isinstance(al, str) and al.strip() and al.strip().lower() == low:
             return k
     return name
 
@@ -330,6 +338,9 @@ def do_claim(body: dict) -> tuple[int, dict]:
             t["agent"] = agent
         if note:
             t["note"] = note
+        # v2.1.0：模型属于建单决策，认领方不能改写（除任务本来没有 model 的旧任务）。
+        if "model" not in t and str(body.get("model") or "").strip():
+            t["model"] = str(body.get("model") or "").strip()[:160]
         t["claimed_at"] = now()
         t["lease_until"] = now() + minutes * 60
         t["updated_at"] = now()
@@ -356,6 +367,7 @@ def do_create(body: dict) -> tuple[int, dict]:
     dispatch = (body.get("dispatch") or "").strip()[:20]
     task_mode = (body.get("mode") or "").strip()[:10]
     workspace = (body.get("workspace") or "").strip()[:300]
+    model = str(body.get("model") or "").strip()[:160]
     if not task_id:
         return 400, {"error": "task_id 必填"}
     if not goal:
@@ -378,6 +390,7 @@ def do_create(body: dict) -> tuple[int, dict]:
             "dispatch": dispatch,
             "mode": task_mode,
             "workspace": workspace,
+            "model": model,
             "claimed_at": 0,
             "lease_until": 0,
             "updated_at": now(),
@@ -403,6 +416,12 @@ def do_attach(body: dict) -> tuple[int, dict]:
         if not t:
             return 404, {"error": "没有这道任务", "task_id": task_id}
         if machine:
+            # B1：别名只作查找键；落库前折回身份。若仍不是已知身份、且看起来像显示名
+            # （空格/中文等），明确拒绝 —— 免得 touch_machine 造出 ghost。
+            machine = _canon_machine(machine)
+            if machine not in STATE["machines"] and not re.fullmatch(r"[A-Za-z0-9._:@-]{1,64}", machine):
+                return 400, {"error": "unknown-machine", "machine": machine,
+                             "hint": "attach 只认身份名；显示名会自动折回，未上报过的机器请先上报 caps"}
             t["machine"] = machine
             t["owner"] = machine
         if remote_id:
@@ -720,6 +739,16 @@ def do_caps(body: dict) -> tuple[int, dict]:
         return 413, {"error": "caps 太大", "limit": MAX_CAPS_BYTES}
     key = _canon_machine(machine)
     with STATE_LOCK:
+        al = caps.get("alias")
+        al = al.strip() if isinstance(al, str) else ""
+        if al:
+            low = al.lower()
+            for k, mm in STATE["machines"].items():
+                if k == key:
+                    continue
+                other = ((mm.get("caps") or {}).get("alias") or "") if isinstance(mm, dict) else ""
+                if isinstance(other, str) and other.strip().lower() == low:
+                    return 409, {"error": "显示名已被使用", "alias": al, "conflict": k}
         m = STATE["machines"].setdefault(key, {})
         merged = dict(m.get("caps") or {})
         merged.update(caps)
@@ -828,6 +857,7 @@ def do_seed(body: dict) -> tuple[int, dict]:
                     "note": "",
                     "goal": (it.get("goal") or "")[:300] if isinstance(it, dict) else "",
                     "owner": (it.get("machine") or "")[:20] if isinstance(it, dict) else "",
+                    "model": str(it.get("model") or "").strip()[:160] if isinstance(it, dict) else "",
                     "claimed_at": 0,
                     "lease_until": 0,
                     "updated_at": now(),

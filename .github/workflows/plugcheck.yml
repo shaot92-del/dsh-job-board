@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # 离线自检：不连板子、不启动 DSH，只断言 apply() 注册了 16 个工具、render 输出合法、
+      # 离线自检：不连板子、不启动 DSH，只断言 apply() 注册了 17 个工具、render 输出合法、
       # 核心路由在、Host 调度器 take→dispatch→attach、dispose 清掉 4 个定时器。
       - run: node scripts/plugcheck.mjs
       # 重载契约：apply→cleanup→apply 不撞名、cleanup 之后工具/路由/订阅归零、
@@ -30,7 +30,9 @@ jobs:
       - run: node scripts/solo-board-smoke.mjs
       - run: node scripts/solo-bootstrap-smoke.mjs
       - run: node scripts/shell-guard-smoke.mjs
-      - run: node scripts/ui-guard-smoke.mjs      # 派工恢复（#10-1，v1.2.0）：结果未知先查询不重派、已认领未发出直接补发。
+      - run: node scripts/ui-guard-smoke.mjs
+      # v2.1.0：派工前的「机器 + 模型」选择（board_options 汇总 / needSelection 拦截 / exec 忽略 model）。
+      - run: node scripts/model-pick-smoke.mjs
       # 假板子 + 假 hub，同样不连真环境。
       - run: node scripts/dispatch-recovery-smoke.mjs
       # 状态文件的跨进程锁（v1.3.1）：真起 4 个子进程并发读改写同一个文件，断言一次

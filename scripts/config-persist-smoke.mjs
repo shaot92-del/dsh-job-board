@@ -88,6 +88,11 @@ try {
   check(c3.token === 'explicit-token-456', 'C3 token 延续上一轮写回值', JSON.stringify(c3.token))
   check(c3.dispatchRole === 'owner', 'C3 显式 role 覆盖存档', JSON.stringify(c3.dispatchRole))
   check(Array.isArray(c3.allowedRoots) && c3.allowedRoots[0] === 'D:\\gp_video', 'C3 显式 allowedRoots 生效', JSON.stringify(c3.allowedRoots))
+
+  // v2.2.0：显示名也要进第二层存档（改完重启不该丢）。
+  let c4 = await run({ machineAlias: '小主机' })
+  check(c4.machineAlias === '小主机', 'C4 显示名写入存档', JSON.stringify(c4.machineAlias))
+  check(c4.machine === 'explicit-machine', 'C4 显示名不影响身份', JSON.stringify(c4.machine))
 } finally {
   try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
 }

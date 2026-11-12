@@ -965,3 +965,82 @@ remote-agent 协议。当前实现用**时间窗 + 占用集合 + 唯一性**达
 - 单条查询的并发是 4；`watched` 很长时会串行多轮，但每轮最多 4 个请求。
 - `prune_terminal_tasks` 以 `updated_at` 为准；老状态文件没有该字段的任务不会被清。
 - 被标 failed 的"远端已不存在"依赖 hub 明确回 `task-unknown`；旧 hub 的通用 404 不动。
+
+---
+
+## §27 v2.1.0：派工时的机器 + 模型选择
+
+### 27.1 为什么做
+
+看板以前只有机器维度，模型一律跟随副机默认。PC2 上出现过 62K tokens 的任务被塞进
+32K 上下文的模型，报 `request exceeds the available context size`，在板上只表现为
+"派工失败"。模型必须成为可选择的派工参数，而不是碰运气。
+
+`dsh-remote-agent` 的 `/dispatch` 早就支持 `model`（`normalizeModelSelection` 接受
+`provider/model`、裸名或对象）；缺的是看板侧：任务表没有字段、工具没有参数、面板没有下拉。
+
+### 27.2 数据流
+
+1. 任务：`/api/create`、`/api/claim`、`/api/seed` 接受 `model`（≤160 字），板子原样保存；
+2. 派发：插件调度器取 `task.model || cfg.defaultModel`，写进 `/dispatch` 的 `model`；
+3. 选型：`board_options` 汇总在线节点上报的 `models` / `defaultModel`，面板的派工弹窗
+   与对话都可以用它；
+4. 对话：`board_dispatch` 在 `dispatchAsk`（默认 true）下，机器或模型没选全时返回
+   `needSelection: true` + 候选，不建单；调用方用 `ask_user_question` 问人后带
+   `machine` + `model` 重调。
+
+### 27.3 配置
+
+| 键 | 默认 | 作用 |
+|----|------|------|
+| `defaultModel` | 空 | 派发时的兜底模型；空=跟随副机默认 |
+| `dispatchAsk` | true | 对话派工未选全时先返回候选；false=跳过检查 |
+
+两者都进第二层配置存档（`~/.dsh/dsh-team/config.json`），`set-team-config.ps1` 支持
+`-DefaultModel`。
+
+### 27.4 边界
+
+- `exec` 模式与模型无关：不要求选模型，也不会把 model（含 `defaultModel`）传给 remote-agent。
+- 副机必须注册 OpenAI 兼容 provider，模型才会出现在清单里；没有清单时退化为
+  「跟随副机默认」或手填。
+- 模型上下文上限不会被自动规避：小模型跑长任务仍可能超窗，插件只在终态 note 里补提示。
+- 对话派工**先问机器**：`dispatchAsk` 打开时没给 `machine` 一律返回候选（给了模型也一样）；
+  指定机器后，只有该机上报了模型清单才要求选模型，没清单的机器直接跟随副机默认。
+- 给了机器 + 具体模型时**会**在插件侧核对目标机清单（拼错/该机没有的模型直接拒绝并
+  返回 `available`）；`model: "auto"` 跳过选型、跟随副机默认。清单取不到时只给 warning，
+  不阻断（避免 hub 抖动导致派不出去）。
+- `needSelection` 用 `ok: true` 表达；调用方看到它应当发问，而不是报失败。
+- `dispatchAsk` 只挡对话里的 `board_dispatch`；后台自动派工（队列里的 `dispatch=auto`）
+  不经过它，不会被半夜卡住。
+
+### 27.5 机器显示名（v2.1.0 追加）
+
+- 身份键 `machine` 不随显示名变化：任务归属、`remote-owners-*.json`、`pending-attach-*.json`、
+  恢复日志都以它为准；改显示名不会让在跑的任务"换机器"。
+- 新增 `machineAlias`（≤32 字，空=电脑名），随 caps 一起上报；板子机器表里以
+  `caps.alias` 保存，快照额外给 `name`，`board_options` 与面板都用 `name` 显示。
+- 显示名只用于**查找与展示**：`/api/board/ui/create`、`board_dispatch`、`board_attach`、
+  `/api/board/ui/attach` 都先按身份名精确匹配，再按显示名匹配，最终写进任务的永远是
+  身份 id；未知名字返回 400 而不是静默入库。板子侧 `_canon_machine` 同样认 `caps.alias`，
+  `do_attach` 对看起来像显示名的未知值直接 400（不会 `touch_machine` 出 ghost）。
+- 改名做唯一性校验（与别的机器的身份名/显示名比较），写档失败返回 500；C0/C1、零宽、
+  bidi 控制符在入口与存档回读时都会清掉。板子 `do_caps` 也做唯一性校验（409）；
+  板子不可达时改名仍生效，但返回 `unique:"unverified"` + warning。
+- 改名走 `POST /api/board/ui/alias`（JSON `{alias}`，同样过 Host/Origin/自定义头/JSON 闸门），
+  成功后立即 `reportCaps({force:true})` 刷新板子；失败不影响改名本身（只在返回里 reported=false）。
+- 删除 client 里写死的机器名对照表；未知机器名按板子上报的名字显示，不再被本机固定表改写。
+- 边界：两台机器同名仍会被板子当成同一台（身份键相同）；要区分必须改 `machine`（配置），
+  改之前先停派工并清空未完成任务。
+
+### 27.6 测试
+
+- `scripts/model-pick-smoke.mjs` M1–M11：options 汇总、未选机器/未选模型拦截（`ok:true`
+  + `needSelection`）、只给模型仍先问机器、机器无清单不要求选模型、建单带 model、
+  `model:auto` 放行且不写 model、目标机没有的模型被拒并返回 available、exec 忽略 model、传显示名派工时 `task.machine` 仍是身份名、`board_attach` 传显示名时 `/api/attach` 的 machine 也是身份名。
+- `scripts/dispatch-recovery-smoke.mjs` **R30**：任务带 `model` 时 `/dispatch` 的 body
+  必须带 `model`（直接抓 `snapshot()` 漏字段这类回归）；当前 **88/88**。
+- `plugcheck` 工具数 16 → 17；测试配置显式 `dispatchAsk: false`。
+- `scripts/board-server-smoke.py` 新增 B1：显示名折回身份、任务 machine 落身份、无 ghost、
+  未知显示名 attach 400、重复显示名 409；当前 **38 项**。
+- 全量回归见 CHANGELOG；`board_options` 的返回在 27.2 的数据流图里。

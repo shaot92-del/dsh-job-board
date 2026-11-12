@@ -308,6 +308,7 @@ const ROUTES = {
       owner: String(b.machine || ''),
       agent: 'board_dispatch',
       mode: String(b.mode || 'agent'),
+      model: String(b.model || ''),
       dispatch: String(b.dispatch || 'manual'),
       priority: Number(b.priority) || 5,
       note: '',

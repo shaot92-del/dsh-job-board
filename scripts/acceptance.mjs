@@ -322,6 +322,7 @@ for (const c of CASES) {
   const cleanup2 = apply(ctx2, {
     boardUrl,
     machine: argMachine,
+    dispatchAsk: false,
     timeoutMs: 5000,
     writeTimeoutMs: 5000,
     autoDispatch: true,

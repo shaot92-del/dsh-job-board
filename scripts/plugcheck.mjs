@@ -2,7 +2,7 @@
  * dsh-team 离线自检（不需要 DSH 宿主，也不需要真板子）。
  *
  * 断言这些事：
- *   1. apply() 不抛异常，且注册的工具恰好 16 个（12 个 board_* + 4 个 sh_*）；
+ *   1. apply() 不抛异常，且注册的工具恰好 17 个（13 个 board_* + 4 个 sh_*）；
  *   2. 每个工具的 output.render 返回 [{ type:'text', text }] —— 裸字符串会毒化会话历史；
  *   3. 每个工具 name/description/parameters/output 齐备；
  *   4. GUI 路由被注册（含面板派工用的 /api/board/ui/create）；
@@ -158,11 +158,13 @@ const dispose = apply(ctx, {
   boardUrl: 'http://127.0.0.1:1',
   machine: 'host',
   allowedRoots: [root],
+  // v2.1.0：派工前的"机器 + 模型"确认会拦下未选全的调用，测试里关掉。
+  dispatchAsk: false,
   shellTimeoutMs: 5000,
   maxOutputBytes: 1000,
 })
 
-const EXPECTED_BOARD = ['board_status', 'board_list', 'board_claim', 'board_beat', 'board_done', 'board_fail', 'board_say', 'board_attach', 'board_dispatch', 'board_caps', 'board_assess', 'board_metrics']
+const EXPECTED_BOARD = ['board_status', 'board_list', 'board_claim', 'board_beat', 'board_done', 'board_fail', 'board_say', 'board_attach', 'board_dispatch', 'board_options', 'board_caps', 'board_assess', 'board_metrics']
 const EXPECTED_SHELL = ['sh_run', 'sh_read', 'sh_write', 'sh_list']
 const EXPECTED = [...EXPECTED_BOARD, ...EXPECTED_SHELL]
 let nonEmpty = 0

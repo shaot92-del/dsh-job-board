@@ -242,7 +242,7 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
     if (p === '/api/remote-agent/ui/dispatch') {
       stats.dispatch += 1
       return readBody().then(async (b) => {
-        dispatchCalls.push({ goal: b.goal, node: b.node, mode: b.mode })
+        dispatchCalls.push({ goal: b.goal, node: b.node, mode: b.mode, model: b.model === undefined ? undefined : b.model })
         const create = () => {
           const taskId = 'ui-' + Math.random().toString(36).slice(2, 8)
           remoteTasks.push({ taskId, goal: String(b.goal || ''), mode: b.mode, createdAt: Date.now(), status: 'running' })
@@ -548,6 +548,20 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteOwne
     })
     check('R29b 查询断连不判死', info.tasks['bd-r29b'].status === 'running' && info.stats.mark === 0,
       `status=${info.tasks['bd-r29b'].status} mark=${info.stats.mark}`)
+  }
+
+  // ── R30（v2.1.0）：任务级 model 必须真的发到副机 ────────────────────────────
+  // 专家复审 P1：snapshot() 的任务白名单漏了 model，调度器永远读不到；这条用例
+  // 直接从 /dispatch 的 body 断言，而不是只看 /api/create。
+  {
+    const info = await scenario('R30', {
+      machine: 'smoke-r30',
+      hub: { mode: 'ok' },
+      tasks: { 'bd-r30': { status: 'queued', dispatch: 'auto', goal: 'R30 goal', model: 'local/qwen3:8b' } },
+    })
+    const sent = info.dispatchCalls[0] || {}
+    check('R30 任务级 model 发到 /dispatch', sent.model === 'local/qwen3:8b', JSON.stringify(sent))
+    check('R30 板上任务仍然保留 model', info.tasks['bd-r30'].model === 'local/qwen3:8b', String(info.tasks['bd-r30'].model))
   }
 
 function summary() {
