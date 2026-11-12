@@ -27,7 +27,7 @@
                           │ 调度器 take/dispatch/attach
                    ┌──────▼────────┐        ┌──────────────────┐
                    │ Host 插件      │───────►│ remote-agent hub  │
-                   │ (DSH 进程内)   │  HTTP  │ 192.168.3.40:19387│
+                   │ (DSH 进程内)   │  HTTP  │ <board-host>:19387│
                    └──────┬────────┘        └───────┬──────────┘
                           │ sh_* 在本机执行           │ 派发到副机
                           ▼                          ▼
@@ -41,7 +41,7 @@
 | 插件 GUI 路由 `/api/board/ui/*` | 无鉴权，但只监听 DSH Web 的本地端口 | 靠"DSH Web 只绑 127.0.0.1" |
 | `sh_*` 工具 | 任何拿到工具的人都能调 | `allowedRoots`（路径级） |
 
-> 2026-11-08 实测：板子在 `192.168.3.40:8965` 对全网段开放、无 token；DSH Web 只
+> 2026-11-08 实测：板子在 `<board-host>:8965` 对全网段开放、无 token；DSH Web 只
 > 监听 `127.0.0.1`，所以"面板路由无鉴权"的实际暴露面是"本机任意进程"。
 
 ## 3. 威胁模型（按可能性排序）
@@ -143,7 +143,7 @@ Host 侧：
    `route registered …ready`；
 3. `caps reported ok=true machine=<名> shell=true`（10 分钟一拨；token 没带上时
    会看到该台 caps 401、板子上 `last_seen` 变陈旧）；
-4. host 上 hub `192.168.3.40:19387` 有来自副机的 Established 连接。
+4. host 上 hub `<board-host>:19387` 有来自副机的 Established 连接。
 
 关闭 token 同样要重启板子进程（环境变量只在启动时读一次）。
 
@@ -207,7 +207,7 @@ Host 侧：
 1. **各 Host 换 token**：`pwsh -File Z:\_tools\team-hardening.ps1 -Machine <M> -TokenFile <token 文件> -Roots <...> -Role <owner|observer>`。
    脚本从文件读 token，命令行与 goal 里都不出现真值。
 2. **各 Host 重启 DSH**，让运行时真的用上新 token；重启后逐台核对
-   `iwr http://192.168.3.40:8965/api/board -Headers @{'x-board-token'=<运行时 token>}` 回 200。
+   `iwr http://<board-host>:8965/api/board -Headers @{'x-board-token'=<运行时 token>}` 回 200。
 3. **收窄板子**：`%USERPROFILE%\.dsh\board-tokens.txt` 只留新枚 → 重启 8965 →
    `health.authTokens == 1`，旧枚再打 `/api/board` 必须回 401。
 
@@ -222,7 +222,7 @@ Host 侧：
 
 ```powershell
 # 共享盘上的 bounce-dsh.vbs：睡 N 毫秒 → taskkill DeepSeek Harness → 6 秒后重新拉起
-schtasks /create /tn DSHBounce /tr 'wscript.exe \\DESKTOP-NJ6NG3V\gp_xfer\_tools\bounce-dsh.vbs 15000' /sc once /st 23:59 /it /f
+schtasks /create /tn DSHBounce /tr 'wscript.exe \\<host-pc>\gp_xfer\_tools\bounce-dsh.vbs 15000' /sc once /st 23:59 /it /f
 schtasks /run /tn DSHBounce
 ```
 
@@ -285,8 +285,8 @@ schtasks /run /tn DSHBounce
 
 | 主体 | 权限 |
 | --- | --- |
-| `DESKTOP-NJ6NG3V\17827` | 完全控制（本机所有者） |
-| `DESKTOP-NJ6NG3V\xfer` | 修改（共享盘服务账号，副机经它读写） |
+| `<host-pc>\17827` | 完全控制（本机所有者） |
+| `<host-pc>\xfer` | 修改（共享盘服务账号，副机经它读写） |
 | `BUILTIN\Users` | 读取与执行 |
 | `SYSTEM` / `Administrators` | 完全控制 |
 
@@ -311,14 +311,14 @@ schtasks /run /tn DSHBounce
 
 | 机器 | 角色 | `- id: remote-agent` 里的字段 | 取值示例 |
 | --- | --- | --- | --- |
-| 本机 `DESKTOP-NJ6NG3V` | hub | `nodeToken:`（带单引号） | `'nt_…'` |
+| 本机 `<host-pc>` | hub | `nodeToken:`（带单引号） | `'nt_…'` |
 | GT14 | worker | `token:`（**不带引号**） | `nt_…` |
 | MB14 | worker | `token:`（带单引号） | `'nt_…'` |
 
 还有两处容易踩：
 
-- GT14 的 `hubUrl` 是 `ws://192.168.3.40:19387/api/remote-agent/node`（WebSocket），
-  MB14 是 `http://192.168.3.40:19387`（direct）——轮换脚本不要按整块重写，只改 token 那一行。
+- GT14 的 `hubUrl` 是 `ws://<board-host>:19387/api/remote-agent/node`（WebSocket），
+  MB14 是 `http://<board-host>:19387`（direct）——轮换脚本不要按整块重写，只改 token 那一行。
 - 副机块里 `inject: []` 是刻意的（非空会永远 PENDING）；本机 hub 块是
   `inject: [ 'webServer', 'tools', 'systemPrompt' ]`。
 
@@ -344,7 +344,7 @@ schtasks /run /tn DSHBounce
 ### 11.4 重启后的验收四条
 
 1. `Get-NetTCPConnection -LocalPort 19387 -State Listen` 有监听、`healthz` 回 `{"ok":true}`。
-2. `Get-NetTCPConnection -LocalPort 19387 -State Established` 来自 `192.168.3.73`、`192.168.3.75`。
+2. `Get-NetTCPConnection -LocalPort 19387 -State Established` 来自 `<worker-1-host>`、`<worker-2-host>`。
 3. hub 的节点表 `nodes:2, online:2`。
 4. 板子 `health` 仍 `authTokens:1`，三台 `last_seen` 在 15 秒内；随手派一条 exec 能 done。
 
@@ -372,7 +372,7 @@ private（PR 与市场投稿一并消失）。除非决定"不再公开发布"�
 | GT14 | exec 任务 `bd-7uxi7x-7586` 回执 `ok: 已写入并复核`（第 35 行、无引号写法） |
 | MB14 | 脚本写到一半插件热重载、回执丢失（任务停在 running）。**配置其实已写好** —— 重启后 dump 确认 `token: '<len=35 prefix=nt_21a>'` |
 | 过渡态 | 副机已用新值、hub 仍用旧值 → `19387 Established = 0`。顺序反了就必然出现这一段 |
-| 重启 | 本机 DSH → hub 用新值；两台副机各自重启 DSH 后自动重连（`Established` 出现 `192.168.3.73`、`192.168.3.75`） |
+| 重启 | 本机 DSH → hub 用新值；两台副机各自重启 DSH 后自动重连（`Established` 出现 `<worker-1-host>`、`<worker-2-host>`） |
 | 验收 | `19387` LISTEN + `healthz {"ok":true}`；两台 worker 重连；派工自检 `bd-7vwgns-c417` → MB14 `done` |
 
 两个补充教训：
@@ -474,7 +474,7 @@ private（PR 与市场投稿一并消失）。除非决定"不再公开发布"�
 
 - `_runtime.log`：`apply start` → 12 条 `route registered` → `ready` → `host dispatcher started tick=4000ms`，
   随后 `caps reported ok=true machine=host`、`board auto-detected`，不再出现 `unauthorized`。
-- hub：`19387` 由新进程监听，**服务端视角** `LocalPort=19387` 有 `192.168.3.73`、`192.168.3.75`
+- hub：`19387` 由新进程监听，**服务端视角** `LocalPort=19387` 有 `<worker-1-host>`、`<worker-2-host>`
   两条 Established（别用 `-RemotePort 19387` 查，那是客户端视角，会误判为 0）。
 - 板子：host / GT14 / MB14 的 `last_seen` 都在 20 秒内（PC2 与 `?` 是历史条目）。
 - 端到端派工：建一条 MB14 任务，4 秒内被派给 `desktop-2gh05s7`，回 `v1.3.10 alive 20:39:36`。
@@ -717,7 +717,7 @@ solo 只实现 solo 需要的子集（create/claim/take/untake/attach/mark/beat/
 
 ### 19.1 触发
 
-市场第一次复验还留了一条：`lib/index.js` 的 `BOARD_CANDIDATES` 硬编码了作者的局域网地址（`DESKTOP-NJ6NG3V:8965`、`192.168.3.40:8965`）。公开包里不该带作者内网信息；自动探测也不该把请求打到别人家网段。
+市场第一次复验还留了一条：`lib/index.js` 的 `BOARD_CANDIDATES` 硬编码了作者的局域网地址（`<host-pc>:8965`、`<board-host>:8965`）。公开包里不该带作者内网信息；自动探测也不该把请求打到别人家网段。
 
 ### 19.2 修法
 
@@ -866,7 +866,7 @@ state-file 16/16、config-persist 9/0、dispatch 76/76、board smoke 19 项、ac
 
 ## §24 v2.0.5：PC2 的两个现场问题
 
-2026-11-12 凌晨，PC2（192.168.3.126）作为副机接入后暴露两个问题。结论先写在这里，
+2026-11-12 凌晨，PC2（<worker-3-host>）作为副机接入后暴露两个问题。结论先写在这里，
 以后遇到「刚装好的机器不对劲」先按这两条排查。
 
 ### 24.1 左侧「远程同事」入口又出现了

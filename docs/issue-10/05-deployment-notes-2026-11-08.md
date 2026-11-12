@@ -8,11 +8,11 @@
 ## 一、症状与判定（下次先看这三条）
 
 ```powershell
-# 1) hub 有没有在监听（本机 LAN IP 192.168.3.40 是这台机的以太网地址）
+# 1) hub 有没有在监听（本机 LAN IP <board-host> 是这台机的以太网地址）
 Get-NetTCPConnection -LocalPort 19387 -State Listen
 
 # 2) hub 健康检查
-Invoke-WebRequest http://192.168.3.40:19387/api/remote-agent/healthz -UseBasicParsing   # 期望 200 {"ok":true}
+Invoke-WebRequest http://<board-host>:19387/api/remote-agent/healthz -UseBasicParsing   # 期望 200 {"ok":true}
 
 # 3) dsh-team 的日志会自己点名（v1.1.12 起）
 Select-String -Path "$HOME\.dsh\profiles\desktop\node_modules\dsh-team\_runtime.log" -Pattern 'dispatch idle|remote nodes|dispatched' | Select-Object -Last 10
@@ -20,7 +20,7 @@ Select-String -Path "$HOME\.dsh\profiles\desktop\node_modules\dsh-team\_runtime.
 
 - 出现 `dispatch idle: remote-agent 没有在线节点（nodes 请求失败: HTTP 404），检查 hub 是否加载、19387 是否在听、worker 是否连上`
   ⇒ **hub 没加载**（不是任务本身有问题）。
-- 出现 `dispatch idle: 读板子失败 …` ⇒ 板子（`DESKTOP-NJ6NG3V:8965`）不可达或超时，与 hub 无关。
+- 出现 `dispatch idle: 读板子失败 …` ⇒ 板子（`<host-pc>:8965`）不可达或超时，与 hub 无关。
 - 一切正常时的形态：`remote nodes: desktop-2gh05s7→mb14, gt14→gt14` → `dispatched <taskId> → <node> remote=<remoteId>`。
 
 > 注意：板上 GT14 / MB14 显示「在线」来自它们各自的 dsh-team `caps` 心跳（板子 8965），
@@ -56,7 +56,7 @@ profile 目录：`C:\Users\17827\.dsh\profiles\desktop`
   inject: [ 'webServer', 'tools', 'systemPrompt' ]
   config:
     role: hub
-    listenHost: '192.168.3.40'      # 必须填本机某个具体网卡地址，不能是 0.0.0.0
+    listenHost: '<board-host>'      # 必须填本机某个具体网卡地址，不能是 0.0.0.0
     listenPort: 19387
     nodeToken: '<nodeToken>'
     systemPrompt: true

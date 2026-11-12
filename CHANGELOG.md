@@ -252,7 +252,7 @@ PC2 的两个真实问题 + 首次安装的模型指引。这一版没有改协�
 ## v2.0.4 — 2026-11-12
 
 一次「测试污染 + 盲信配置」的修复。v2.0.3 重启后 doctor 报 `板子连不上：fetch failed`，
-板子本身正常（127.0.0.1:8965 与 192.168.3.40:8965 都返回 200），根因是两件事叠加：
+板子本身正常（127.0.0.1:8965 与 <board-host>:8965 都返回 200），根因是两件事叠加：
 
 1. `scripts/plugcheck.mjs` 也 `apply` 插件，但没隔离 `DSH_TEAM_STATE_DIR`，把
    `boardUrl: http://127.0.0.1:1`（故意不可达）和测试 token 写进了真实
@@ -457,7 +457,7 @@ acceptance 11/11。`windows-latest` 与 `ubuntu-latest` 双绿。
 ### 改动
 
 - `lib/index.js` 的 `BOARD_CANDIDATES` 不再硬编码作者的局域网地址
-  （`DESKTOP-NJ6NG3V:8965`、`192.168.3.40:8965`）。默认只探 `127.0.0.1:8965`；
+  （`<host-pc>:8965`、`<board-host>:8965`）。默认只探 `127.0.0.1:8965`；
   内网/远程候选地址改用环境变量 `DSH_TEAM_BOARD_CANDIDATES`（逗号分隔）或
   `DSH_BOARD_URL` 指定。这是市场第一次复验留下的最后一条（「删掉两条内网候选地址」）。
 - 新增 `scripts/set-team-config.ps1`：自动找 profile、upsert `team` 块、写前备份、
@@ -662,7 +662,7 @@ config-persist 9/9；dispatch-recovery 76/76；board-server-smoke 17/17；accept
   `syncRemote` 发现板上的 `remote_id` 与本机记的不一致 → 判定被别的 Host 重派，跳过回写；
   写回终态后清账。
 - **M4 板子地址 pin**：自动探测只在第一次做，成功后写 `<state>/board-url.json`，以后启动
-  先试 pin（不再广播式问 `DESKTOP-NJ6NG3V` / `192.168.3.40` / `127.0.0.1`）。要重新探测
+  先试 pin（不再广播式问 `<host-pc>` / `<board-host>` / `127.0.0.1`）。要重新探测
   就设 `DSH_TEAM_BOARD_REPIN=1` 启动一次（或在状态目录删掉 `board-url.json`）。
 - **F10 注释修正**：在线判定的心跳来自插件（`remoteSyncMs=6s`），不是计划任务
   `gp_presence` —— 那个任务从来没装过，注释与文档都不该那么写。
@@ -1334,7 +1334,7 @@ v1.2.0 的派工恢复在两位复核者（遗留系统工程师 / 代码审查�
 - **现象**：2026-11-07 深夜建的两条 `dispatch: auto` 任务（MB14 agent / GT14 exec）一直
   停在 `queued`，板子上没有任何报错，`_runtime.log` 里也找不到一条 take / dispatch / skip。
 - **根因（环境）**：11-07 晚 profile 重建时 `cordis.patch.yml` 被截断过，
-  `remote-agent` 那一行（hub，`192.168.3.40:19387`）丢了，包还在但插件没被加载。
+  `remote-agent` 那一行（hub，`<board-host>:19387`）丢了，包还在但插件没被加载。
   `GET /api/remote-agent/ui/nodes` 落到通用鉴权围栏上返回 401 ⇒ dsh-team 拿到的节点表为空。
 - **根因（代码）**：`dispatchOnce()` 在「节点表为空」和「读板子失败」两处都是
   `return 0` —— 一句话都不记。于是故障表现成"任务永远排队"，而非"派工通道断了"。

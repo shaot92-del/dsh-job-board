@@ -14,7 +14,7 @@
       name: 'dsh-job-board'
       inject: ['webServer', 'tools']
       config:
-        # 留空 = 自动探测（主机名 → 192.168.3.40 → 本机回环）；写死会让副机永远指向自己。
+        # 留空 = 自动探测（主机名 → <board-host> → 本机回环）；写死会让副机永远指向自己。
         boardUrl: ''
         # 留空 = 按 hostname 自动映射（host / GT14 / MB14 / PC2）。
         machine: ''

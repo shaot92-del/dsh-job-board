@@ -126,12 +126,12 @@ Host 插件 dsh-team（跑在 DSH 进程里，PID 16708）
 
 | 机器 | hostname | IP | 角色 | 现状 |
 |---|---|---|---|---|
-| host | DESKTOP-NJ6NG3V | 192.168.3.40 | 板子服务 + hub + GUI | DSH PID 16708，GUI 13899，hub 19387，板子 8965 |
-| GT14 | 往返长江的GT14 | 192.168.3.73 | worker（exec 执行机） | 已连 hub，dsh-team 1.1.2 |
-| MB14 | DESKTOP-2GH05S7 | 192.168.3.75 | worker（exec 执行机） | 已连 hub，dsh-team 1.1.2 |
-| PC2 | DESKTOP-J1IP3OF | 192.168.3.126 | 备机 | 离线 72 小时+ |
+| host | <host-pc> | <board-host> | 板子服务 + hub + GUI | DSH PID 16708，GUI 13899，hub 19387，板子 8965 |
+| GT14 | <worker-1-pc> | <worker-1-host> | worker（exec 执行机） | 已连 hub，dsh-team 1.1.2 |
+| MB14 | <worker-2-pc> | <worker-2-host> | worker（exec 执行机） | 已连 hub，dsh-team 1.1.2 |
+| PC2 | <worker-3-pc> | <worker-3-host> | 备机 | 离线 72 小时+ |
 
-共享盘：主机是 `L:`，其它机器 `net use Z: \\DESKTOP-NJ6NG3V\gp_xfer`。
+共享盘：主机是 `L:`，其它机器 `net use Z: \\<host-pc>\gp_xfer`。
 
 ### 排障中踩过的坑（都写成了脚本，放在 `L:\云盘\gp_video_xfer\_tools\`）
 
@@ -220,7 +220,7 @@ git -c http.proxy=http://127.0.0.1:7897 push origin main --tags
 Invoke-RestMethod http://127.0.0.1:8965/api/health
 
 # hub 节点数（需 nodeToken）
-Invoke-RestMethod http://192.168.3.40:19387/api/remote-agent/healthz -Headers @{ 'x-dsh-token' = '<nodeToken>' }
+Invoke-RestMethod http://<board-host>:19387/api/remote-agent/healthz -Headers @{ 'x-dsh-token' = '<nodeToken>' }
 ```
 
 ### 相关链接
