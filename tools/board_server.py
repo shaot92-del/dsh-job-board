@@ -60,7 +60,7 @@ MAX_BODY_BYTES = 1024 * 1024  # 请求体上限：超过直接拒绝，避免半
 MAX_CAPS_BYTES = 8 * 1024     # v1.3.11（L2）：caps 对象上限
 MAX_METRICS_BYTES = 4 * 1024  # v1.3.11（L2）：metrics live 对象上限
 MAX_SEED_ITEMS = 200          # v1.3.11（L2）：一次最多导入多少条
-MAX_TASKS = 5000              # v1.3.11（L2）：板子任务总数上限
+MAX_TASKS = int(os.environ.get("GP_BOARD_MAX_TASKS") or 5000)  # v1.3.11（L2）：总数上限；环境变量供测试覆盖
 MINUTES_MIN, MINUTES_MAX = 1, 1440  # 租约分钟数收敛到 1–1440，负数会让任务立刻过期
 
 # ---------------------------------------------------------------- 秘密脱敏
@@ -293,6 +293,9 @@ def do_claim(body: dict) -> tuple[int, dict]:
             return 409, {"error": "已完成" if eff["status"] == "done" else "已作废", "task_id": task_id}
 
         took_over = eff["status"] == "stale"
+        # 复核（v2.0.6，P2-15）：未知任务可以自动建单，但也必须受总数上限约束。
+        if task_id not in STATE["tasks"] and len(STATE["tasks"]) >= MAX_TASKS:
+            return 413, {"error": "板子任务数到上限", "limit": MAX_TASKS}
         # 2026-10-31：改成**原地合并**。旧实现整条 dict 覆盖，认领会把
         # goal/title/mode/remote_id/dispatch 全抹掉，Host 侧统一派工没法用
         # claim 占位（复核报告 #6 的前置条件）。
@@ -337,6 +340,9 @@ def do_create(body: dict) -> tuple[int, dict]:
     with STATE_LOCK:
         if task_id in STATE["tasks"]:
             return 409, {"error": "task_id 已存在", "task_id": task_id}
+        # 复核（v2.0.6，P2-15）：容量检查以前只在 seed，create/claim 都能绕过。
+        if len(STATE["tasks"]) >= MAX_TASKS:
+            return 413, {"error": "板子任务数到上限", "limit": MAX_TASKS}
         STATE["tasks"][task_id] = {
             "status": "queued",
             "machine": machine,
@@ -1177,9 +1183,10 @@ def main() -> int:
 
     # v3.1（安全复审 F1）：Windows 上 SO_REUSEADDR 允许两个进程同时 bind 同一端口，
     # 两边各持一份内存态互相覆盖。用 state 旁的锁文件做单实例保护。
-    # v1.3.10（复核 F1）：锁必须带上端口 —— 只按 state 路径加锁时，换一个 --state 就能
-    # 再起一个进程绑同一端口（Windows 的 SO_REUSEADDR 允许两个进程同时 listen）。
-    lock_path = "%s.%d.lock" % (STATE_PATH, args.port)
+    # 复核（v2.0.6，P2-14）：锁必须按状态文件的**规范化绝对路径** —— 一份状态只能有一个
+    # 写入者。以前锁名带端口，同一份 state 换端口就能双开，各自维护内存快照、互相覆盖。
+    # 同端口的第二实例继续由 socket 层（SO_EXCLUSIVEADDRUSE）拒绝。
+    lock_path = "%s.lock" % os.path.realpath(STATE_PATH)
     lock_fh = None
     for _ in (0, 1):
         try:
@@ -1217,6 +1224,13 @@ def main() -> int:
     except OSError as e:
         print("[!] 绑定 %s:%d 失败：%s" % (args.bind, args.port, e), file=sys.stderr, flush=True)
         print("    端口已被占用（或无权绑定）。同一个端口只能有一个板子。", file=sys.stderr, flush=True)
+        # v2.0.6 复审：bind 失败时把刚拿到的锁删掉，否则要靠 pid 复用/人工清理才能再启动。
+        try:
+            if lock_fh:
+                lock_fh.close()
+            os.remove(lock_path)
+        except Exception:
+            pass
         return 1
     httpd.daemon_threads = True
     print(f"作业板已启动，状态文件 {STATE_PATH}，鉴权 token {len(BOARD_TOKENS)} 枚", flush=True)

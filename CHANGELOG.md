@@ -1,5 +1,68 @@
 # 变更日志
 
+## v2.0.6 — 2026-11-12
+
+第二轮代码审阅（基线 `11f4d68`）里的 P2 七项。全部是边界行为，没有改协议，也没有改
+看板/派工的既有语义。
+
+### 1. Solo 机器字典的原型污染（P2-7）
+
+`machines` 以前是普通对象：`caps`/`metrics` 用 `machine='__proto__'` 写一次，就会改到
+`Object.prototype` 上；`task_id='__proto__'` 建的任务在快照里也看不见。现在 `emptyState`、
+`loadState`、`snapshot` 都使用 `Object.create(null)`，读写统一走 `hasOwn`/`getTask`。
+
+### 2. untake 不校验 holder（P2-8）
+
+同一台机器上的两个实例都能 untake 对方的占位。现在与 take 一样比较 holder，
+不同则 409「占位归另一个实例，拒绝 untake」。调用方**没有提供 holder** 时不比较
+（面板与旧客户端只发 task_id + machine，不能因为升级就把它们的撤占位能力弄丢）。
+
+### 3. Solo 异步启动与卸载竞争（P2-10）
+
+`apply` 返回后立刻 `cleanup` 时，solo 的 `listen` 可能还没完成；以前会留下一个
+没人关闭的监听。新增 `soloAbandoned`：卸载时置位，启动回调看到后立即 `close()`。
+
+### 4. `uiAllowedHosts` 没接线（P2-11）
+
+`uiGuard` 早就读 `cfg.uiAllowedHosts`，但配置里没有这个键。现在：
+`cfg.uiAllowedHosts`（数组、去空、转字符串）→ `TEAM_CONFIG_KEYS` 持久化 → 存档合并
+→ `uiGuard` 的白名单 Set。默认空数组 = 仍然只允许回环。
+
+### 5. cwd 不存在时静默回退（P2-12）
+
+`sh_run` 以前 spawn 失败才报错，或者干脆落到宿主进程的当前目录。现在先校验
+`cwd` 是目录，否则直接返回「cwd 不存在或不是目录：…」，不再替用户猜目录。
+
+### 6. 允许盘符根时子路径被误拒（P2-13）
+
+`withinRoots` 以前用字符串前缀判断，`C:\` 这种根会算错。现在先 `realpath`，再用
+`path.relative(root, target)` 判断「不以 `..` 开头且不是绝对路径」，盘符根、UNC 根、
+POSIX `/` 都一致。
+
+### 7. Python 板子的单实例与任务上限（P2-14 / P2-15）
+
+- 锁从「state + 端口」改为只看 **state 的真实路径**：同一份 `state.json` 只能有一个
+  写入者，换端口也起不来第二个；同端口仍由 `SO_EXCLUSIVEADDRUSE` 挡。
+- `MAX_TASKS` 从只卡 `seed` 扩到 `create` 与「claim 未知任务时自动建单」，并支持
+  `GP_BOARD_MAX_TASKS` 覆盖（测试用）。
+
+### 测试
+
+- `solo-board-smoke` 新增 S9（holder 不符 409）、S10（`__proto__` 不污染、任务可见）。
+- `shell-guard-smoke` 新增 G6（cwd 不存在报错）、G7（盘符根白名单）。
+- `ui-guard-smoke` 12/12（新增 uiAllowedHosts 名单内放行、名单外 403）。
+- `board-server-smoke.py` 新增 P2-14、P2-15，共 23 项全过。
+- 全量：plugcheck 16/13、reload A/B/C、ui-guard 12/12、state-file 16/16、
+  config-persist 9/9、solo-board、solo-bootstrap、shell-guard、dispatch 80/80、
+  board smoke、acceptance 全部通过。
+
+### 这一版没做
+
+- P1-5（过期恢复日志绑错远端，需要按轮次重建证据）与 P2-9（终态同步只看最近 200 条，
+  需要分页接口）留到 v2.0.7。
+
+## v2.0.5 — 2026-11-12
+
 ## v2.0.5 — 2026-11-12
 
 PC2 的两个真实问题 + 首次安装的模型指引。这一版没有改协议，只让「坏掉时看得出下一步」。

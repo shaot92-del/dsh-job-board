@@ -119,6 +119,17 @@ check('G5b apply 未传 allowAllRoots 时仍拒绝', r.ok === false && /allowedR
 app.cleanup()
 fs.rmSync(app.dir, { recursive: true, force: true })
 
+// ── G6：显式 cwd 不存在时不能静默回退（P2-12）──────────────────────────
+call = makeTools({ allowedRoots: [dir] })
+const missing = path.join(dir, 'not-created')
+r = await call('sh_run', { command: 'node -p "process.cwd()"', cwd: missing, timeoutMs: 20000 })
+check('G6 不存在的 cwd 直接报错', r.ok === false && /cwd 不存在/.test(r.message || ''), r.message || '')
+
+// ── G7：盘符根（C:\）白名单也能匹配子路径（P2-13）────────────────────
+call = makeTools({ allowedRoots: [path.parse(dir).root] })
+r = await call('sh_read', { path: file })
+check('G7 整盘根白名单可用', r.ok === true && r.text === 'hello', r.text || r.message || '')
+
 fs.rmSync(dir, { recursive: true, force: true })
 if (failed) {
   console.log(`\nshell-guard-smoke: ${failed} failed`)

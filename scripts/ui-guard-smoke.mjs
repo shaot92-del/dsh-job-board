@@ -134,6 +134,59 @@ check('doctor 回环放行', r.status === 200 && r.body.includes('checks'), 'sta
 cleanup()
 await new Promise((r) => setTimeout(r, 100))
 
+// 9) v2.0.6（P2-11）：uiAllowedHosts 必须真的接线 —— 名单内非回环 Host 放行，名单外仍 403。
+{
+  const routes2 = new Map()
+  const ctx2 = {
+    tools: { register: () => () => {} },
+    webServer: {
+      register: (route) => {
+        routes2.set(route.path, route.handler)
+        return () => routes2.delete(route.path)
+      },
+      getOrigin: () => 'http://127.0.0.1:9999',
+    },
+    get: () => null,
+    effect: () => {},
+    logger: { info() {}, warn() {}, error() {} },
+  }
+  const cleanup2 = apply(ctx2, {
+    boardUrl: 'http://127.0.0.1:1',
+    machine: 'ui-guard-smoke-2',
+    token: 'x',
+    timeoutMs: 300,
+    writeTimeoutMs: 300,
+    autoDispatch: false,
+    petImage: '',
+    uiAllowedHosts: ['allowed.example'],
+  })
+  await new Promise((r) => setTimeout(r, 250))
+  const call2 = (p, headers) => {
+    const handler = routes2.get(p)
+    if (!handler) throw new Error('没有注册 ' + p)
+    return new Promise((resolve) => {
+      const req = Readable.from([])
+      req.method = 'GET'
+      req.url = p
+      req.headers = headers
+      const out = { status: 0, body: '' }
+      const res = {
+        writeHead(code) { out.status = code; return this },
+        setHeader() { return this },
+        end(buf) { out.body = String(buf || ''); resolve(out) },
+        writableEnded: false,
+      }
+      handler(req, res)
+    })
+  }
+  let rr = await call2('/api/board/ui/summary', { host: 'allowed.example' })
+  check('uiAllowedHosts 名单内 Host 放行', rr.status === 200, 'status=' + rr.status)
+  rr = await call2('/api/board/ui/summary', { host: 'other.example' })
+  check('uiAllowedHosts 名单外仍拒绝', rr.status === 403 && rr.body.includes('host'), 'status=' + rr.status + ' body=' + rr.body.slice(0, 60))
+  cleanup2()
+  await new Promise((r) => setTimeout(r, 100))
+}
+
 const failed = results.filter((x) => !x.cond)
 console.log(`\nui-guard-smoke: ${results.length - failed.length}/${results.length} passed`)
 if (failed.length) {

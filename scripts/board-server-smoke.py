@@ -85,8 +85,10 @@ def lan_ip() -> str:
         return ""
 
 
-def start(state: str, port: int, bind: str = "127.0.0.1") -> subprocess.Popen:
+def start(state: str, port: int, bind: str = "127.0.0.1", env_extra: dict | None = None) -> subprocess.Popen:
     env = dict(os.environ, GP_BOARD_TOKENS=TOKEN, PYTHONIOENCODING="utf-8")
+    if env_extra:
+        env.update(env_extra)
     return subprocess.Popen(
         [sys.executable, SERVER, "--bind", bind, "--port", str(port), "--state", state],
         env=env,
@@ -199,6 +201,37 @@ def main() -> int:
             p2.kill()
         check("F1 第二实例拒绝启动", rc not in (0, None), "rc=%s" % rc)
         check("F1 失败原因写清了", "绑定" in err or "占用" in err, err.strip()[:160])
+
+        # P2-14（v2.0.6）：同一份 state、换一个端口，也必须只有一个写入者
+        p3 = start(os.path.join(tmp, "a", "state.json"), free_port())
+        try:
+            rc3 = p3.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            rc3 = None
+        err3 = (p3.stderr.read() or b"").decode("utf-8", "replace") if p3.stderr else ""
+        if rc3 is None:
+            p3.kill()
+        check("P2-14 同 state 不同端口拒绝启动", rc3 not in (0, None), "rc=%s" % rc3)
+        check("P2-14 说明了是同一份 state", "已有板子在跑" in err3, err3.strip()[:160])
+
+        # P2-15（v2.0.6）：create 与 claim 都要吃总数上限，不能只卡 seed
+        p4_port = free_port()
+        p4 = start(os.path.join(tmp, "c", "state.json"), p4_port, env_extra={"GP_BOARD_MAX_TASKS": "2"})
+        try:
+            check("P2-15 限额实例启动", wait_health(p4_port))
+            c1, _ = call(p4_port, "/api/create", {"task_id": "cap-1", "goal": "g1"})
+            c2, _ = call(p4_port, "/api/create", {"task_id": "cap-2", "goal": "g2"})
+            c3, b3 = call(p4_port, "/api/create", {"task_id": "cap-3", "goal": "g3"})
+            check("P2-15 前两条可以建", c1 == 200 and c2 == 200, "%s %s" % (c1, c2))
+            check("P2-15 第三条 create 被拒（413）", c3 == 413, "%s %s" % (c3, b3))
+            c4, b4 = call(p4_port, "/api/claim", {"task_id": "cap-4", "machine": "GT14"})
+            check("P2-15 未知任务 claim 也被拒（413）", c4 == 413, "%s %s" % (c4, b4))
+        finally:
+            p4.terminate()
+            try:
+                p4.wait(timeout=5)
+            except Exception:
+                p4.kill()
     finally:
         for proc in (p1,):
             try:

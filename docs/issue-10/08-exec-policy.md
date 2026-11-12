@@ -902,3 +902,34 @@ state-file 16/16、config-persist 9/0、dispatch 76/76、board smoke 19 项、ac
   跨机复制既不安全也不一定可用。
 - 没有把 `pc2-onboard.ps1` 收进仓库：它含 board token 与 nodeToken，只应存在于
   受控共享目录；仓库里只保留说明与 `set-team-config.ps1` 这类不含秘密的工具。
+
+## §25 v2.0.6：第二轮审阅的 P2 批次
+
+### 25.1 七项与修法
+
+| # | 问题 | 修法 |
+|---|------|------|
+| P2-7 | Solo `machines` 可被 `__proto__` 污染；`__proto__` 任务在快照里消失 | `Object.create(null)` + `hasOwn`/`getTask` |
+| P2-8 | untake 不校验 holder，同机另一实例可抢回 | untake 比较 holder，不同则 409；未提供 holder 时保持兼容 |
+| P2-10 | solo 的 listen 还没完成就被 cleanup，留下孤儿监听 | `soloAbandoned` 置位，回调里 close |
+| P2-11 | `uiAllowedHosts` 只在 guard 里读，配置没这个键 | cfg + 持久化 + 合并 + guard 的 Set |
+| P2-12 | `sh_run` 的 cwd 不存在时静默回退 | 先 statSync 校验，直接报错 |
+| P2-13 | 白名单是盘符根时子路径被误拒 | realpath + path.relative 判定 |
+| P2-14 | 同 state 不同端口可双开 | 锁名只按 state 的 realpath |
+| P2-15 | `MAX_TASKS` 只对 seed 生效 | create 与 claim 建单都检查，支持环境变量覆盖 |
+
+### 25.2 测试
+
+- S9/S10、G6/G7、ui-guard 12/12、board smoke 23 项（新增 P2-14/P2-15）。
+- 全量回归同 v2.0.5 清单。
+
+### 25.3 留到 v2.0.7
+
+- P1-5：过期恢复日志按轮次重建，需要把 `dispatchJournal` 的 `attempts` 与远端 `remote_id`
+  一起入档，并在 reconciler 里按轮次比对；这一版没有动，避免把恢复语义改坏。
+- P2-9：终态同步只取 hub 最近 200 条，需要给 hub 加分页/时间窗参数。
+
+### 25.4 这一版没做什么
+
+- 没有改 `uiAllowedHosts` 的默认值：空数组仍然只允许回环，内网访问必须显式配置。
+- 没有把 `MAX_TASKS` 的默认值调小：5000 是总量，solo 的终态清理逻辑在 v2.0.3 已有。

@@ -114,6 +114,42 @@ check('S8 写盘失败不在内存里留下任务', r.status === 200 && !r.data.
 await b4.close()
 fs.rmSync(dir3, { recursive: true, force: true })
 
+// ── S9：同机另一个实例不能替对方 untake（v2.0.6 复核 P2-8）────────────
+const dir4 = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-solo-smoke4-'))
+const b5 = await startSoloBoard({ stateDir: dir4, port: 0 })
+r = await call(b5.url, '/api/create', { task_id: 'u1', goal: '占位', dispatch: 'auto' }, b5.token)
+r = await call(b5.url, '/api/take', { task_id: 'u1', machine: 'm1', holder: 'holder-A' }, b5.token)
+check('S9 take 占位', r.status === 200 && r.data.taken === true, 'status=' + r.status)
+r = await call(b5.url, '/api/untake', { task_id: 'u1', machine: 'm1', holder: 'holder-B' }, b5.token)
+check('S9 别的 holder 撤不掉', r.status === 409, 'status=' + r.status + ' body=' + JSON.stringify(r.data))
+r = await call(b5.url, '/api/untake', { task_id: 'u1', machine: 'm1', holder: 'holder-A' }, b5.token)
+check('S9 自己的 holder 可以撤', r.status === 200 && r.data.status === 'queued', 'status=' + r.status)
+await b5.close()
+fs.rmSync(dir4, { recursive: true, force: true })
+
+// S9b（v2.0.6 复审）：不带 holder 的旧客户端也应能 untake（否则面板撤不掉占位）
+const dir4b = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-solo-smoke4b-'))
+const b5b = await startSoloBoard({ stateDir: dir4b, port: 0 })
+await call(b5b.url, '/api/create', { task_id: 's9b', goal: '占位', dispatch: 'auto' }, b5b.token)
+let rb = await call(b5b.url, '/api/take', { task_id: 's9b', machine: 'm-s9' }, b5b.token)
+check('S9b 准备 take 无 holder', rb.status === 200 && rb.data.taken === true, 'status=' + rb.status)
+rb = await call(b5b.url, '/api/untake', { task_id: 's9b', machine: 'm-s9' }, b5b.token)
+check('S9b 不带 holder 也能 untake', rb.status === 200, 'status=' + rb.status + ' ' + JSON.stringify(rb.data).slice(0, 120))
+await b5b.close()
+fs.rmSync(dir4b, { recursive: true, force: true })
+
+// ── S10：机器键 '__proto__' 不能写进 Object.prototype（P2-7）──────────
+const dir5 = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-solo-smoke5-'))
+const b6 = await startSoloBoard({ stateDir: dir5, port: 0 })
+r = await call(b6.url, '/api/caps', { machine: '__proto__', caps: { polluted: 1 } }, b6.token)
+check('S10 原型键机器可写入', r.status === 200, 'status=' + r.status)
+check('S10 没有污染 Object.prototype', ({}).caps === undefined && ({}).polluted === undefined)
+r = await call(b6.url, '/api/create', { task_id: '__proto__', goal: '原型任务' }, b6.token)
+r = await call(b6.url, '/api/board', undefined, b6.token)
+check('S10 __proto__ 任务在快照里可见', r.status === 200 && Object.prototype.hasOwnProperty.call(r.data.tasks, '__proto__'))
+await b6.close()
+fs.rmSync(dir5, { recursive: true, force: true })
+
 fs.rmSync(dir, { recursive: true, force: true })
 if (failed) {
   console.log(`\nsolo-board-smoke: ${failed} failed`)
