@@ -8,6 +8,7 @@
  *   M5 exec 模式忽略 model
  *   M10 传显示名派工时，落到板子的 machine 必须是身份名（v2.1.0 阻断回归）
  *   M11 board_attach 传显示名时，/api/attach 的 machine 也必须是身份名
+ *   R1-R3 v2.3.0 重派：复制原参数、拒绝执行中、拒绝不存在
  */
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -133,7 +134,31 @@ const ex = await tools.get('board_dispatch').execute({ goal: 'echo hi', machine:
 assert.equal(ex.ok, true, 'exec 模式应建单（不需要模型）')
 assert.equal(created.model, '', 'exec 模式不写 model')
 
+// v2.3.0：重派。只复制失败/打回/取消任务的原参数，执行中的一律拒绝。
+BOARD.tasks = [
+  { id: 'failed-1', status: 'failed', goal: 'echo fail', title: '失败任务', machine: 'GT14', mode: 'agent', model: 'local/qwen3:8b', workspace: 'C:/w', note: 'boom', artifact: '' },
+  { id: 'running-1', status: 'running', goal: 'long', machine: 'GT14' },
+]
+created = null
+const rt = await tools.get('board_retry').execute({ task_id: 'failed-1' })
+assert.equal(rt.ok, true, '失败任务应能重派：' + JSON.stringify(rt))
+assert.equal(created.goal, 'echo fail', '重派要复制原 goal')
+assert.equal(created.model, 'local/qwen3:8b', '重派要复制原 model')
+assert.equal(created.machine, 'GT14', '重派要复制原机器')
+assert.equal(created.mode, 'agent')
+assert.ok(String(created.note).includes('重派自 failed-1'))
+
+created = null
+const rtRunning = await tools.get('board_retry').execute({ task_id: 'running-1' })
+assert.equal(rtRunning.ok, false, '执行中的任务不能重派')
+assert.equal(created, null, '拒绝时不应建单')
+
+const rtMissing = await tools.get('board_retry').execute({ task_id: 'nope' })
+assert.equal(rtMissing.ok, false, '不存在的任务应报错')
+
+dispose()
+globalThis.fetch = realFetch
 dispose()
 globalThis.fetch = realFetch
 fs.rmSync(root, { recursive: true, force: true })
-console.log('PASS model-pick smoke (M1-M11)')
+console.log('PASS model-pick smoke (M1-M11, R1-R3)')

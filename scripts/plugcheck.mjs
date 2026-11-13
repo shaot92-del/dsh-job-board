@@ -164,7 +164,7 @@ const dispose = apply(ctx, {
   maxOutputBytes: 1000,
 })
 
-const EXPECTED_BOARD = ['board_status', 'board_list', 'board_claim', 'board_beat', 'board_done', 'board_fail', 'board_say', 'board_attach', 'board_dispatch', 'board_options', 'board_caps', 'board_assess', 'board_metrics']
+const EXPECTED_BOARD = ['board_status', 'board_list', 'board_claim', 'board_beat', 'board_done', 'board_fail', 'board_retry', 'board_say', 'board_attach', 'board_dispatch', 'board_options', 'board_caps', 'board_assess', 'board_metrics']
 const EXPECTED_SHELL = ['sh_run', 'sh_read', 'sh_write', 'sh_list']
 const EXPECTED = [...EXPECTED_BOARD, ...EXPECTED_SHELL]
 let nonEmpty = 0

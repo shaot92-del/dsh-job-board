@@ -17,6 +17,20 @@
 
 # 变更日志
 
+## v2.3.0 — 2026-11-13
+
+### 新功能：失败重派、任务成果、更新提示
+
+- 新增 `board_retry` 工具与 `/api/board/ui/retry` 路由：把 `failed` / `blocked` / `superseded` 的任务按原 `goal`、`machine`、`mode`、`model`、`workspace` 重新建单，note 写「重派自 <原 id>」；执行中的任务、找不到的任务直接拒绝。工具数 18、路由 18。
+- 任务详情增加产物「复制路径」；失败任务按 note 给出诊断（模型未登录 / 上下文超限 / 工作目录不可达 / 超时 / 网络），并在详情里直接提供「重派」。
+- 更新提示：doctor 增加 info 级 `update` 检查，`/api/board/ui/update-check` 只读查询 npm registry 的 `dsh-job-board@latest`（3 秒超时、10 分钟缓存、失败只记错误），发现新版本时提示在插件市场升级或 `npm i -g dsh-job-board@latest` 并重启；不自动安装。
+
+### 测试
+
+- plugcheck `tools=18 routes=18`；reload 场景 A/B/C；ui-guard 15/15；state-file 16/16；config-persist 11/11；solo-board / solo-bootstrap / shell-guard 全过；model-pick M1–M11 + R1–R3；dispatch-recovery 88/88；board smoke 49 项；acceptance 10 绿 + acc-08 期望失败。
+- 说明：npm 发布尚未执行（本机没有 npm 登录凭据）；包内容已通过 `npm pack --dry-run` 校验。
+
+
 ## v2.2.1 — 2026-11-12
 
 三条通道复审后的修补：显示名所有权归板子、改名不再伪造心跳、面板的失败路径不再“报成功”。
