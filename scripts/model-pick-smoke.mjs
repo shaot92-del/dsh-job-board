@@ -62,7 +62,7 @@ const tools = new Map()
 const routes = []
 const ctx = {
   tools: { register(spec) { tools.set(spec.name, spec) } },
-  webServer: { register(spec) { routes.push(spec.path); return () => {} }, getOrigin() { return 'http://host.test' } },
+  webServer: { register(spec) { routes.push(spec); return () => {} }, getOrigin() { return 'http://host.test' } },
   on() { return () => {} },
   effect() { return () => {} },
   logger: { info() {}, warn() {}, error() {} },
@@ -145,6 +145,7 @@ assert.equal(rt.ok, true, '失败任务应能重派：' + JSON.stringify(rt))
 assert.equal(created.goal, 'echo fail', '重派要复制原 goal')
 assert.equal(created.model, 'local/qwen3:8b', '重派要复制原 model')
 assert.equal(created.machine, 'GT14', '重派要复制原机器')
+assert.equal(created.dispatch, 'auto', '重派必须带 dispatch=auto，否则永远排队（v2.3.0 B1 回归）')
 assert.equal(created.mode, 'agent')
 assert.ok(String(created.note).includes('重派自 failed-1'))
 
@@ -156,9 +157,15 @@ assert.equal(created, null, '拒绝时不应建单')
 const rtMissing = await tools.get('board_retry').execute({ task_id: 'nope' })
 assert.equal(rtMissing.ok, false, '不存在的任务应报错')
 
-dispose()
-globalThis.fetch = realFetch
+// 活跃副本去重：同一失败任务已经有 queued/claimed/running 的重派副本时拒绝。
+BOARD.tasks.push({ id: 'rt-dup-1', status: 'queued', goal: 'echo fail', machine: 'GT14', note: '重派自 failed-1' })
+created = null
+const rtDup = await tools.get('board_retry').execute({ task_id: 'failed-1' })
+assert.equal(rtDup.ok, false, '已有活跃重派副本时应拒绝重复重派')
+assert.ok(/已经重派过/.test(String(rtDup.error)), '错误应说明已有副本')
+assert.equal(created, null, '重复重派不应建单')
+
 dispose()
 globalThis.fetch = realFetch
 fs.rmSync(root, { recursive: true, force: true })
-console.log('PASS model-pick smoke (M1-M11, R1-R3)')
+console.log('PASS model-pick smoke (M1-M11, R1-R4)')

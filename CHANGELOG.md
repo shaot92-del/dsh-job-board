@@ -17,17 +17,40 @@
 
 # 变更日志
 
+## v2.3.1 — 2026-11-13
+
+### 复审修复：重派派发权、更新提示可见性、供应链文案
+
+两位审核员对 v2.3.0 给出 FAIL（2 个 P1），本版按发布门修复：
+
+- **B1（阻断）**：`board_retry` 与 `/api/board/ui/retry` 漏传 `dispatch: 'auto'`，重派出的任务永久排队。两处改为共用一个 `retryBoardTask()`，建单显式带 `dispatch: 'auto'`，并补 R1 断言。
+- **B2（阻断）**：更新提示挂 info 级、面板只渲染 error/warn，用户完全看不到。面板新增独立提示行「插件有新版本 vX（当前 vY）：在插件市场升级后重启 DSH」；doctor 保留 info 级与 `latestVersion`。
+- **供应链**：doctor 提示不再打印 npm 安装命令（该包名尚未注册，避免被抢注后误导安装），改为插件市场 / GitHub Releases 离线包；registry 请求加 `redirect: 'error'`，错误只记日志、不回显原始文本。
+- 其余：重派做活跃副本去重（409）、机器名归一；复制产物路径改为等待 Promise 再报成功；产物/标题裁剪上限对齐板子（300/120）；重派路由透传板子状态码；failureHint 收紧并只对 failed/blocked；update 缓存失败 60 秒、成功 10 分钟并做 in-flight 去重。
+
+### 已知问题（P2，不阻断）
+
+- 重派去重是「先查后建」，并发仍可能各建一份；`note` 被改写后去重会失效（建议后续用结构化 `retry_of`）。
+- artifact 只是字符串，凡持 board token 者可见执行机本地路径；无下载/打开接口。
+- npm 包名尚未注册；更新提示只指向插件市场 / GitHub Releases，不打印安装命令。
+- `update-check` 是 GET，可被跨站触发一次外呼（3s 超时、失败 60s / 成功 10min 缓存），无 CORS、不可读响应。
+
+### 测试
+
+plugcheck 18/18、reload A/B/C、ui-guard 15/15、state-file 16/16、config-persist 11/11、solo/bootstrap/shell、model-pick M1–M11 + R1–R4、dispatch 88/88、board smoke 48、acceptance 10+1；新增 update-check 探针（npm 9.9.9 → updateAvailable=true、doctor info 检查存在）。
+
+
 ## v2.3.0 — 2026-11-13
 
 ### 新功能：失败重派、任务成果、更新提示
 
 - 新增 `board_retry` 工具与 `/api/board/ui/retry` 路由：把 `failed` / `blocked` / `superseded` 的任务按原 `goal`、`machine`、`mode`、`model`、`workspace` 重新建单，note 写「重派自 <原 id>」；执行中的任务、找不到的任务直接拒绝。工具数 18、路由 18。
 - 任务详情增加产物「复制路径」；失败任务按 note 给出诊断（模型未登录 / 上下文超限 / 工作目录不可达 / 超时 / 网络），并在详情里直接提供「重派」。
-- 更新提示：doctor 增加 info 级 `update` 检查，`/api/board/ui/update-check` 只读查询 npm registry 的 `dsh-job-board@latest`（3 秒超时、10 分钟缓存、失败只记错误），发现新版本时提示在插件市场升级或 `npm i -g dsh-job-board@latest` 并重启；不自动安装。
+- 更新提示：doctor 增加 info 级 `update` 检查，`/api/board/ui/update-check` 只读查询 npm registry 的 `dsh-job-board@latest`（3 秒超时、10 分钟缓存、失败只记错误），发现新版本时提示在插件市场升级（或 GitHub Releases 离线包）并重启；不自动安装。
 
 ### 测试
 
-- plugcheck `tools=18 routes=18`；reload 场景 A/B/C；ui-guard 15/15；state-file 16/16；config-persist 11/11；solo-board / solo-bootstrap / shell-guard 全过；model-pick M1–M11 + R1–R3；dispatch-recovery 88/88；board smoke 49 项；acceptance 10 绿 + acc-08 期望失败。
+- plugcheck `tools=18 routes=18`；reload 场景 A/B/C；ui-guard 15/15；state-file 16/16；config-persist 11/11；solo-board / solo-bootstrap / shell-guard 全过；model-pick M1–M11 + R1–R3；dispatch-recovery 88/88；board smoke 48 项；acceptance 10 绿 + acc-08 期望失败。
 - 说明：npm 发布尚未执行（本机没有 npm 登录凭据）；包内容已通过 `npm pack --dry-run` 校验。
 
 
