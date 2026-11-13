@@ -1,13 +1,13 @@
-﻿#requires -Version 7.0
+#requires -Version 7.0
 <#
-  机械调度台 · 能力自检（只读）
+  多机调度台 · 能力自检（只读）
   输出 JSON 到 stdout；不安装、不提权、不写系统。
   用法：pwsh -NoProfile -File probe-caps.ps1 [-Pretty]
 #>
 [CmdletBinding()]
 param(
   [int[]]$ModelPorts = @(8080, 8088, 11434, 1234),
-  # 可选：显式列出局域网里的推理端点主机（如 192.168.3.73），命中私网地址的模型会标 location='lan'。
+  # 可选：显式列出局域网里的推理端点主机（如 <lan-host>），命中私网地址的模型会标 location='lan'。
   [string[]]$ModelHosts = @(),
   [switch]$Pretty
 )

@@ -1,5 +1,30 @@
 # 变更日志
 
+## v2.4.3 — 2026-11-13
+
+安全复审（v2.4.2）收口：无 P0/P1，修复 1 个 P2 与若干 P3。
+
+- **能力卡预算口径**：板子侧 `json.dumps(ensure_ascii=False)` 比 `JSON.stringify` 多出分隔符空格，实测 **9.26%/9.32%/10.79%**（短字段越密越高）；原来 7600 字节的预算会让 7.0–7.6KB 的卡稳定被板子 413。预算降到 **7000**（客户端同步提示“约 7.0KB 上限”）。
+- **写入口对齐**：`/api/board/ui/caps-apply` 非 POST 一律 405（与 caps-probe 一致），不再依赖「浏览器构造不出 GET+body」这层假设。
+- **错误信息收敛**：探测失败只回「能力自检失败（详情见插件日志）」，stderr（含安装路径/用户名）只进 trace；失败后 10 秒冷却，避免串行拉起 pwsh。
+- **探测脚本**：去掉多余的 UTF-8 BOM（`#requires` 仍可用），注释里的内网 IP 换占位、名称改「多机调度台」；`set-team-config.ps1` 不再打印 token 前缀，改回显长度与 sha256 前 8 位。
+- **桌宠 404**：不再回 `cfg.petImage` 绝对路径。
+- **浅色对比度（代码复审 P1-1/P2-1）**：浅色下 `.dsb-note`、`.dsb-lrow .s`、`.dsb-empty` 不再叠 `opacity`（原 2.88–4.16:1，低于 AA 4.5）。
+- **宿主变量兜底（P2-2）**：`--dsw-alias-border-l1/l2` 一律带 `var(--dsb-bd)/var(--dsb-bd2)` 兜底，宿主变量缺失时边框不再整条失效。
+- **provider 类别表统一（P2-3）**：新增 `providerKindOf()`，`capOf` 与下拉兜底共用同一张 local/cloud 名单（补 siliconflow/openrouter/azure/groq/xai/mistral/together/fireworks/perplexity/cohere），避免“判定 cloud 但守卫不认”导致 local/lan 模型并到云端。
+- **截断计数（P2-4）**：`srcModels.slice(0,80)` 截掉的条数计入 `modelsDropped`，提示与实际丢弃一致。
+- **能力卡字段保留（P3）**：`caps-apply` 先读本机旧卡，把 `features/os/cores/memGB`（以及 gpu 为空时的旧 gpu）补回，避免首次由面板保存后 `requires` 过滤失去事实源。
+- **默认值（P3）**：重测保存沿用旧卡的角色（主职不再被降成副职）；位置缺省显示“未定”（`''`）而不是“本机”（下拉补了 `未定` 选项）。
+- **复核 P3 收尾**：旧卡 `features` 只回填白名单键（shell/pwsh/powershell/ffmpeg/ffmpegHw/gpu/browsers/python/node，字符串值截 240 字）；`cfg.machine` 为空时跳过旧卡读取；`modelsDropped` 文案区分“最多 80 条 / 约 7.0KB”。
+- 测试：全量回归（plugcheck 18/20、ui-guard 18/18、model-pick M1–M11+R1–R4+A1–A3、dispatch 88/88、board smoke 48、acceptance 10+1）。
+
+已知未修（P3，记录触发前提）：
+- `caps-probe` 仍带 `-ExecutionPolicy Bypass`：仅在 GPO 强制 AllSigned 的机器上有争议，未在目标机实测。
+- caps 的 `identity/tools/limits` 无单字段长度上限：仅信任边界内的本机 UI 能写；病态 payload 理论可撞 8KB。
+- `/assess` 仍是 GET 可触发（既有）：写板子 + identity，有 10 分钟缓存兜底，跨站不可读响应。
+- `_runtime.log` 不轮转：长期运行会变大，日志已脱敏。
+- 模型 provider 为自报字段：只影响下拉分组/标签，若将来按 location 计费需服务端事实源。
+
 ## v2.4.2 — 2026-11-13
 
 看板 UI 第二片：模型用途、派工分型与主题。

@@ -1214,4 +1214,25 @@ v2.3.0（8aad59e）在发布门确立后被追溯审核：安全审计 0 P0 / 2 
 - **主题**：`.dsb-root` 语义 token（bg/bg1/bg2、bd/bd2、fg/fg2、accent/ok/warn/bad + RGB），主面板与内联样式统一改用 token；浅色为独立调色板，默认深色，开关写 `localStorage`。
 - **复审修复**：代码复审 1 阻断（浅色核心面不可读，含状态标签浅色专用色与显式 `data-theme="dark"`）+ 4 中（标签草稿、dot/hover token、自动池元数据、缓存失效/重测确认）已处理；低项处理了 `modelsDropped` 提示、能力卡 provider 保留与跨 provider 裸名防护、同名节点合并、详情去重、副标题不计 host；装饰性配色与 `-ModelHosts` 接线未做（已记录）。
 - **测试**：plugcheck 18/20、ui-guard 18/18、model-pick M1–M11+R1–R4+A1–A3、dispatch 88/88、board smoke 48、acceptance 10+1。
+- **追加修复（代码复审 P1/P2/P3）**：浅色 `.dsb-note/.dsb-lrow .s/.dsb-empty` 取消 opacity；宿主 `--dsw-alias-border-*` 加 fallback；`providerKindOf()` 统一 local/cloud 名单；80 条截断计入 `modelsDropped`；`caps-apply` 保留旧卡 features/os/cores/memGB/gpu；角色沿用旧卡、位置缺省“未定”。
 - **未做**：四步向导、`taskKind` 自动选型、eco/boost、云端价格；装饰性配色（桌宠气泡等）未逐一校准；`-ModelHosts` 未接线（接线时需 host 白名单/端口限制/结果长度上限）。
+
+## 37. v2.4.3：安全复审收口（2026-11-13）
+
+### 37.1 背景
+v2.4.2 推送后补做安全审计（只读 `b2a4a67..045dafa`）：**PASS WITH FIXES，无 P0/P1**，1 个 P2 + 若干 P3。P2 是能力卡字节预算口径不一致（可复现的 413），其余为硬化项。
+
+### 37.2 修复项
+| 项 | 修法 |
+|---|---|
+| 预算口径（P2） | 板子 `json.dumps(ensure_ascii=False)` 比 `JSON.stringify` 多出分隔符空格，实测 9.26–10.79%，预算 7600 → **7000** |
+| `/caps-apply` 无 method 检查（P3） | 非 POST → 405 |
+| 探测失败回显 stderr（P3） | 浏览器只收固定文案，detail 进 trace；失败 10s 冷却 |
+| `probe-caps.ps1` 多 BOM（P3） | 改回 utf8 no BOM，`#requires` 验证可用 |
+| 注释内网 IP（P3） | `<lan-host>` 占位 |
+| token 前缀回显（P3） | 改长度 + sha256 前 8 位 |
+| `/pet.png` 404 泄露绝对路径（P3） | 固定文案 |
+
+### 37.3 记录但未做
+- `-ExecutionPolicy Bypass`：GPO 强制 AllSigned 时行为需目标机实测；未在本轮改。
+- caps 单字段长度上限、`/assess` 的 GET 门（既存）、`_runtime.log` 轮转、模型 provider 自报（若将来按 location 计费需服务端事实源）。

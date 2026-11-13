@@ -152,7 +152,12 @@ foreach ($need in @(@('boardUrl', $BoardUrl), @('machine', $Machine), @('token',
 Write-Host "== $action → $path"
 Write-Host "   备份：$bak"
 Write-Host ("   team 块数量：{0}" -f $teamCount)
-if ($Token) { Write-Host ("   token：{0}…（{1} 字符）" -f $Token.Substring(0, [Math]::Min(8, $Token.Length)), $Token.Length) }
+  if ($Token) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $hx = [System.BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Token))).Replace('-','').ToLowerInvariant().Substring(0,8) }
+    finally { $sha.Dispose() }
+    Write-Host ("   token：已写入（{0} 字符，sha256 {1}）" -f $Token.Length, $hx)
+  }
 if ($ok) {
   Write-Host '   复核通过。下一步：完全退出 DSH 再启动（热重载会撞 duplicate route）。' -ForegroundColor Green
 } else {
