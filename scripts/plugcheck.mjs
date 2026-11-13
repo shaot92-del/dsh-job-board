@@ -204,6 +204,8 @@ const needRoutes = [
   '/api/board/ui/release',
   '/api/board/ui/create', // 复核 #4：面板派工第一步，之前这个路由根本不存在
   '/api/board/ui/doctor', // v1.4.0：配置/板子/hub/worker/调度器自检
+  '/api/board/ui/caps-probe', // v2.4.0：本机能力只读探测
+  '/api/board/ui/caps-apply', // v2.4.0：确认后写能力卡
 ]
 const missRoutes = needRoutes.filter((r) => !routes.includes(r))
 assert.deepEqual(missRoutes, [], `缺少路由: ${missRoutes.join(', ')}`)

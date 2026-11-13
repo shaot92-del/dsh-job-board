@@ -1187,3 +1187,22 @@ v2.3.0（8aad59e）在发布门确立后被追溯审核：安全审计 0 P0 / 2 
 ### 34.3 边界
 
 `update-check` 仍是 GET，可被跨站 `<img>` 触发一次外呼（3 秒超时、失败 60 秒 / 成功 10 分钟缓存），不构成 SSRF；artifact 只是字符串，没有下载/打开接口。board token 仍是单信任域，per-machine 授权留 v2.4 的安全层。
+
+## 35. v2.4.0 —— 机械调度台与能力卡自检（第一片）
+
+### 35.1 改了什么
+
+- 面板中文名统一为「机械调度台」（标题、侧栏、错误页）；包名、工具名、板子协议都不变。
+- 新增只读探测脚本 `scripts/probe-caps.ps1`：CPU / 内存 / GPU / ffmpeg 硬件编码器 / 浏览器 / 本机模型端点，输出 `schema: 2`，不安装、不提权。
+- 新路由 `POST /api/board/ui/caps-probe`（本机探测）与 `POST /api/board/ui/caps-apply`（确认后写板子，身份固定 `cfg.machine`）。
+- 机器卡新增「配置自检」与结果面板：硬件摘要、待修项、角色四选、高风险未验证模型开关；已有 schema 2 能力卡的机器显示摘要。
+
+### 35.2 边界
+
+- 第一片只做「探测 → 确认 → 保存 → 展示」，不是设计稿里的四步向导；模型用途标签页、云端/局域网/本机三分组、浅色主题、按任务标签自动选型都留后续片。
+- 探测结果由本机脚本生成后原样交给板子；板子只存 caps，不执行脚本。caps 中的 alias 仍以板子侧为准，identity.machine 由插件覆写为 cfg.machine。
+- `roles` 与 `allowUnverifiedHighRisk` 目前只记录/展示，不参与派工或授权判断。
+
+### 35.3 测试
+
+- 测试：plugcheck `tools=18 routes=20`；model-pick 增 A1（caps-apply 身份固定、字段清洗、角色/模型透传）与 A2（本机探测返回 identity.cpu）；reload/ui-guard（18/18，含 caps-probe 三例）/state/config/solo/shell/dispatch/board smoke/acceptance 全绿。

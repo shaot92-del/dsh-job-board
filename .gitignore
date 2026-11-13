@@ -10,3 +10,8 @@ __pycache__/
 
 # 临时提交信息文件
 _msg.txt
+
+# 临时 UI 草图（不入库）
+_ui_*.html
+_ui_*.png
+_ui_proposal.json

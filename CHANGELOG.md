@@ -1,21 +1,15 @@
-## v2.2.3 — 2026-11-13
-
-### 修复：版本提示、幻影机器与移除反馈
-
-- doctor 新增 `version-skew` 检查：运行版本与磁盘已安装版本不一致时提示「重启 DSH 后生效」，并在响应里返回 `installedVersion`；面板横幅直接显示「磁盘已装 vX，重启后生效」。这次截图里的 v2.1.0 横幅就是旧实例，2.2.2 的评估修复要重启才生效。
-- `tools/board_server.py` 的 `do_say`：空机器名 / `?` 不再 `touch_machine`，不再生成永远离线的幻影机器（之前它把在线数算成 3/5）。已手动清掉现存的 `?` 与离线的 MB14。
-- 面板机器列表过滤 `?` 占位；移除失败仍走顶部 notice，但会在确认框里写明「在线机器需先停那台的 DSH」。
-
-## v2.2.2 — 2026-11-13
-
-### 修复：评估卡点击后仍显示“未评估”
-
-- 根因：面板 `runAssess` 的 `POST /api/board/ui/assess` 只带了自定义头 `x-dsh-team-ui`，没有 `content-type: application/json`，被 UI 闸门以 403 `forbidden` 挡下；旧逻辑不检查 `ok`，把 403 当成完成，卡片虽隐藏但评估结果从未写盘，重开仍是未评估。
-- 修法：`lib/client.js` 的评估请求补 `content-type: application/json` 与空 JSON body；失败时保留卡片并提示（v2.2.1 已加）。
-- 测试隔离：`scripts/ui-guard-smoke.mjs`、`scripts/reload-smoke.mjs` 除 `DSH_TEAM_STATE_DIR` 外，再隔离 `DSH_TEAM_IDENTITY_DIR` 到临时目录并在结束时删除，避免把真实 `~/.dsh-board/identity.json` 写成测试机名（本次真机就被写成了 `ui-guard-smoke`，导致 `needsAssessment` 恒为真）。
-- 真机清理：真实身份文件已通过重新评估恢复为 `machine=host`；重启 DSH 后生效。
-
 # 变更日志
+
+## v2.4.0 — 2026-11-13
+
+### 机械调度台 + 能力卡自检（第一片）
+
+- 面板更名：标题、侧栏、错误页统一为「机械调度台」；包名与工具名不变。
+- 新增 `scripts/probe-caps.ps1`：只读探测 CPU / 内存 / GPU / ffmpeg 硬件编码器 / 浏览器 / 本机模型端点，输出 `schema: 2` 的能力卡（不安装、不提权、不改系统）。
+- 新路由 `POST /api/board/ui/caps-probe`（只在本机跑探测）与 `POST /api/board/ui/caps-apply`（确认后写板子；身份固定用 `cfg.machine`，不信请求体）。
+- 机器卡新增「配置自检」按钮与结果面板：硬件摘要、编码器/本地模型数量、待修项、角色四选（主职/副职/仅空闲/不接）、「允许高风险任务使用未验证模型」开关、保存/取消；已上报 schema 2 能力卡的机器在卡上显示硬件/编码器/模型数与角色。
+- 测试：plugcheck `tools=18 routes=20`；model-pick 增 A1（caps-apply 身份与字段清洗）/A2（本机探测）；全量回归绿。
+- 未包含（设计稿后续片）：模型用途标签独立页、云端/局域网/本机三分组、浅色主题开关、按任务标签自动选模型。
 
 ## v2.3.1 — 2026-11-13
 
@@ -39,7 +33,6 @@
 
 plugcheck 18/18、reload A/B/C、ui-guard 15/15、state-file 16/16、config-persist 11/11、solo/bootstrap/shell、model-pick M1–M11 + R1–R4、dispatch 88/88、board smoke 48、acceptance 10+1；新增 update-check 探针（npm 9.9.9 → updateAvailable=true、doctor info 检查存在）。
 
-
 ## v2.3.0 — 2026-11-13
 
 ### 新功能：失败重派、任务成果、更新提示
@@ -53,6 +46,22 @@ plugcheck 18/18、reload A/B/C、ui-guard 15/15、state-file 16/16、config-pers
 - plugcheck `tools=18 routes=18`；reload 场景 A/B/C；ui-guard 15/15；state-file 16/16；config-persist 11/11；solo-board / solo-bootstrap / shell-guard 全过；model-pick M1–M11 + R1–R3；dispatch-recovery 88/88；board smoke 48 项；acceptance 10 绿 + acc-08 期望失败。
 - 说明：npm 发布尚未执行（本机没有 npm 登录凭据）；包内容已通过 `npm pack --dry-run` 校验。
 
+## v2.2.3 — 2026-11-13
+
+### 修复：版本提示、幻影机器与移除反馈
+
+- doctor 新增 `version-skew` 检查：运行版本与磁盘已安装版本不一致时提示「重启 DSH 后生效」，并在响应里返回 `installedVersion`；面板横幅直接显示「磁盘已装 vX，重启后生效」。这次截图里的 v2.1.0 横幅就是旧实例，2.2.2 的评估修复要重启才生效。
+- `tools/board_server.py` 的 `do_say`：空机器名 / `?` 不再 `touch_machine`，不再生成永远离线的幻影机器（之前它把在线数算成 3/5）。已手动清掉现存的 `?` 与离线的 MB14。
+- 面板机器列表过滤 `?` 占位；移除失败仍走顶部 notice，但会在确认框里写明「在线机器需先停那台的 DSH」。
+
+## v2.2.2 — 2026-11-13
+
+### 修复：评估卡点击后仍显示“未评估”
+
+- 根因：面板 `runAssess` 的 `POST /api/board/ui/assess` 只带了自定义头 `x-dsh-team-ui`，没有 `content-type: application/json`，被 UI 闸门以 403 `forbidden` 挡下；旧逻辑不检查 `ok`，把 403 当成完成，卡片虽隐藏但评估结果从未写盘，重开仍是未评估。
+- 修法：`lib/client.js` 的评估请求补 `content-type: application/json` 与空 JSON body；失败时保留卡片并提示（v2.2.1 已加）。
+- 测试隔离：`scripts/ui-guard-smoke.mjs`、`scripts/reload-smoke.mjs` 除 `DSH_TEAM_STATE_DIR` 外，再隔离 `DSH_TEAM_IDENTITY_DIR` 到临时目录并在结束时删除，避免把真实 `~/.dsh-board/identity.json` 写成测试机名（本次真机就被写成了 `ui-guard-smoke`，导致 `needsAssessment` 恒为真）。
+- 真机清理：真实身份文件已通过重新评估恢复为 `machine=host`；重启 DSH 后生效。
 
 ## v2.2.1 — 2026-11-12
 
@@ -1147,7 +1156,6 @@ journal 文件名只由 `machine + boardUrl` 决定，同机两个 DSH 进程写
 换新 board token、板子撤旧 token、清 `%TEMP%` 与共享盘的 token 文件与会话残留、
 仓库历史清 token（改 private 或 filter-repo）。
 
-
 ## v1.3.3 — 2026-11-08
 
 上一轮复核（代码审查 + 遗留系统）剩下的 7 组问题。三组会真的做错事，先修这三组。
@@ -1217,6 +1225,7 @@ journal 文件名只由 `machine + boardUrl` 决定，同机两个 DSH 进程写
 `dispatch-recovery-smoke` **65/65**（R1–R21）；`state-file-smoke` **12/12**；
 `acceptance` fixtures 10/10 + 真板子模式拒绝运行（退出码 2）。
 变异验证：去掉 `holder: INSTANCE_HOLDER` → R21 挂（dispatch=2、远端两条）。
+
 ## v1.3.2 — 2026-11-08
 
 文档：新增 `docs/issue-10/08-exec-policy.md`（#10-4）—— 部署级命令执行策略。
@@ -1788,5 +1797,3 @@ remote-agent 的 UI 路由每个请求都过 DSH 的浏览器鉴权围栏（`con
 - 补齐 `repository` / `bugs` / `homepage` / `author` 与 LICENSE 署名
 - README 安装示例换成真实仓库地址；配置段 `petImage` 改为留空用随包立绘
 - `scripts/plugcheck.mjs` 注释修正为 16 个工具（12 个 `board_*` + 4 个 `sh_*`）
-
-

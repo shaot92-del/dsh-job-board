@@ -15,6 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { Readable } from 'node:stream'
 
 const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-modelpick-'))
@@ -26,6 +27,7 @@ process.env.DSH_TEAM_STATE_DIR = stateDir
 const realFetch = globalThis.fetch
 let created = null
 let attached = null
+let capped = null
 function reply(obj) {
   return { ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(obj), json: async () => obj }
 }
@@ -52,6 +54,7 @@ stub(async (url, init) => {
   const u = String(url)
   if (process.env.MP_DEBUG) console.error('FETCH', u)
   if (u.includes('/api/remote-agent/ui/nodes')) return reply(NODES)
+  if (u.includes('/api/caps')) { capped = JSON.parse(String(init.body)); return reply({ ok: true }) }
   if (u.includes('/api/create')) { created = JSON.parse(String(init.body)); return reply({ ok: true }) }
   if (u.includes('/api/attach')) { attached = JSON.parse(String(init.body)); return reply({ ok: true }) }
   if (u.includes('/api/board')) return reply(BOARD)
@@ -165,7 +168,76 @@ assert.equal(rtDup.ok, false, '已有活跃重派副本时应拒绝重复重派'
 assert.ok(/已经重派过/.test(String(rtDup.error)), '错误应说明已有副本')
 assert.equal(created, null, '重复重派不应建单')
 
+// v2.4.0 能力卡：A1 应用探测结果（身份、角色、模型清洗）；A2 本机只读探测。
+function callRoute(routePath, payload, method = 'POST') {
+  const spec = routes.find((r) => r.path === routePath)
+  assert.ok(spec, '缺少路由 ' + routePath)
+  return new Promise((resolve) => {
+    const req = Readable.from([Buffer.from(JSON.stringify(payload))])
+    req.method = method
+    req.url = routePath
+    req.headers = {
+      host: '127.0.0.1:4112',
+      origin: 'http://127.0.0.1:4112',
+      'x-dsh-team-ui': '1',
+      'content-type': 'application/json',
+    }
+    const out = { status: 0, body: '' }
+    const res = {
+      writeHead(status) { out.status = status },
+      end(text) { out.body = String(text || ''); resolve(out) },
+    }
+    try {
+      const ret = spec.handler(req, res)
+      if (ret && typeof ret.then === 'function') ret.catch((e) => resolve({ status: 500, body: String((e && e.message) || e) }))
+    } catch (e) {
+      resolve({ status: 500, body: String((e && e.message) || e) })
+    }
+  })
+}
+
+capped = null
+const a0 = await callRoute('/api/board/ui/caps-apply', {})
+assert.equal(a0.status, 400, '缺 caps 必须 400：' + a0.body)
+const a0b = await callRoute('/api/board/ui/caps-apply', { caps: {}, role: 'boss' })
+assert.equal(a0b.status, 400, '非法角色必须 400：' + a0b.body)
+const a0c = await callRoute('/api/board/ui/caps-probe', {}, 'GET')
+assert.equal(a0c.status, 405, 'caps-probe 必须拒绝 GET：' + a0c.body)
+
+capped = null
+const many = Array.from({ length: 200 }, (_, i) => ({ id: 'm' + i, endpoint: 'http://127.0.0.1:1/v1', location: 'local' }))
+const a1c = await callRoute('/api/board/ui/caps-apply', { caps: { identity: {} }, role: 'none', models: many })
+assert.equal(a1c.status, 200, '超量模型应截断而不是报错：' + a1c.body)
+assert.ok(capped && capped.caps.models.length > 0 && capped.caps.models.length <= 80, '模型应在 80 条与 8KB 预算内，实际 ' + (capped && capped.caps.models.length))
+const a1cj = JSON.parse(a1c.body)
+assert.ok(a1cj.modelsDropped > 0, '超预算时应丢弃尾部模型并回报 modelsDropped')
+
+capped = null
+const a1 = await callRoute('/api/board/ui/caps-apply', {
+  caps: { identity: { cpu: 'test-cpu', ramGB: 16 }, gpu: [], tools: {}, models: [], gaps: [] },
+  role: 'primary',
+  machine: 'evil-machine',
+  models: [{ id: 'qwen3:8b', endpoint: 'http://127.0.0.1:8080/v1', location: 'local', ctx: 32768, source: 'guessed' }],
+  allowUnverifiedHighRisk: true,
+})
+const a1j = JSON.parse(a1.body)
+assert.equal(a1.status, 200, 'caps-apply 应 200：' + a1.body)
+assert.equal(a1j.ok, true)
+assert.ok(capped && capped.machine === 'host', '能力卡必须用本机身份写到板子，忽略 body.machine')
+assert.equal(capped.caps.identity.machine, 'host', 'caps.identity.machine 也要覆盖成本机身份')
+assert.equal(capped.caps.schema, 2)
+assert.equal(capped.caps.roles[0].id, 'primary')
+assert.equal(capped.caps.allowUnverifiedHighRisk, true)
+assert.equal(capped.caps.models.length, 1, '模型应清洗后透传')
+
+if (process.platform === 'win32') {
+  const a2 = await callRoute('/api/board/ui/caps-probe', {})
+  const a2j = JSON.parse(a2.body)
+  assert.equal(a2.status, 200, 'caps-probe 应 200：' + a2.body)
+  assert.equal(a2j.ok, true)
+  assert.ok(a2j.caps && a2j.caps.identity && a2j.caps.identity.cpu, '探测结果应含 cpu')
+}
 dispose()
 globalThis.fetch = realFetch
 fs.rmSync(root, { recursive: true, force: true })
-console.log('PASS model-pick smoke (M1-M11, R1-R4)')
+console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A2)')

@@ -1,7 +1,7 @@
 {
   "name": "dsh-job-board",
-  "version": "2.3.1",
-  "description": "DSH 插件：把「团队 · 作业板」接进 DSH —— 作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
+  "version": "2.4.0",
+  "description": "DSH 插件：机械调度台 —— 多机作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -43,7 +43,8 @@
     "scripts/shell-guard-smoke.mjs",
     "scripts/ui-guard-smoke.mjs",
     "scripts/model-pick-smoke.mjs",
-    "scripts/update-check-smoke.mjs"
+    "scripts/update-check-smoke.mjs",
+    "scripts/probe-caps.ps1"
   ],
   "keywords": [
     "dsh",

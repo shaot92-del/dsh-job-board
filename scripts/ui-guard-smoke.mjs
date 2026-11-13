@@ -141,6 +141,14 @@ check('alias 回环放行', r.status === 200 && r.body.includes('改名测试机
 r = await call('/api/board/ui/alias', { method: 'POST', headers: { ...base, 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: JSON.stringify({ alias: 'x'.repeat(33) }) })
 check('alias 超长拒绝', r.status === 400, 'status=' + r.status)
 
+// v2.4.0：动作型路由 caps-probe 必须只认 POST；GET 不能触发本机 pwsh。
+r = await call('/api/board/ui/caps-probe', { headers: { ...base, 'x-dsh-team-ui': '1' } })
+check('caps-probe 拒绝 GET', r.status === 405, 'status=' + r.status)
+r = await call('/api/board/ui/caps-probe', { method: 'POST', headers: { ...base, host: 'evil.example', origin: 'http://evil.example', 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: '{}' })
+check('caps-probe 外部 Host 拒绝', r.status === 403, 'status=' + r.status + ' body=' + r.body.slice(0, 80))
+r = await call('/api/board/ui/caps-probe', { method: 'POST', headers: { ...base, 'content-type': 'application/json' }, body: '{}' })
+check('caps-probe 缺自定义头拒绝', r.status === 403, 'status=' + r.status)
+
 cleanup()
 await new Promise((r) => setTimeout(r, 100))
 
