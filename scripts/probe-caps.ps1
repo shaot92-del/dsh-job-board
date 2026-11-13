@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 <#
   机械调度台 · 能力自检（只读）
   输出 JSON 到 stdout；不安装、不提权、不写系统。
@@ -7,6 +7,8 @@
 [CmdletBinding()]
 param(
   [int[]]$ModelPorts = @(8080, 8088, 11434, 1234),
+  # 可选：显式列出局域网里的推理端点主机（如 192.168.3.73），命中私网地址的模型会标 location='lan'。
+  [string[]]$ModelHosts = @(),
   [switch]$Pretty
 )
 
@@ -92,24 +94,50 @@ if ($node) { $nodeVersion = [string](& $node --version 2>$null | Select-Object -
 
 # ── 本地模型端点（只读，最多 80 条） ──────────────────
 $models = @()
-foreach ($port in $ModelPorts) {
-  try {
-    $r = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/v1/models" -f $port) -TimeoutSec 1
-    foreach ($m in @($r.data)) {
-      if ($m.id -and $models.Count -lt 80) {
-        $models += [ordered]@{
-          id = [string]$m.id
-          endpoint = ("http://127.0.0.1:{0}/v1" -f $port)
-          location = 'local'
-          ctx = $null
-          modalities = @('text')
-          tags = @()
-          source = 'guessed'
-          loaded = $false
+function Get-ModelLocation([string]$HostName) {
+  $h = $HostName.Trim().ToLowerInvariant().Trim('[', ']')
+  if ($h -eq 'localhost') { return 'local' }
+  $ip = $null
+  if ([System.Net.IPAddress]::TryParse($h, [ref]$ip)) {
+    if ([System.Net.IPAddress]::IsLoopback($ip)) { return 'local' }
+    if ($ip.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+      $b = $ip.GetAddressBytes()
+      if ($b[0] -eq 10 -or ($b[0] -eq 172 -and $b[1] -ge 16 -and $b[1] -le 31) -or ($b[0] -eq 192 -and $b[1] -eq 168)) { return 'lan' }
+    } else {
+      if ($ip.IsIPv6LinkLocal -or $ip.IsIPv6SiteLocal -or ($ip.GetAddressBytes()[0] -band 0xFE) -eq 0xFC) { return 'lan' }
+    }
+    return 'cloud'
+  }
+  return 'cloud'
+}
+$modelTargets = @('127.0.0.1') + @($ModelHosts | Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+$modelTargets = @($modelTargets | Select-Object -Unique)
+$seenModels = @{}
+foreach ($mh in $modelTargets) {
+  foreach ($port in $ModelPorts) {
+    try {
+      $r = Invoke-RestMethod -Uri ("http://{0}:{1}/v1/models" -f $mh, $port) -TimeoutSec 1 -MaximumRedirection 0
+      foreach ($m in @($r.data)) {
+        if ($m.id -and $models.Count -lt 80) {
+          $key = ('{0}|{1}|{2}' -f $mh, $port, [string]$m.id)
+          if ($seenModels.ContainsKey($key)) { continue }
+          $seenModels[$key] = $true
+          $loc = Get-ModelLocation $mh
+          $models += [ordered]@{
+            id = ([string]$m.id).Substring(0, [Math]::Min(120, ([string]$m.id).Length))
+            endpoint = ("http://{0}:{1}/v1" -f $mh, $port)
+            location = $loc
+            provider = $(if ($loc -eq 'local') { 'local' } elseif ($loc -eq 'lan') { 'lan' } else { '' })
+            ctx = $null
+            modalities = @('text')
+            tags = @()
+            source = 'guessed'
+            loaded = $false
+          }
         }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 }
 
 # ── 权限 / 磁盘 ───────────────────────────────────────

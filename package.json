@@ -1,7 +1,7 @@
 {
   "name": "dsh-job-board",
-  "version": "2.4.0",
-  "description": "DSH 插件：机械调度台 —— 多机作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
+  "version": "2.4.2",
+  "description": "DSH 插件：多机调度台 —— 多机作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {

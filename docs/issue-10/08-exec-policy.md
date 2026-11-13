@@ -1206,3 +1206,12 @@ v2.3.0（8aad59e）在发布门确立后被追溯审核：安全审计 0 P0 / 2 
 ### 35.3 测试
 
 - 测试：plugcheck `tools=18 routes=20`；model-pick 增 A1（caps-apply 身份固定、字段清洗、角色/模型透传）与 A2（本机探测返回 identity.cpu）；reload/ui-guard（18/18，含 caps-probe 三例）/state/config/solo/shell/dispatch/board smoke/acceptance 全绿。
+
+## 36. v2.4.2 —— 看板 UI 第二片：模型用途、派工分组与主题（2026-11-13）
+
+- **能力卡模型用途**：自检结果面板可编辑每个模型的标签与位置（本机/局域网/云端）；位置只能在**更贵方向**覆盖（local<lan<cloud，防止把云端端点标成免费），其余以 endpoint 自动判定为准（`[::1]` 剥括号、私网只按 IPv4 八位组判断）；重测只保留用户标签，来源/位置用新实测值。
+- **派工模型分组**：summary 的 `nodeModels` 按机器二级索引合并 caps 的 `location/tags/source`，下拉分「云端 / 局域网 / 本机 / 其他」；选“自动”只列在线副机交集，且带元数据，不再全落“其他”。
+- **主题**：`.dsb-root` 语义 token（bg/bg1/bg2、bd/bd2、fg/fg2、accent/ok/warn/bad + RGB），主面板与内联样式统一改用 token；浅色为独立调色板，默认深色，开关写 `localStorage`。
+- **复审修复**：代码复审 1 阻断（浅色核心面不可读，含状态标签浅色专用色与显式 `data-theme="dark"`）+ 4 中（标签草稿、dot/hover token、自动池元数据、缓存失效/重测确认）已处理；低项处理了 `modelsDropped` 提示、能力卡 provider 保留与跨 provider 裸名防护、同名节点合并、详情去重、副标题不计 host；装饰性配色与 `-ModelHosts` 接线未做（已记录）。
+- **测试**：plugcheck 18/20、ui-guard 18/18、model-pick M1–M11+R1–R4+A1–A3、dispatch 88/88、board smoke 48、acceptance 10+1。
+- **未做**：四步向导、`taskKind` 自动选型、eco/boost、云端价格；装饰性配色（桌宠气泡等）未逐一校准；`-ModelHosts` 未接线（接线时需 host 白名单/端口限制/结果长度上限）。

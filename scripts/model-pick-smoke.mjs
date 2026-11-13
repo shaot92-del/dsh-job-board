@@ -35,7 +35,7 @@ const BOARD = {
   ok: true, updatedAt: Math.floor(Date.now() / 1000), updatedAgeSec: 1,
   counts: { queued: 0, running: 0, done: 0, bad: 0 },
   machines: [
-    { id: 'GT14', online: true, caps: { os: 'Windows', cores: 8, alias: 'GT14 工作机' }, current: '' },
+    { id: 'GT14', online: true, caps: { os: 'Windows', cores: 8, alias: 'GT14 工作机', models: [{ id: 'deepseek-flash', provider: 'deepseek-account', location: 'cloud', tags: ['代码审查', '通用对话'], source: 'bench' }] }, current: '' },
     { id: 'MB14', online: false, caps: {}, current: '' },
     { id: 'PC2', online: true, caps: { os: 'Windows' }, current: '' },
     { id: 'host', online: true, caps: {}, current: '' },
@@ -48,6 +48,8 @@ const NODES = { ok: true, nodes: [
     { provider: 'local', id: 'qwen3:8b', name: 'Qwen3 8B' },
   ], defaultModel: { provider: 'deepseek-account', model: 'deepseek-flash' } },
   { nodeId: 'PC2', hostname: 'PC2', online: true, models: [], defaultModel: null },
+  // 原型键节点：summary 必须在 null-proto 表里安全落地，不能碰 Object.prototype。
+  { nodeId: '__proto__', hostname: '__proto__', online: true, models: [{ provider: 'local', id: 'evil' }], defaultModel: { provider: 'local', model: 'evil' } },
 ] }
 function stub(fn) { globalThis.fetch = fn }
 stub(async (url, init) => {
@@ -237,7 +239,18 @@ if (process.platform === 'win32') {
   assert.equal(a2j.ok, true)
   assert.ok(a2j.caps && a2j.caps.identity && a2j.caps.identity.cpu, '探测结果应含 cpu')
 }
+// A3：summary 必须把 caps 的 location/tags 并进 nodeModels（先于 restore，仍走 stub）
+const sum = await callRoute('/api/board/ui/summary', {}, 'GET')
+assert.equal(sum.status, 200, 'summary 必须 200：' + sum.body)
+const sumj = JSON.parse(sum.body)
+assert.equal(sumj.ok, true, 'summary 应 ok：' + JSON.stringify(sumj).slice(0, 300))
+const gtNM = (sumj.nodeModels && sumj.nodeModels['gt14']) || {}
+const ds = (gtNM.models || []).find((m) => m.model === 'deepseek-flash') || {}
+assert.equal(ds.location, 'cloud', 'nodeModels 应合并 caps.location：' + JSON.stringify(ds) + ' nm=' + JSON.stringify(gtNM))
+assert.ok(Array.isArray(ds.tags) && ds.tags.indexOf('代码审查') >= 0, 'nodeModels 应合并 caps.tags：' + JSON.stringify(ds))
+assert.equal(Object.prototype.defaultModel, undefined, 'nodeModels 不得被 __proto__ 节点污染')
+assert.ok(Object.keys(sumj.nodeModels || {}).indexOf('__proto__') >= 0, '原型键应作为普通 own 键存在')
 dispose()
 globalThis.fetch = realFetch
 fs.rmSync(root, { recursive: true, force: true })
-console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A2)')
+console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A3)')
