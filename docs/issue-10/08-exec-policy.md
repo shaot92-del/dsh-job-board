@@ -1236,3 +1236,28 @@ v2.4.2 推送后补做安全审计（只读 `b2a4a67..045dafa`）：**PASS WITH 
 ### 37.3 记录但未做
 - `-ExecutionPolicy Bypass`：GPO 强制 AllSigned 时行为需目标机实测；未在本轮改。
 - caps 单字段长度上限、`/assess` 的 GET 门（既存）、`_runtime.log` 轮转、模型 provider 自报（若将来按 location 计费需服务端事实源）。
+
+## §38 v2.5.0 能力路由第一版（2026-11-14）
+
+### 38.1 改了什么
+- 工作大类目录 8 类（`lib/index.js` 的 `WORKLOAD_CATALOG`），首版 open 三项视频工作。
+- `scripts/probe-workload.ps1`：固定小样本探测，输出 `{id,unit,value,confidence:measured,workload,measuredAt}`；只读、只写 %TEMP%、不安装不提权。
+- 路由：`GET /api/board/ui/workload-catalog`、`POST /api/board/ui/workload-probe`（强制 POST、只测本机、单飞、240s 超时）；结果以旧卡为底合并进 `workloads[]` 后 POST `/api/caps`。
+- caps `schema: 2.1`；`caps-apply` 接受并清洗 `workloads[]`，与旧卡合并（同 id 覆盖）。
+- `board_dispatch` 加 `taskKind` / `size`：有实测能力时按 `ETA = size/value + 8s` 选机；≤15% 内不换机、取更闲；计算时间（扣 8s 开销）<2s 时不跨机；无实测回退最闲。
+- 面板顶栏新增「能力探测」独立入口（与机器卡能力卡配置分开），勾选类别、顺序跑、显示每项结果；只测本机。
+
+### 38.2 边界
+- 探测样本是合成的，绝对值不能直接当生产 ETA；首版只用于横向比较，真实历史校准放 v2.5.2。
+- 只测运行插件的主机；远程探测（在 GT14/PC2 上跑）需要副机也装 2.5.0，放 v2.5.1。
+- 探测不发版、不改系统、不提权；失败只影响该项。
+- 读不到旧卡（板子超时/卡不在快照里）时：探测回 503 不写；面板保存会显式让 `snapshot` 失败（不再把 `prevKnown` 当 true），只有用户本次显式提交 models/workloads 时才带这两个键，避免浅合并用空数组清空已有实测（A6 回归）。
+
+### 38.3 测试
+plugcheck `18/22`、ui-guard `21/21`、reload A/B/C、model-pick `M1–M11 + R1–R4 + A1–A6`、dispatch `88/88`、board smoke `48`、acceptance `10+1`、state/config/solo/bootstrap/shell 全绿。
+
+### 38.4 发布门复审后的补丁（安全审计）
+- 探测路由改用 `spawn` + 240s 超时 `taskkill /F /T` 杀进程树，避免只杀 pwsh 留下 ffmpeg 孤儿；脚本启动时清 `%TEMP%/dsh-probe-*` 超过 2 小时的残留。
+- 探测写卡**不发 `models`**（板子浅合并会保留旧模型清单），只写 `workloads`；仍然过 **7000 字节**预算，超预算回 413，不再跑完 240s 才发现板子 413。
+- `pwsh` 用绝对路径（`C:\Program Files\PowerShell\7\pwsh.exe`，找不到才回退 PATH），cwd 固定为包目录，降低 cwd 同名 exe 劫持面。
+- 读侧 `etaOf` 只接受有限正数（≤1e6）。

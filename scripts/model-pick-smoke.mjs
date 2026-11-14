@@ -35,13 +35,14 @@ const BOARD = {
   ok: true, updatedAt: Math.floor(Date.now() / 1000), updatedAgeSec: 1,
   counts: { queued: 0, running: 0, done: 0, bad: 0 },
   machines: [
-    { id: 'GT14', online: true, caps: { os: 'Windows', cores: 8, alias: 'GT14 工作机', models: [{ id: 'deepseek-flash', provider: 'deepseek-account', location: 'cloud', tags: ['代码审查', '通用对话'], source: 'bench' }] }, current: '' },
+    { id: 'GT14', online: true, caps: { os: 'Windows', cores: 8, alias: 'GT14 工作机', models: [{ id: 'deepseek-flash', provider: 'deepseek-account', location: 'cloud', tags: ['代码审查', '通用对话'], source: 'bench' }], workloads: [{ id: 'video.interp', unit: 'fps', value: 20, samples: 1, confidence: 'measured', workload: { width: 1920 } }, { id: 'video.transcode', unit: 'fps', value: 300, samples: 1, confidence: 'measured' }] }, current: '' },
     { id: 'MB14', online: false, caps: {}, current: '' },
-    { id: 'PC2', online: true, caps: { os: 'Windows' }, current: '' },
+    { id: 'PC2', online: true, caps: { os: 'Windows', workloads: [{ id: 'video.interp', unit: 'fps', value: 50, samples: 1, confidence: 'measured' }] }, current: '' },
     { id: 'host', online: true, caps: {}, current: '' },
   ],
   tasks: [], events: [],
 }
+let BOARD_FAIL = false
 const NODES = { ok: true, nodes: [
   { nodeId: 'GT14', hostname: 'GT14', online: true, models: [
     { provider: 'deepseek-account', id: 'deepseek-flash', name: 'Flash' },
@@ -56,10 +57,15 @@ stub(async (url, init) => {
   const u = String(url)
   if (process.env.MP_DEBUG) console.error('FETCH', u)
   if (u.includes('/api/remote-agent/ui/nodes')) return reply(NODES)
-  if (u.includes('/api/caps')) { capped = JSON.parse(String(init.body)); return reply({ ok: true }) }
+  if (u.includes('/api/caps')) {
+    capped = JSON.parse(String(init.body))
+    const mm = BOARD.machines.find((m) => m.id === capped.machine)
+    if (mm) mm.caps = Object.assign({}, mm.caps || {}, capped.caps)
+    return reply({ ok: true })
+  }
   if (u.includes('/api/create')) { created = JSON.parse(String(init.body)); return reply({ ok: true }) }
   if (u.includes('/api/attach')) { attached = JSON.parse(String(init.body)); return reply({ ok: true }) }
-  if (u.includes('/api/board')) return reply(BOARD)
+  if (u.includes('/api/board')) { if (BOARD_FAIL) throw new Error('timeout'); return reply(BOARD) }
   return reply({ ok: true })
 })
 
@@ -227,10 +233,58 @@ assert.equal(a1.status, 200, 'caps-apply 应 200：' + a1.body)
 assert.equal(a1j.ok, true)
 assert.ok(capped && capped.machine === 'host', '能力卡必须用本机身份写到板子，忽略 body.machine')
 assert.equal(capped.caps.identity.machine, 'host', 'caps.identity.machine 也要覆盖成本机身份')
-assert.equal(capped.caps.schema, 2)
+assert.equal(capped.caps.schema, 2.1)
 assert.equal(capped.caps.roles[0].id, 'primary')
 assert.equal(capped.caps.allowUnverifiedHighRisk, true)
 assert.equal(capped.caps.models.length, 1, '模型应清洗后透传')
+
+capped = null
+const aw = await callRoute('/api/board/ui/caps-apply', {
+  caps: { identity: {}, workloads: [{ id: 'video.interp', unit: 'fps', value: 33.3, samples: 1, confidence: 'measured', workload: { width: 1920 }, measuredAt: new Date().toISOString() }] },
+  role: 'primary',
+})
+const awj = JSON.parse(aw.body)
+assert.equal(aw.status, 200, '带 workloads 的 caps-apply 应 200：' + aw.body)
+assert.equal(awj.workloads, 1, 'workloads 数量应回传')
+assert.equal(capped && capped.caps.schema, 2.1, 'schema 应为 2.1')
+assert.equal(capped && capped.caps.workloads && capped.caps.workloads[0] && capped.caps.workloads[0].id, 'video.interp')
+
+// A6：板子读失败时，面板保存不得发出 models/workloads 键（否则空数组会整体覆盖该机实测）。
+BOARD_FAIL = true
+capped = null
+const a6 = await callRoute('/api/board/ui/caps-apply', { caps: { identity: {} }, role: 'secondary' })
+BOARD_FAIL = false
+const a6j = JSON.parse(a6.body)
+assert.equal(a6.status, 200, '读卡失败时面板保存应仍可写（只带用户本次改的字段）：' + a6.body)
+assert.ok(capped && capped.caps, '应写回一次 caps')
+assert.equal(Object.prototype.hasOwnProperty.call(capped.caps, 'models'), false, '读卡失败时不得携带 models 键（空数组会清空旧卡）')
+assert.equal(Object.prototype.hasOwnProperty.call(capped.caps, 'workloads'), false, '读卡失败时不得携带 workloads 键（空数组会清空实测）')
+for (const k of ['gpu', 'tools', 'limits', 'gaps', 'detectedAt', 'identity']) {
+  assert.equal(Object.prototype.hasOwnProperty.call(capped.caps, k), false, '读卡失败时不得携带空 ' + k + ' 键（浅合并会清空旧卡）')
+}
+
+const cat = await callRoute('/api/board/ui/workload-catalog', {}, 'GET')
+const catj = JSON.parse(cat.body)
+assert.equal(cat.status, 200, 'workload-catalog 应 200：' + cat.body)
+assert.ok(Array.isArray(catj.catalog) && catj.catalog.some((w) => w.id === 'video.interp' && w.enabled), '目录应含已开放的 video.interp')
+
+const eta = await tools.get('board_dispatch').execute({ goal: 'eta test', taskKind: 'interp', size: 480, dryRun: true })
+assert.equal(eta.ok, true, 'ETA dryRun 应 ok：' + JSON.stringify(eta).slice(0, 300))
+assert.equal(eta.machine, 'PC2', 'ETA 应选更快的 PC2（480/50+8≈17.6s vs GT14 32s），实际 ' + eta.machine + ' / ' + eta.reason)
+assert.equal(eta.workload, 'video.interp')
+assert.ok(eta.etaSeconds > 15 && eta.etaSeconds < 20, 'ETA 应在 17.6s 左右，实际 ' + eta.etaSeconds)
+
+if (process.platform === 'win32') {
+  capped = null
+  const wp = await callRoute('/api/board/ui/workload-probe', { workload: 'video.transcode' })
+  const wpj = JSON.parse(wp.body)
+  assert.equal(wp.status, 200, 'workload-probe(video.transcode) 应 200：' + wp.body)
+  assert.equal(wpj.ok, true)
+  assert.ok(wpj.workload && wpj.workload.value > 0, '探测应返回正数吞吐')
+  assert.equal(wpj.workload.confidence, 'measured')
+  assert.ok(capped && capped.caps.workloads && capped.caps.workloads.some((w) => w.id === 'video.transcode'), '探测结果应写进能力卡')
+  assert.ok(capped.caps.workloads.some((w) => w.id === 'video.interp'), '重测/新增不能丢掉已有的 video.interp')
+}
 
 if (process.platform === 'win32') {
   const a2 = await callRoute('/api/board/ui/caps-probe', {})
@@ -253,4 +307,4 @@ assert.ok(Object.keys(sumj.nodeModels || {}).indexOf('__proto__') >= 0, '原型�
 dispose()
 globalThis.fetch = realFetch
 fs.rmSync(root, { recursive: true, force: true })
-console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A3)')
+console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A6)')

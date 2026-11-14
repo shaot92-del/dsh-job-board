@@ -142,6 +142,13 @@ r = await call('/api/board/ui/alias', { method: 'POST', headers: { ...base, 'x-d
 check('alias 超长拒绝', r.status === 400, 'status=' + r.status)
 
 // v2.4.0：动作型路由 caps-probe 必须只认 POST；GET 不能触发本机 pwsh。
+// v2.5.0：工作大类探测同样是动作路由，GET 不能触发；目录只读。
+r = await call('/api/board/ui/workload-probe', { headers: { ...base, 'x-dsh-team-ui': '1' } })
+check('workload-probe 拒绝 GET', r.status === 405, 'status=' + r.status)
+r = await call('/api/board/ui/workload-probe', { method: 'POST', headers: { ...base, host: 'evil.example', origin: 'http://evil.example', 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: JSON.stringify({ workload: 'video.transcode' }) })
+check('workload-probe 外部 Host 拒绝', r.status === 403, 'status=' + r.status + ' body=' + r.body.slice(0, 80))
+r = await call('/api/board/ui/workload-catalog', { headers: { ...base } })
+check('workload-catalog 回环可读', r.status === 200 && /video\.transcode/.test(r.body), 'status=' + r.status)
 r = await call('/api/board/ui/caps-probe', { headers: { ...base, 'x-dsh-team-ui': '1' } })
 check('caps-probe 拒绝 GET', r.status === 405, 'status=' + r.status)
 r = await call('/api/board/ui/caps-probe', { method: 'POST', headers: { ...base, host: 'evil.example', origin: 'http://evil.example', 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: '{}' })

@@ -206,6 +206,8 @@ const needRoutes = [
   '/api/board/ui/doctor', // v1.4.0：配置/板子/hub/worker/调度器自检
   '/api/board/ui/caps-probe', // v2.4.0：本机能力只读探测
   '/api/board/ui/caps-apply', // v2.4.0：确认后写能力卡
+  '/api/board/ui/workload-catalog', // v2.5.0：工作大类目录
+  '/api/board/ui/workload-probe', // v2.5.0：单项能力探测
 ]
 const missRoutes = needRoutes.filter((r) => !routes.includes(r))
 assert.deepEqual(missRoutes, [], `缺少路由: ${missRoutes.join(', ')}`)

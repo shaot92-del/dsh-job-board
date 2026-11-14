@@ -1,5 +1,34 @@
 # 变更日志
 
+## v2.5.0 — 2026-11-14
+
+能力路由第一版：把「哪台机器强」换成「这个任务预计多久跑完」。
+
+### 1. 工作大类目录（8 类，先开 3 类）
+- 目录：视频转码、视频补帧、合成渲染、图像生成、语音合成、文本/代码对话、视觉理解、数据搬运。
+- 首版只开放 `video.transcode` / `video.interp` / `video.render` 三项探测；其余标注「v2.5.1 接入」。
+
+### 2. 能力探测（独立入口，只测本机）
+- 顶栏新增「能力探测」，与机器卡的能力卡配置分开。
+- 每类跑固定小样本（转码 10s、补帧 2s、渲染 240 帧），结果 `confidence=measured`，写入本机能力卡 `workloads[]`。
+- 实测耗时（Host，RTX 3070 Ti）：转码约 2s、渲染约 1s、补帧约 20s（生产口径 4.8 fps）；首版无取消，窗口可关闭但探测会跑完。
+
+### 3. 数据与路由
+- caps 升到 `schema: 2.1`，新增 `workloads[]`（id/unit/value/samples/confidence/workload/measuredAt/benchVersion）。
+- `board_dispatch` 新增 `taskKind` 与 `size`：有实测能力时按 `ETA = size/value + 8s` 选机，15% 内不换机、取更闲；无实测回退「最闲」。
+- 回执带 `workload`、`size`、`etaSeconds`，便于核对。
+
+### 4. 测试
+- plugcheck `tools=18 routes=22`；ui-guard 21/21；reload A/B/C；model-pick M1–M11 + R1–R4 + A1–A6（含 workloads 保存、ETA 选机、真实探测写卡、读卡失败不覆盖旧卡）。
+- 全量回归见 docs §38。
+
+### 已知限制
+- 探测值来自合成样本，用于**横向比较**；绝对 ETA 会在有真实任务历史后校准（v2.5.2）。
+- 只测运行插件的那台机器；远程机器探测放 v2.5.1。
+- 探测脚本仍走 PATH 的 pwsh，带 `-ExecutionPolicy Bypass`（与 caps-probe 相同，非提权面）。
+- 读旧卡失败时不写空值：探测直接 503；面板保存只有在用户本次显式提交 models/workloads 时才带这两个键，读卡失败时不会用空数组覆盖旧卡（A6 回归）。
+- `taskKind` 的 ≤15% 容差与「计算时间 <2s 不跨机」已实现；<2s 阈值按扣除 8s 固定开销后的计算时间判断。15% 分支目前没有自动化用例（ETA 最小者胜已覆盖），v2.5.1 补。
+
 ## v2.4.3 — 2026-11-13
 
 安全复审（v2.4.2）收口：无 P0/P1，修复 1 个 P2 与若干 P3。
