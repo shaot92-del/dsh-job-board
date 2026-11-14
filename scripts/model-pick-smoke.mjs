@@ -241,7 +241,7 @@ assert.equal(capped.caps.models.length, 1, '模型应清洗后透传')
 
 capped = null
 const aw = await callRoute('/api/board/ui/caps-apply', {
-  caps: { identity: {}, workloads: [{ id: 'video.interp', unit: 'fps', value: 33.3, samples: 1, confidence: 'measured', workload: { width: 1920 }, measuredAt: new Date().toISOString() }] },
+  caps: { identity: {}, workloads: [{ id: 'video.interp', unit: 'fps', value: 4.8, samples: 1, confidence: 'measured', workload: { width: 1920, streams: 6 }, aggregate: 12.1, perStream: 2.0, maxStreams: 6, measuredAt: new Date().toISOString() }] },
   role: 'primary',
 })
 const awj = JSON.parse(aw.body)
@@ -249,6 +249,9 @@ assert.equal(aw.status, 200, '带 workloads 的 caps-apply 应 200：' + aw.body
 assert.equal(awj.workloads, 1, 'workloads 数量应回传')
 assert.equal(capped && capped.caps.schema, 2.1, 'schema 应为 2.1')
 assert.equal(capped && capped.caps.workloads && capped.caps.workloads[0] && capped.caps.workloads[0].id, 'video.interp')
+assert.equal(capped.caps.workloads[0].aggregate, 12.1, '并发合计吞吐应保留')
+assert.equal(capped.caps.workloads[0].perStream, 2, '每流吞吐应保留')
+assert.equal(capped.caps.workloads[0].maxStreams, 6, '最大并发应保留')
 
 // A6：板子读失败时，面板保存不得发出 models/workloads 键（否则空数组会整体覆盖该机实测）。
 BOARD_FAIL = true
@@ -295,6 +298,17 @@ if (process.platform === 'win32') {
   }
 }
 
+if (process.platform === 'win32' && spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0) {
+  // A7：补帧并发采样（v2.5.2）。单流快不代表 6 路合计也快，ETA 要按合计估批处理。
+  capped = null
+  const wi = await callRoute('/api/board/ui/workload-probe', { workload: 'video.interp' })
+  const wij = JSON.parse(wi.body)
+  assert.equal(wi.status, 200, 'interp 探测应 200：' + wi.body)
+  assert.ok(wij.workload.aggregate > wij.workload.value, '6 路合计吞吐应大于单流：' + wi.body)
+  assert.equal(wij.workload.maxStreams, 6, 'maxStreams 应为 6')
+  console.log(' · A7 并发采样：单流 ' + wij.workload.value + ' fps，6 路合计 ' + wij.workload.aggregate + ' fps')
+}
+
 if (process.platform === 'win32') {
   const a2 = await callRoute('/api/board/ui/caps-probe', {})
   const a2j = JSON.parse(a2.body)
@@ -316,4 +330,4 @@ assert.ok(Object.keys(sumj.nodeModels || {}).indexOf('__proto__') >= 0, '原型�
 dispose()
 globalThis.fetch = realFetch
 fs.rmSync(root, { recursive: true, force: true })
-console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A6)')
+console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A7)')

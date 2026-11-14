@@ -38,6 +38,20 @@ function Invoke-FFmpeg([string]$ff, [string[]]$argv) {
   return [pscustomobject]@{ code = $p.ExitCode; seconds = [math]::Round($sw.Elapsed.TotalSeconds, 3) }
 }
 
+function Invoke-FFmpegParallel([string]$ff, [object[]]$jobs) {
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  $procs = @()
+  for ($i = 0; $i -lt $jobs.Count; $i++) {
+    $procs += Start-Process -FilePath $ff -ArgumentList $jobs[$i] -NoNewWindow -PassThru `
+      -RedirectStandardError (Join-Path $tmp ('par' + $i + '.err.txt')) `
+      -RedirectStandardOutput (Join-Path $tmp ('par' + $i + '.out.txt'))
+  }
+  $procs | Wait-Process
+  $sw.Stop()
+  $codes = @($procs | ForEach-Object { $_.ExitCode })
+  return [pscustomobject]@{ seconds = [math]::Round($sw.Elapsed.TotalSeconds, 3); codes = $codes }
+}
+
 function Has-Encoder([string]$ff, [string]$name) {
   try {
     $enc = & $ff -hide_banner -encoders 2>$null | Out-String
@@ -99,9 +113,32 @@ try {
         '-vf', 'minterpolate=fps=48', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', (Join-Path $tmp 'out.mp4'))
       if ($r.code -ne 0) { throw ('补帧失败（exit ' + $r.code + '）') }
       $framesOut = 96
-      $result.workload = @{ width = 1920; height = 1080; fpsIn = 30; fpsOut = 48; secondsIn = 2 }
-      $result.seconds = $r.seconds
-      $result.value = [math]::Round($framesOut / [math]::Max($r.seconds, 0.001), 2)
+      $single = [math]::Round($framesOut / [math]::Max($r.seconds, 0.001), 2)
+
+      # 并发采样：6 路 × 1s（每路 48 帧输出）。补帧受内存带宽限制，单流快不等于 6 路合计也快，
+      # 报告实测 6 路合计 ~10fps、8 路几乎不涨；ETA 要按合计吞吐估批处理。
+      $src1 = Join-Path $tmp 'src1.mp4'
+      & $ff -y -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=1920x1080:rate=30:duration=1' `
+        -c:v libx264 -preset ultrafast -crf 26 $src1 2>$null
+      $streams = 6
+      $jobs = @()
+      for ($i = 0; $i -lt $streams; $i++) {
+        $jobs += ,@('-y', '-hide_banner', '-loglevel', 'error', '-i', $src1,
+          '-vf', 'minterpolate=fps=48', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
+          (Join-Path $tmp ('par' + $i + '.mp4')))
+      }
+      $rp = Invoke-FFmpegParallel $ff $jobs
+      $bad = @($rp.codes | Where-Object { $_ -ne 0 })
+      if ($bad.Count -gt 0) { throw ('补帧并发失败（exit ' + ($bad -join ',') + '）') }
+      $agg = [math]::Round(($streams * 48) / [math]::Max($rp.seconds, 0.001), 2)
+      $per = [math]::Round(48 / [math]::Max($rp.seconds, 0.001), 2)
+
+      $result.workload = @{ width = 1920; height = 1080; fpsIn = 30; fpsOut = 48; secondsIn = 2; streams = $streams }
+      $result.seconds = [math]::Round($r.seconds + $rp.seconds, 3)
+      $result.value = $single
+      $result.aggregate = $agg
+      $result.perStream = $per
+      $result.maxStreams = $streams
     }
     'video.render' {
       # 240 帧 1080p 滤镜合成（scale+drawbox+overlay），作为无头渲染的代理指标。

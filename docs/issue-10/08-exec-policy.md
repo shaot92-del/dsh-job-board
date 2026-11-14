@@ -1260,6 +1260,10 @@ plugcheck `18/22`、ui-guard `21/21`、reload A/B/C、model-pick `M1–M11 + R1�
 
 GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 明确缺 ffmpeg」，本地/有 ffmpeg 的机器仍做实测（v2.5.1）。
 
+### 38.3c 补帧并发采样（v2.5.2）
+
+补帧受内存带宽限制：单流 4.65 fps，6 路合计 12.13 fps（每流 2.02），8 路几乎不涨（报告实测 9.25 vs 9.45）。因此 workload 存 `value`（单流，单个任务用）、`aggregate`（6 路合计，批处理估 wall 用）、`perStream`、`maxStreams`。多机拆分仍按 `wall = max(各机 wall)`，留 v2.5.3。
+
 ### 38.4 发布门复审后的补丁（安全审计）
 - 探测路由改用 `spawn` + 240s 超时 `taskkill /F /T` 杀进程树，避免只杀 pwsh 留下 ffmpeg 孤儿；脚本启动时清 `%TEMP%/dsh-probe-*` 超过 2 小时的残留。
 - 探测写卡**不发 `models`**（板子浅合并会保留旧模型清单），只写 `workloads`；仍然过 **7000 字节**预算，超预算回 413，不再跑完 240s 才发现板子 413。

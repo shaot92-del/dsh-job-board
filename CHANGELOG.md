@@ -1,5 +1,12 @@
 # 变更日志
 
+## v2.5.2 — 2026-11-14
+
+- 补帧探测增加**并发采样**：单流 2s（96 帧）+ 6 路 × 1s（288 帧）并行，分别记录单流 `value`、`aggregate`（6 路合计）、`perStream`、`maxStreams`。实测 Host 单流 4.65 fps、6 路合计 12.13 fps——单流快不代表并行也快，批处理 ETA 必须按合计吞吐估。
+- caps 的 workload 条目新增 `aggregate` / `perStream` / `maxStreams`（可选，向后兼容）；`cleanWorkload` 校验范围。
+- 能力探测弹窗显示「单流 X fps · 6 路 Y fps」。
+- 说明：多机拆分调度（按 wall 取 max）仍在 v2.5.3；本版先把「并发曲线」采集下来，避免以后用单流值估批处理。
+
 ## v2.5.1 — 2026-11-14
 
 - CI 修复：`scripts/model-pick-smoke.mjs` 的 A5 真实探测改为环境感知。GitHub `windows-latest` 没有 ffmpeg，原断言硬要求 200 导致 windows CI 红；现在无 ffmpeg 时断言「返回 500 且错误点明缺 ffmpeg」，有 ffmpeg 时仍做完整实测。产品行为不变。
