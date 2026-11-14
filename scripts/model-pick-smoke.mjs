@@ -12,6 +12,7 @@
  */
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -276,14 +277,22 @@ assert.ok(eta.etaSeconds > 15 && eta.etaSeconds < 20, 'ETA 应在 17.6s 左右�
 
 if (process.platform === 'win32') {
   capped = null
+  const hasFfmpeg = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0
   const wp = await callRoute('/api/board/ui/workload-probe', { workload: 'video.transcode' })
   const wpj = JSON.parse(wp.body)
-  assert.equal(wp.status, 200, 'workload-probe(video.transcode) 应 200：' + wp.body)
-  assert.equal(wpj.ok, true)
-  assert.ok(wpj.workload && wpj.workload.value > 0, '探测应返回正数吞吐')
-  assert.equal(wpj.workload.confidence, 'measured')
-  assert.ok(capped && capped.caps.workloads && capped.caps.workloads.some((w) => w.id === 'video.transcode'), '探测结果应写进能力卡')
-  assert.ok(capped.caps.workloads.some((w) => w.id === 'video.interp'), '重测/新增不能丢掉已有的 video.interp')
+  if (!hasFfmpeg) {
+    // CI runner（windows-latest）没有 ffmpeg：探测必须给出明确的缺失错误，而不是静默成功/覆盖旧卡。
+    assert.equal(wp.status, 500, '无 ffmpeg 时 workload-probe 应 500：' + wp.body)
+    assert.match(String(wpj.error || ''), /ffmpeg/i, '错误应点明缺 ffmpeg：' + wp.body)
+    console.log(' · A5 跳过实测（本机没有 ffmpeg）：已确认返回明确的缺失错误')
+  } else {
+    assert.equal(wp.status, 200, 'workload-probe(video.transcode) 应 200：' + wp.body)
+    assert.equal(wpj.ok, true)
+    assert.ok(wpj.workload && wpj.workload.value > 0, '探测应返回正数吞吐')
+    assert.equal(wpj.workload.confidence, 'measured')
+    assert.ok(capped && capped.caps.workloads && capped.caps.workloads.some((w) => w.id === 'video.transcode'), '探测结果应写进能力卡')
+    assert.ok(capped.caps.workloads.some((w) => w.id === 'video.interp'), '重测/新增不能丢掉已有的 video.interp')
+  }
 }
 
 if (process.platform === 'win32') {

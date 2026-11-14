@@ -1,5 +1,9 @@
 # 变更日志
 
+## v2.5.1 — 2026-11-14
+
+- CI 修复：`scripts/model-pick-smoke.mjs` 的 A5 真实探测改为环境感知。GitHub `windows-latest` 没有 ffmpeg，原断言硬要求 200 导致 windows CI 红；现在无 ffmpeg 时断言「返回 500 且错误点明缺 ffmpeg」，有 ffmpeg 时仍做完整实测。产品行为不变。
+
 ## v2.5.0 — 2026-11-14
 
 能力路由第一版：把「哪台机器强」换成「这个任务预计多久跑完」。

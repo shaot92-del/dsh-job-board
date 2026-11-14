@@ -1256,6 +1256,10 @@ v2.4.2 推送后补做安全审计（只读 `b2a4a67..045dafa`）：**PASS WITH 
 ### 38.3 测试
 plugcheck `18/22`、ui-guard `21/21`、reload A/B/C、model-pick `M1–M11 + R1–R4 + A1–A6`、dispatch `88/88`、board smoke `48`、acceptance `10+1`、state/config/solo/bootstrap/shell 全绿。
 
+### 38.3b CI 环境差异
+
+GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 明确缺 ffmpeg」，本地/有 ffmpeg 的机器仍做实测（v2.5.1）。
+
 ### 38.4 发布门复审后的补丁（安全审计）
 - 探测路由改用 `spawn` + 240s 超时 `taskkill /F /T` 杀进程树，避免只杀 pwsh 留下 ffmpeg 孤儿；脚本启动时清 `%TEMP%/dsh-probe-*` 超过 2 小时的残留。
 - 探测写卡**不发 `models`**（板子浅合并会保留旧模型清单），只写 `workloads`；仍然过 **7000 字节**预算，超预算回 413，不再跑完 240s 才发现板子 413。
