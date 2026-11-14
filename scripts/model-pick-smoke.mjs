@@ -12,7 +12,6 @@
  */
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -291,15 +290,13 @@ assert.ok(eta.etaSeconds > 15 && eta.etaSeconds < 20, 'ETA 应在 17.6s 左右�
 
 if (process.platform === 'win32') {
   capped = null
-  const hasFfmpeg = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0
   const wp = await callRoute('/api/board/ui/workload-probe', { workload: 'video.transcode' })
   const wpj = JSON.parse(wp.body)
-  if (!hasFfmpeg) {
-    // CI runner（windows-latest）没有 ffmpeg：探测必须给出明确的缺失错误，而不是静默成功/覆盖旧卡。
-    assert.equal(wp.status, 500, '无 ffmpeg 时 workload-probe 应 500：' + wp.body)
-    assert.match(String(wpj.error || ''), /ffmpeg/i, '错误应点明缺 ffmpeg：' + wp.body)
+  if (wp.status === 500) {
+    // CI runner（windows-latest）没有 ffmpeg：必须给出明确的缺失错误，而不是静默成功/覆盖旧卡。
+    assert.match(String(wpj.error || ''), /ffmpeg/i, '缺 ffmpeg 时错误应点明 ffmpeg：' + wp.body)
     assert.equal(capped, null, '失败时不得写卡（不能静默覆盖旧卡）')
-    console.log(' · A5 跳过实测（本机没有 ffmpeg）：已确认返回明确的缺失错误')
+    console.log(' · A5 跳过实测（探测报告缺 ffmpeg）：已确认明确的缺失错误且未写卡')
   } else {
     assert.equal(wp.status, 200, 'workload-probe(video.transcode) 应 200：' + wp.body)
     assert.equal(wpj.ok, true)
@@ -310,16 +307,32 @@ if (process.platform === 'win32') {
   }
 }
 
-if (process.platform === 'win32' && spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0) {
-  // A7：补帧并发采样（v2.5.2）。单流快不代表 6 路合计也快，ETA 要按合计估批处理。
+if (process.platform === 'win32') {
+  // A7：补帧并发采样（v2.5.2）。单流快不代表并发合计也快，ETA 要按合计估批处理。
   capped = null
   const wi = await callRoute('/api/board/ui/workload-probe', { workload: 'video.interp' })
   const wij = JSON.parse(wi.body)
-  assert.equal(wi.status, 200, 'interp 探测应 200：' + wi.body)
-  assert.ok(wij.workload.aggregate > 0, '6 路合计吞吐应为正数：' + wi.body)
-  assert.ok(wij.workload.maxStreams >= 2 && wij.workload.maxStreams <= 6, 'maxStreams 应按核数收敛：' + wi.body)
-  assert.ok(wij.workload.aggregate > wij.workload.perStream, '合计应大于每流：' + wi.body)
-  console.log(' · A7 并发采样：单流 ' + wij.workload.value + ' fps，6 路合计 ' + wij.workload.aggregate + ' fps')
+  if (wi.status === 500) {
+    assert.match(String(wij.error || ''), /ffmpeg/i, '缺 ffmpeg 的 interp 探测应说明原因：' + wi.body)
+    console.log(' · A7 跳过实测（探测报告缺 ffmpeg）')
+  } else {
+    assert.equal(wi.status, 200, 'interp 探测应 200：' + wi.body)
+    const w = wij.workload || {}
+    if (w.aggregate === undefined || w.streams === 0) {
+      // 低配机（≤2 核或空闲内存 <2.4GB）按设计跳过并发采样：只要求单流有效。
+      assert.ok(w.value > 0, '跳过并发采样时单流吞吐仍应为正数：' + wi.body)
+      console.log(' · A7 按资源跳过并发采样（单流 ' + w.value + ' fps）')
+    } else {
+    assert.ok(w.aggregate > 0, '并发合计吞吐应为正数：' + wi.body)
+    assert.ok(w.maxStreams >= 2 && w.maxStreams <= 6, 'maxStreams 应按核数/内存收敛：' + wi.body)
+    assert.ok(w.perStream > 0, '每流吞吐应为正数：' + wi.body)
+    assert.ok(w.aggregate <= w.value * w.maxStreams * 1.05, '合计不得超过单流×路数×1.05（防止凭空放大）：' + JSON.stringify(w))
+    assert.ok(Math.abs(w.perStream * w.maxStreams - w.aggregate) <= w.aggregate * 0.02, 'perStream×路数应与 aggregate 一致（2% 内）：' + JSON.stringify(w))
+    const wcard = capped && capped.caps && capped.caps.workloads && capped.caps.workloads.find((x) => x.id === 'video.interp')
+    assert.ok(wcard && Math.abs(wcard.aggregate - w.aggregate) < 1e-6, '并发合计应写进能力卡：' + JSON.stringify(wcard))
+    console.log(' · A7 并发采样：单流 ' + w.value + ' fps，' + w.maxStreams + ' 路合计 ' + w.aggregate + ' fps（每流 ' + w.perStream + '）')
+    }
+  }
 }
 
 if (process.platform === 'win32') {

@@ -1254,7 +1254,7 @@ v2.4.2 推送后补做安全审计（只读 `b2a4a67..045dafa`）：**PASS WITH 
 - 读不到旧卡（板子超时/卡不在快照里）时：探测回 503 不写；面板保存会显式让 `snapshot` 失败（不再把 `prevKnown` 当 true），只有用户本次显式提交 models/workloads 时才带这两个键，避免浅合并用空数组清空已有实测（A6 回归）。
 
 ### 38.3 测试
-plugcheck `18/22`、ui-guard `21/21`、reload A/B/C、model-pick `M1–M11 + R1–R4 + A1–A6`、dispatch `88/88`、board smoke `48`、acceptance `10+1`、state/config/solo/bootstrap/shell 全绿。
+plugcheck `18/22`、ui-guard `21/21`、reload A/B/C、model-pick `M1–M11 + R1–R4 + A1–A8`、dispatch `88/88`、board smoke `48`、acceptance `10+1`、state/config/solo/bootstrap/shell 全绿。
 
 ### 38.3b CI 环境差异
 
@@ -1262,7 +1262,7 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 
 ### 38.3c 补帧并发采样（v2.5.2）
 
-补帧受内存带宽限制：单流约 4.7–5.0 fps，6 路合计约 11.5–12.1 fps（每流约 2），8 路几乎不涨（报告实测 9.25 vs 9.45）。因此 workload 存 `value`（单流，单个任务用）、`aggregate`（合计，批处理估 wall 用）、`perStream`、`maxStreams`。
+补帧受内存带宽限制：本机 Host 单流约 4.7–5.0 fps、6 路合计约 11.5–12.1 fps（每流约 2）；报告里的 PC2 在 6 路时合计 9.45、8 路 9.25（已饱和，继续加路数不再涨）。因此 workload 存 `value`（单流，单个任务用）、`aggregate`（合计，批处理估 wall 用）、`perStream`、`maxStreams`（采样宽度，不是容量上限）。
 - 路数按 `ProcessorCount-1` 收敛到 2–6；并发样本 0.5s；并发段失败只丢并发数据，保留单流值。
 - 写入边界做交叉一致性：`perStream ≤ aggregate ≤ value × maxStreams`（5% 余量），不满足就丢弃并发字段。
 - 多机拆分仍按 `wall = max(各机 wall)`，留 v2.5.3。

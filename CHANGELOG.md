@@ -2,11 +2,20 @@
 
 ## v2.5.2 — 2026-11-14
 
-- 补帧探测增加**并发采样**：单流 2s（96 帧）+ 6 路 × 1s（288 帧）并行，分别记录单流 `value`、`aggregate`（6 路合计）、`perStream`、`maxStreams`。实测 Host 单流 4.65 fps、6 路合计 12.13 fps——单流快不代表并行也快，批处理 ETA 必须按合计吞吐估。
+- 补帧探测增加**并发采样**：单流 2s（96 帧）+ 2–6 路 × 0.5s（每路 24 帧）并行，分别记录单流 `value`、`aggregate`（并发合计）、`perStream`、`maxStreams`。路数按 CPU 核数与空闲内存收敛，避免 8GB 机器被 6 路 ffmpeg 拖到换页。实测 Host 单流 4.65 fps、6 路合计 12.13 fps——单流快不代表并行也快，批处理 ETA 必须按合计吞吐估。
 - caps 的 workload 条目新增 `aggregate` / `perStream` / `maxStreams`（可选，向后兼容）；`cleanWorkload` 校验范围。
-- 能力探测弹窗显示「单流 X fps · 6 路 Y fps」。
+- 能力探测弹窗显示「单流 X fps · N 路 Y fps」（N 是本次采样宽度，不代表容量上限）。
 - 说明：多机拆分调度（按 wall 取 max）仍在 v2.5.3；本版先把「并发曲线」采集下来，避免以后用单流值估批处理。
-- 复审修复：ffmpeg 启动改用 `ProcessStartInfo.ArgumentList`（路径含空格不再被拆开）；并发段失败只丢并发数据、保留已测单流值；路数按核数收敛（2–6）、并发样本 0.5s；`cleanWorkload` 增加交叉一致性（`perStream ≤ aggregate ≤ value × maxStreams`），不一致的并发字段直接丢弃；`workload.streams` 纳入白名单。
+- 复审修复：ffmpeg 启动改用 `ProcessStartInfo.ArgumentList`（路径含空格不再被拆开）；并发段失败只丢并发数据、保留已测单流值；路数按核数与空闲内存收敛（2–6）、并发样本 0.5s；`cleanWorkload` 增加交叉一致性（`perStream ≤ aggregate ≤ value × maxStreams × 1.05`），不一致的并发字段直接丢弃；`workload.streams` 纳入白名单。
+
+### 已知问题（P2，不阻断）
+- 路数只是按核数与空闲内存的粗估，不在探测前检查本机是否已有任务在跑；低内存机器仍可能感到卡顿。
+- 并发样本只有 0.5s，初始化摊销偏重，`aggregate` 可能低估约 5%。
+- `maxStreams` 是本次采样宽度，不是实测容量上限；按它做批处理拆分前应再加压测。
+- ETA 仍按单流 `value` 估，同机并发跑多个任务时会偏乐观；多机拆分与并发上限留 v2.5.3。
+- CI runner 没有 ffmpeg，A5/A7 在 CI 走「缺 ffmpeg」分支，真实探测只在开发机覆盖。
+- 并发段一旦失败，已启动的 ffmpeg 不会被立刻杀掉（样本 ≤0.5s，最多跑完当前样本）；临时目录靠 2 小时清理。
+- 降级探测（并发段失败或按资源跳过）会用只带单流 `value` 的结果整条替换旧条目，旧卡的 `aggregate/perStream/maxStreams` 会丢失；当前 ETA 只用 `value`，不影响选机，v2.5.3 让 aggregate 参与 ETA 前必须先修（保留旧并发字段或改为不写卡）。
 
 ## v2.5.1 — 2026-11-14
 

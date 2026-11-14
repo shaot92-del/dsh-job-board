@@ -129,8 +129,14 @@ try {
 
       # 并发采样：路数按核数收敛（最多 6），每路 0.5s（24 帧输出）。补帧受内存带宽限制，
       # 单流快不等于并行也快；但并发段失败不能把上面已经测到的单流结果一起丢掉。
-      $streams = [math]::Max(2, [math]::Min(6, ([Environment]::ProcessorCount - 1)))
+      $freeGB = 0
+      try { $freeGB = [math]::Round((Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).FreePhysicalMemory / 1MB, 1) } catch {}
+      $byMem = if ($freeGB -gt 0) { [int][math]::Floor($freeGB / 1.2) } else { 6 }
+      $streams = [math]::Min(6, [math]::Min(([Environment]::ProcessorCount - 1), $byMem))
       $framesPer = 24
+      if ($streams -lt 2) {
+        $result.workload.streams = 0
+      } else {
       try {
         $src1 = Join-Path $tmp 'src1.mp4'
         & $ff -y -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=1920x1080:rate=30:duration=0.5' `
@@ -152,6 +158,7 @@ try {
       } catch {
         # 并发段失败只丢并发数据，单流 value 仍然有效。
         $result.workload.streams = 0
+      }
       }
     }
     'video.render' {
