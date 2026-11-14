@@ -41,7 +41,8 @@ function Get-EventCount {
     [string]$LogName,
     [string[]]$Provider,
     [int[]]$Id,
-    [datetime]$Start
+    [datetime]$Start,
+    [switch]$AllowMissingProvider
   )
   try {
     $filter = @{ LogName = $LogName; StartTime = $Start; Id = $Id }
@@ -50,6 +51,11 @@ function Get-EventCount {
     if ($null -eq $events) { return 0 }
     return @($events).Count
   } catch {
+    $hr = 0
+    try { $hr = [int]$_.Exception.GetBaseException().HResult } catch {}
+    # E_INVALIDARG(0x80070057)：只有确实可能缺失的 provider（无 NVIDIA 卡时的 nvlddmkm）才允许按 0 条算；
+    # channel 不可读由 canary 单独置 readFailed，其它参数级错误仍标读取失败。
+    if ($AllowMissingProvider -and $hr -eq -2147024809) { return 0 }
     $script:readFailed = $true
     return 0
   }
@@ -72,6 +78,17 @@ function Get-GpuInfo {
   return $out
 }
 
+# canary：E_INVALIDARG 既可能是 provider 不存在，也可能是 channel 不可用。
+# 先确认 System/Application 两个日志本身存在、可枚举且未被禁用；任一失败即视为读取失败，避免“全 0 但 measured”。
+foreach ($ch in @('System', 'Application')) {
+  try {
+    $log = Get-WinEvent -ListLog $ch -ErrorAction Stop
+    if ($null -eq $log -or $log.IsEnabled -eq $false) { $script:readFailed = $true }
+  } catch {
+    $script:readFailed = $true
+  }
+}
+
 $now = Get-Date
 $start30 = $now.AddDays(-[Math]::Abs($Days))
 $start7 = $now.AddDays(-7)
@@ -86,7 +103,7 @@ $ev = [ordered]@{
   whea7             = Get-EventCount 'System' @('Microsoft-Windows-WHEA-Logger') @(17, 18, 19, 47) $start7
   tdr               = Get-EventCount 'System' @('Display') @(4101) $start30
   tdr7              = Get-EventCount 'System' @('Display') @(4101) $start7
-  nvlddmkm          = Get-EventCount 'System' @('nvlddmkm') @(13, 14, 153) $start30
+  nvlddmkm          = Get-EventCount 'System' @('nvlddmkm') @(13, 14, 153) $start30 -AllowMissingProvider
   disk              = Get-EventCount 'System' @('disk') @(7, 11, 51) $start30
   ntfs              = Get-EventCount 'System' @('Ntfs') @(55) $start30
   appCrash          = Get-EventCount 'Application' @('Application Error') @(1000) $start30

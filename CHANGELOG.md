@@ -1,5 +1,10 @@
 # 变更日志
 
+## v2.5.5 — 2026-11-14
+
+- 修复稳定性自检在“没有某个事件 provider”的机器上误判读取失败：无 NVIDIA 卡时 `nvlddmkm` 查询会抛 E_INVALIDARG(0x80070057)，整块被标成 readFailed，GT14 因此一直显示「未知」。现在先做 System/Application 通道 canary（存在、可枚举且未禁用），且只有确实可能缺失的 `nvlddmkm` 允许把 E_INVALIDARG 按 0 条处理；通道异常、其它 provider 的参数级错误仍标 readFailed。
+- 验证：GT14 修复后 `level=good`、`readFailed=false`、`confidence=measured`；主机仍为 `watch`（appCrash 228 噪声）、`readFailed=false`。
+
 ## v2.5.4 — 2026-11-14
 
 - 能力探测弹窗补「完成态」：三类探测跑完后明确显示「已完成，结果已写入本机能力卡」，主按钮改为「完成」，并保留「重新探测」；不再让人误以为测试没跑完。
