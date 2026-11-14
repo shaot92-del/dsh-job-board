@@ -1,5 +1,20 @@
 # 变更日志
 
+## v2.5.3 — 2026-11-14
+
+- 稳定性进入能力卡：配置自检时顺带跑一次**只读**的 30 天/7 天事件摘要（Kernel-Power 41、BugCheck、WHEA、TDR、磁盘/文件系统、应用与服务崩溃、热限制），加上 uptime、挂起重启、GPU 温度/驱动；写入 caps 的 `stability` 字段，机器卡显示「稳定性 稳定/注意/风险 · 30天 TDR n · 蓝屏 n · 上次压测 通过/未通过/未压测」。
+- 新增**可选压测**（默认不做）：快速 3 分钟 / 标准 10 分钟 / 深度 60 分钟，跑 1080p NVENC 编码 + 多路补帧，采温度、NVML 降频、窗口内新增 WHEA/TDR/Kernel-Power、吞吐漂移与 CV；结果写 `stability.evidence.lastBurnIn`，可随时取消（服务端杀整棵进程树）。
+- 隐私：只读事件计数与时间，不读正文/进程名/路径/用户名；不采序列号/UUID/MAC；必须用户点击；原始日志不落盘；每机“关掉共享”的开关尚未实现，能力卡目前仍随 caps 上报到板子。
+- 附带 `board_dispatch` 的 exec 目标守卫：goal 含换行、`$`、管道/重定向、cd、powershell/cmd 语法或超过 300 字时给出警告，建议改用「绝对 pwsh + 共享盘脚本」写法（不拦截，只提示）。
+- 附带 `scripts/patch-remote-agent.ps1`：给 dsh-remote-agent 的 PowerShell 解析器补 `%LOCALAPPDATA%\Programs\PowerShell\7\pwsh.exe`（用户级安装不再落到 5.1）。
+- 说明：压测是可选动作，不做也不影响派工；它只证明「这台机器在这段时间里扛住了我们的负载」，不等于长期稳定性认证。
+- 复审修复：事件读取失败不再伪装成 `good/measured`，而是 `unknown + inferred`；压测异常只回稳定错误码，写回前 reason 仍做路径/用户掩码并截断；取消后回 200 `{cancelled:true}`（不再被报成「压测失败」），驱动挂死有 20s 硬兜底。能力卡保存改为**合并**旧卡（事件逐项取最大、上次压测取较新），面板回传探测快照不会抹掉压测证据；环境失败（无 ffmpeg、非 NVENC）只记 `error` 不写「未通过」，编码器自动降级**并让负载轮跟随 libx264**；NVML 降频改查 hw_slowdown/hw_thermal/sw_thermal 并纳入判据；结果区显示具体 `error`（如 encode-failed），不再笼统显示「未通过」。
+
+### 已知问题（P2，不阻断）
+- 事件阈值偏保守：30 天内应用崩溃（Application Error 1000）超过 5 次就报「注意」，桌面机日常噪声可能误报；后续按机器基线调整。
+- 尚未做「重活前强制压测/拒绝」门控；当前只展示，选机仍看能力与负载。
+- 压测占用本机 GPU/CPU，期间不建议再接重活；没有与调度器做自动互斥。
+- CI runner 无 GPU/ffmpeg，压测路由只做 4xx/409 门测试，真实压测只在开发机覆盖。
 ## v2.5.2 — 2026-11-14
 
 - 补帧探测增加**并发采样**：单流 2s（96 帧）+ 2–6 路 × 0.5s（每路 24 帧）并行，分别记录单流 `value`、`aggregate`（并发合计）、`perStream`、`maxStreams`。路数按 CPU 核数与空闲内存收敛，避免 8GB 机器被 6 路 ffmpeg 拖到换页。实测 Host 单流 4.65 fps、6 路合计 12.13 fps——单流快不代表并行也快，批处理 ETA 必须按合计吞吐估。

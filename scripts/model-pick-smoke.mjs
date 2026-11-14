@@ -145,6 +145,11 @@ const ex = await tools.get('board_dispatch').execute({ goal: 'echo hi', machine:
 assert.equal(ex.ok, true, 'exec 模式应建单（不需要模型）')
 assert.equal(created.model, '', 'exec 模式不写 model')
 
+created = null
+const exRisk = await tools.get('board_dispatch').execute({ goal: 'powershell -NoProfile -File x.ps1\n$foo = 1', machine: 'GT14', mode: 'exec' })
+assert.equal(exRisk.ok, true, 'exec 含风险写法仍应建单（只告警不拦截）')
+assert.ok(Array.isArray(exRisk.warnings) && exRisk.warnings.some((w) => String(w).includes('exec goal 含')), 'exec 风险写法要返回 warnings：' + JSON.stringify(exRisk))
+
 // v2.3.0：重派。只复制失败/打回/取消任务的原参数，执行中的一律拒绝。
 BOARD.tasks = [
   { id: 'failed-1', status: 'failed', goal: 'echo fail', title: '失败任务', machine: 'GT14', mode: 'agent', model: 'local/qwen3:8b', workspace: 'C:/w', note: 'boom', artifact: '' },
@@ -227,16 +232,29 @@ const a1 = await callRoute('/api/board/ui/caps-apply', {
   machine: 'evil-machine',
   models: [{ id: 'qwen3:8b', endpoint: 'http://127.0.0.1:8080/v1', location: 'local', ctx: 32768, source: 'guessed' }],
   allowUnverifiedHighRisk: true,
+  stability: { windowDays: 30, level: 'good', confidence: 'measured', events: { tdr: 0, bugcheck: 0 }, evidence: { lastBurnIn: { at: new Date().toISOString(), mode: 'quick', ok: true, maxTempC: 47, driftPct: 0.9, reasons: [] } } },
 })
 const a1j = JSON.parse(a1.body)
 assert.equal(a1.status, 200, 'caps-apply 应 200：' + a1.body)
 assert.equal(a1j.ok, true)
+assert.equal(a1j.stability, true, '应回报稳定性摘要已保存')
+assert.equal(capped && capped.caps.stability && capped.caps.stability.level, 'good', '稳定性等级应写入能力卡')
 assert.ok(capped && capped.machine === 'host', '能力卡必须用本机身份写到板子，忽略 body.machine')
 assert.equal(capped.caps.identity.machine, 'host', 'caps.identity.machine 也要覆盖成本机身份')
 assert.equal(capped.caps.schema, 2.1)
 assert.equal(capped.caps.roles[0].id, 'primary')
 assert.equal(capped.caps.allowUnverifiedHighRisk, true)
 assert.equal(capped.caps.models.length, 1, '模型应清洗后透传')
+// 面板保存回传的是探测快照（无 evidence）；合并时必须保住旧卡的上次压测与历史事件。
+capped = null
+const a1d = await callRoute('/api/board/ui/caps-apply', {
+  caps: { identity: { cpu: 'test-cpu', ramGB: 16 }, gpu: [], tools: {}, models: [], gaps: [], stability: { windowDays: 30, level: 'good', confidence: 'measured', events: { tdr: 0 } } },
+  role: 'primary',
+})
+assert.equal(a1d.status, 200, '二次保存应 200：' + a1d.body)
+assert.ok(capped && capped.caps.stability && capped.caps.stability.evidence && capped.caps.stability.evidence.lastBurnIn, '二次保存不得抹掉上次压测证据')
+assert.equal(capped.caps.stability.evidence.lastBurnIn.mode, 'quick')
+assert.equal(capped.caps.stability.events.bugcheck, 0, '未携带的事件应按旧值保留')
 
 capped = null
 const aw = await callRoute('/api/board/ui/caps-apply', {
@@ -341,6 +359,7 @@ if (process.platform === 'win32') {
   assert.equal(a2.status, 200, 'caps-probe 应 200：' + a2.body)
   assert.equal(a2j.ok, true)
   assert.ok(a2j.caps && a2j.caps.identity && a2j.caps.identity.cpu, '探测结果应含 cpu')
+  assert.ok(a2j.caps.stability && ['good', 'watch', 'risky', 'unknown'].indexOf(a2j.caps.stability.level) >= 0, '探测应附带稳定性等级')
 }
 // A3：summary 必须把 caps 的 location/tags 并进 nodeModels（先于 restore，仍走 stub）
 const sum = await callRoute('/api/board/ui/summary', {}, 'GET')
@@ -353,7 +372,14 @@ assert.equal(ds.location, 'cloud', 'nodeModels 应合并 caps.location：' + JSO
 assert.ok(Array.isArray(ds.tags) && ds.tags.indexOf('代码审查') >= 0, 'nodeModels 应合并 caps.tags：' + JSON.stringify(ds))
 assert.equal(Object.prototype.defaultModel, undefined, 'nodeModels 不得被 __proto__ 节点污染')
 assert.ok(Object.keys(sumj.nodeModels || {}).indexOf('__proto__') >= 0, '原型键应作为普通 own 键存在')
+// S1–S3：压测路由的门（重动作，失败也必须是明确的 4xx/409，而不是 500 或静默建单）。
+const s405 = await callRoute('/api/board/ui/stress-test', {}, 'GET')
+assert.equal(s405.status, 405, 'stress-test 应拒绝 GET：' + s405.body)
+const s400 = await callRoute('/api/board/ui/stress-test', { mode: 'bogus' })
+assert.equal(s400.status, 400, 'stress-test 应拒绝非法 mode：' + s400.body)
+const s409 = await callRoute('/api/board/ui/stress-cancel', {})
+assert.equal(s409.status, 409, '没有压测时 cancel 应 409：' + s409.body)
 dispose()
 globalThis.fetch = realFetch
 fs.rmSync(root, { recursive: true, force: true })
-console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A8)')
+console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A9, S1-S3)')

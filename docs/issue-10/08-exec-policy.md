@@ -1272,3 +1272,45 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 - 探测写卡**不发 `models`**（板子浅合并会保留旧模型清单），只写 `workloads`；仍然过 **7000 字节**预算，超预算回 413，不再跑完 240s 才发现板子 413。
 - `pwsh` 用绝对路径（`C:\Program Files\PowerShell\7\pwsh.exe`，找不到才回退 PATH），cwd 固定为包目录，降低 cwd 同名 exe 劫持面。
 - 读侧 `etaOf` 只接受有限正数（≤1e6）。
+
+## 39. v2.5.3：稳定性证据与可选压测
+
+### 39.1 为什么不是「30 天没事 = 稳」
+`PC2自答-20261113.md` 的「30 天无异常」只说明**没有记录到 TDR**，不代表机器在重活下稳定：不少机器从没被压到满载。因此拆成两个维度——
+- 历史稳定性：只读系统事件（Kernel-Power 41、BugCheck、WHEA、TDR、磁盘/文件系统、应用崩溃、热限制）与 uptime；
+- 压测证据：用户主动跑一次我们的负载，记录温度、降频、吞吐漂移与新增事件。
+
+两者都只写进本机 caps 的 `stability`，选机仍以能力与负载为主；v2.5.3 不做「没压测就拒绝重活」的强制门。
+
+### 39.2 数据形状
+```json
+"stability": {
+  "windowDays": 30,
+  "events": {"kernelPower":0,"bugcheck":0,"whea":0,"tdr":0,"disk":0,"appCrash":3,"thermal":0},
+  "level": "good|watch|risky|unknown",
+  "confidence": "measured|inferred",
+  "uptimeHours": 12.5, "pendingReboot": false,
+  "gpu": {"name":"...","driver":"...","tempC":48},
+  "evidence": {"lastBurnIn": {"at":"...","mode":"quick","ok":true,"maxTempC":72,"driftPct":3.2,"reasons":[]}}
+}
+```
+`cleanStability()` 白名单化：只收计数、等级、uptime、挂起重启与最近一次压测摘要；不存事件正文、进程名、路径、用户名或任何硬件序列号。事件读取失败时 `level="unknown"`、`confidence="inferred"`，不再伪装成 good/measured。
+
+### 39.3 压测档位与判据
+- 快速 180s / 标准 600s / 深度 3600s；默认不做，必须用户点击；可随时取消（服务端 `taskkill /F /T` 杀整棵进程树）。
+- 负载：1080p NVENC 编码 + 多路 `minterpolate` 补帧（路数按 CPU 核数收敛，不含磁盘写）。
+- 判据：最高温度（≥95°C 报警）、NVML 的 hw_slowdown/hw_thermal/sw_thermal 任一 Active、窗口内新增 WHEA/TDR/Kernel-Power、首末三分之吞吐漂移 >20%、CV >15%。
+- 结果只更新 `evidence.lastBurnIn`，不改历史事件计数与等级；`level` 仍由事件决定。
+
+### 39.4 隐私边界
+只读计数与时间；不读事件正文；不采序列号/UUID/MAC；必须用户点击触发；原始日志不落盘；只保留最近一次压测摘要（后续增加「不参与能力卡共享」开关）；更新检查只发版本号。
+
+### 39.5 测试
+- `model-pick-smoke` A1 断言 `caps-apply` 回传 `stability` 且等级写入；A2 断言自检附带 `stability.level`；S1–S3 断言压测路由 GET 405、非法 mode 400、无任务取消 409。
+- `ui-guard-smoke` 断言压测路由过 Host/自定义头闸门且只认 POST。
+- `probe-stability.ps1` 在本机实测约 2.3 秒；`stress-test.ps1` 快速档实测见发布说明。
+
+### 39.6 已知限制
+- 事件阈值偏保守，桌面机应用崩溃噪声可能误报「注意」；需要按机器基线调整。
+- 压测占用本机 GPU/CPU，未与调度器做自动互斥；压测期间不建议派重活。
+- 「未压测」只表示没有我们的负载证据，不表示不安全。

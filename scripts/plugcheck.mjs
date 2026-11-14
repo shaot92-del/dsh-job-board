@@ -208,6 +208,8 @@ const needRoutes = [
   '/api/board/ui/caps-apply', // v2.4.0：确认后写能力卡
   '/api/board/ui/workload-catalog', // v2.5.0：工作大类目录
   '/api/board/ui/workload-probe', // v2.5.0：单项能力探测
+  '/api/board/ui/stress-test', // v2.5.3：可选压测
+  '/api/board/ui/stress-cancel', // v2.5.3：取消压测
 ]
 const missRoutes = needRoutes.filter((r) => !routes.includes(r))
 assert.deepEqual(missRoutes, [], `缺少路由: ${missRoutes.join(', ')}`)

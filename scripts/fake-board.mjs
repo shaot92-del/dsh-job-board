@@ -329,10 +329,16 @@ const ROUTES = {
   'POST /api/caps': async (req, res, b) => {
     const id = String(b.machine || 'host')
     const prev = state.machines[id] || {}
+    const prevCaps = (prev && prev.caps) || null
+    const nextCaps = b.caps || null
+    // 与真板子一致：只做浅合并，避免测试里"整块替换"掩盖写卡覆盖问题。
+    const merged = nextCaps && prevCaps && typeof prevCaps === 'object' && typeof nextCaps === 'object'
+      ? { ...prevCaps, ...nextCaps }
+      : nextCaps
     state.machines[id] = {
       ...prev,
       last_seen: nowSec(),
-      caps: b.caps || null,
+      caps: merged,
       caps_at: nowSec(),
     }
     save()

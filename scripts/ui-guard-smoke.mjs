@@ -155,6 +155,15 @@ r = await call('/api/board/ui/caps-probe', { method: 'POST', headers: { ...base,
 check('caps-probe 外部 Host 拒绝', r.status === 403, 'status=' + r.status + ' body=' + r.body.slice(0, 80))
 r = await call('/api/board/ui/caps-probe', { method: 'POST', headers: { ...base, 'content-type': 'application/json' }, body: '{}' })
 check('caps-probe 缺自定义头拒绝', r.status === 403, 'status=' + r.status)
+// v2.5.3：压测是重动作，必须只认 POST，且同样过 Host/自定义头闸门。
+r = await call('/api/board/ui/stress-test', { headers: { ...base, 'x-dsh-team-ui': '1' } })
+check('stress-test 拒绝 GET', r.status === 405, 'status=' + r.status)
+r = await call('/api/board/ui/stress-test', { method: 'POST', headers: { ...base, host: 'evil.example', origin: 'http://evil.example', 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: '{"mode":"quick"}' })
+check('stress-test 外部 Host 拒绝', r.status === 403, 'status=' + r.status + ' body=' + r.body.slice(0, 80))
+r = await call('/api/board/ui/stress-test', { method: 'POST', headers: { ...base, 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: '{"mode":"bogus"}' })
+check('stress-test 非法 mode 拒绝', r.status === 400, 'status=' + r.status)
+r = await call('/api/board/ui/stress-test', { method: 'POST', headers: { ...base, 'content-type': 'application/json' }, body: '{"mode":"quick"}' })
+check('stress-test 缺自定义头拒绝', r.status === 403, 'status=' + r.status)
 
 cleanup()
 await new Promise((r) => setTimeout(r, 100))

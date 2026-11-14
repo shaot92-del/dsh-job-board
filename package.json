@@ -1,6 +1,6 @@
 {
   "name": "dsh-job-board",
-  "version": "2.5.2",
+  "version": "2.5.3",
   "description": "DSH 插件：多机调度台 —— 多机作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
   "type": "module",
   "main": "./lib/index.js",
@@ -45,7 +45,10 @@
     "scripts/model-pick-smoke.mjs",
     "scripts/update-check-smoke.mjs",
     "scripts/probe-caps.ps1",
-    "scripts/probe-workload.ps1"
+    "scripts/probe-workload.ps1",
+    "scripts/probe-stability.ps1",
+    "scripts/stress-test.ps1",
+    "scripts/patch-remote-agent.ps1"
   ],
   "keywords": [
     "dsh",
