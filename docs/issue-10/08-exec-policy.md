@@ -1262,7 +1262,10 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 
 ### 38.3c 补帧并发采样（v2.5.2）
 
-补帧受内存带宽限制：单流 4.65 fps，6 路合计 12.13 fps（每流 2.02），8 路几乎不涨（报告实测 9.25 vs 9.45）。因此 workload 存 `value`（单流，单个任务用）、`aggregate`（6 路合计，批处理估 wall 用）、`perStream`、`maxStreams`。多机拆分仍按 `wall = max(各机 wall)`，留 v2.5.3。
+补帧受内存带宽限制：单流约 4.7–5.0 fps，6 路合计约 11.5–12.1 fps（每流约 2），8 路几乎不涨（报告实测 9.25 vs 9.45）。因此 workload 存 `value`（单流，单个任务用）、`aggregate`（合计，批处理估 wall 用）、`perStream`、`maxStreams`。
+- 路数按 `ProcessorCount-1` 收敛到 2–6；并发样本 0.5s；并发段失败只丢并发数据，保留单流值。
+- 写入边界做交叉一致性：`perStream ≤ aggregate ≤ value × maxStreams`（5% 余量），不满足就丢弃并发字段。
+- 多机拆分仍按 `wall = max(各机 wall)`，留 v2.5.3。
 
 ### 38.4 发布门复审后的补丁（安全审计）
 - 探测路由改用 `spawn` + 240s 超时 `taskkill /F /T` 杀进程树，避免只杀 pwsh 留下 ffmpeg 孤儿；脚本启动时清 `%TEMP%/dsh-probe-*` 超过 2 小时的残留。

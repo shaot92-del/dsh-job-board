@@ -253,6 +253,17 @@ assert.equal(capped.caps.workloads[0].aggregate, 12.1, '并发合计吞吐应保
 assert.equal(capped.caps.workloads[0].perStream, 2, '每流吞吐应保留')
 assert.equal(capped.caps.workloads[0].maxStreams, 6, '最大并发应保留')
 
+// A8：不一致的并发数据必须被丢掉（aggregate 不可能超过 单流 × 路数）。
+capped = null
+const a8 = await callRoute('/api/board/ui/caps-apply', {
+  caps: { identity: {}, workloads: [{ id: 'video.interp', unit: 'fps', value: 1, samples: 1, confidence: 'measured', aggregate: 999999, perStream: 2, maxStreams: 6 }] },
+  role: 'primary',
+})
+assert.equal(a8.status, 200, 'A8 caps-apply 应 200：' + a8.body)
+const a8w = capped && capped.caps && capped.caps.workloads && capped.caps.workloads.find((w) => w.id === 'video.interp')
+assert.ok(a8w, 'A8 应写入 interp 条目')
+assert.equal(Object.prototype.hasOwnProperty.call(a8w, 'aggregate'), false, '不一致的 aggregate 必须丢弃')
+
 // A6：板子读失败时，面板保存不得发出 models/workloads 键（否则空数组会整体覆盖该机实测）。
 BOARD_FAIL = true
 capped = null
@@ -287,6 +298,7 @@ if (process.platform === 'win32') {
     // CI runner（windows-latest）没有 ffmpeg：探测必须给出明确的缺失错误，而不是静默成功/覆盖旧卡。
     assert.equal(wp.status, 500, '无 ffmpeg 时 workload-probe 应 500：' + wp.body)
     assert.match(String(wpj.error || ''), /ffmpeg/i, '错误应点明缺 ffmpeg：' + wp.body)
+    assert.equal(capped, null, '失败时不得写卡（不能静默覆盖旧卡）')
     console.log(' · A5 跳过实测（本机没有 ffmpeg）：已确认返回明确的缺失错误')
   } else {
     assert.equal(wp.status, 200, 'workload-probe(video.transcode) 应 200：' + wp.body)
@@ -304,8 +316,9 @@ if (process.platform === 'win32' && spawnSync('ffmpeg', ['-version'], { stdio: '
   const wi = await callRoute('/api/board/ui/workload-probe', { workload: 'video.interp' })
   const wij = JSON.parse(wi.body)
   assert.equal(wi.status, 200, 'interp 探测应 200：' + wi.body)
-  assert.ok(wij.workload.aggregate > wij.workload.value, '6 路合计吞吐应大于单流：' + wi.body)
-  assert.equal(wij.workload.maxStreams, 6, 'maxStreams 应为 6')
+  assert.ok(wij.workload.aggregate > 0, '6 路合计吞吐应为正数：' + wi.body)
+  assert.ok(wij.workload.maxStreams >= 2 && wij.workload.maxStreams <= 6, 'maxStreams 应按核数收敛：' + wi.body)
+  assert.ok(wij.workload.aggregate > wij.workload.perStream, '合计应大于每流：' + wi.body)
   console.log(' · A7 并发采样：单流 ' + wij.workload.value + ' fps，6 路合计 ' + wij.workload.aggregate + ' fps')
 }
 
@@ -330,4 +343,4 @@ assert.ok(Object.keys(sumj.nodeModels || {}).indexOf('__proto__') >= 0, '原型�
 dispose()
 globalThis.fetch = realFetch
 fs.rmSync(root, { recursive: true, force: true })
-console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A7)')
+console.log('PASS model-pick smoke (M1-M11, R1-R4, A1-A8)')

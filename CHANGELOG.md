@@ -6,6 +6,7 @@
 - caps 的 workload 条目新增 `aggregate` / `perStream` / `maxStreams`（可选，向后兼容）；`cleanWorkload` 校验范围。
 - 能力探测弹窗显示「单流 X fps · 6 路 Y fps」。
 - 说明：多机拆分调度（按 wall 取 max）仍在 v2.5.3；本版先把「并发曲线」采集下来，避免以后用单流值估批处理。
+- 复审修复：ffmpeg 启动改用 `ProcessStartInfo.ArgumentList`（路径含空格不再被拆开）；并发段失败只丢并发数据、保留已测单流值；路数按核数收敛（2–6）、并发样本 0.5s；`cleanWorkload` 增加交叉一致性（`perStream ≤ aggregate ≤ value × maxStreams`），不一致的并发字段直接丢弃；`workload.streams` 纳入白名单。
 
 ## v2.5.1 — 2026-11-14
 

@@ -30,10 +30,20 @@ function Find-FFmpeg {
   return ''
 }
 
+function Start-FFmpeg([string]$ff, [string[]]$argv) {
+  # 不用 Start-Process -ArgumentList：它不自动加引号，%TEMP%/用户名含空格时参数会被拆开。
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $ff
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  foreach ($a in $argv) { $psi.ArgumentList.Add([string]$a) }
+  return [System.Diagnostics.Process]::Start($psi)
+}
+
 function Invoke-FFmpeg([string]$ff, [string[]]$argv) {
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  $p = Start-Process -FilePath $ff -ArgumentList $argv -NoNewWindow -Wait -PassThru `
-    -RedirectStandardError (Join-Path $tmp 'ff.err.txt') -RedirectStandardOutput (Join-Path $tmp 'ff.out.txt')
+  $p = Start-FFmpeg $ff $argv
+  $p.WaitForExit()
   $sw.Stop()
   return [pscustomobject]@{ code = $p.ExitCode; seconds = [math]::Round($sw.Elapsed.TotalSeconds, 3) }
 }
@@ -42,11 +52,9 @@ function Invoke-FFmpegParallel([string]$ff, [object[]]$jobs) {
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
   $procs = @()
   for ($i = 0; $i -lt $jobs.Count; $i++) {
-    $procs += Start-Process -FilePath $ff -ArgumentList $jobs[$i] -NoNewWindow -PassThru `
-      -RedirectStandardError (Join-Path $tmp ('par' + $i + '.err.txt')) `
-      -RedirectStandardOutput (Join-Path $tmp ('par' + $i + '.out.txt'))
+    $procs += Start-FFmpeg $ff ([string[]]$jobs[$i])
   }
-  $procs | Wait-Process
+  foreach ($p in $procs) { $p.WaitForExit() }
   $sw.Stop()
   $codes = @($procs | ForEach-Object { $_.ExitCode })
   return [pscustomobject]@{ seconds = [math]::Round($sw.Elapsed.TotalSeconds, 3); codes = $codes }
@@ -115,30 +123,36 @@ try {
       $framesOut = 96
       $single = [math]::Round($framesOut / [math]::Max($r.seconds, 0.001), 2)
 
-      # 并发采样：6 路 × 1s（每路 48 帧输出）。补帧受内存带宽限制，单流快不等于 6 路合计也快，
-      # 报告实测 6 路合计 ~10fps、8 路几乎不涨；ETA 要按合计吞吐估批处理。
-      $src1 = Join-Path $tmp 'src1.mp4'
-      & $ff -y -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=1920x1080:rate=30:duration=1' `
-        -c:v libx264 -preset ultrafast -crf 26 $src1 2>$null
-      $streams = 6
-      $jobs = @()
-      for ($i = 0; $i -lt $streams; $i++) {
-        $jobs += ,@('-y', '-hide_banner', '-loglevel', 'error', '-i', $src1,
-          '-vf', 'minterpolate=fps=48', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
-          (Join-Path $tmp ('par' + $i + '.mp4')))
-      }
-      $rp = Invoke-FFmpegParallel $ff $jobs
-      $bad = @($rp.codes | Where-Object { $_ -ne 0 })
-      if ($bad.Count -gt 0) { throw ('补帧并发失败（exit ' + ($bad -join ',') + '）') }
-      $agg = [math]::Round(($streams * 48) / [math]::Max($rp.seconds, 0.001), 2)
-      $per = [math]::Round(48 / [math]::Max($rp.seconds, 0.001), 2)
-
-      $result.workload = @{ width = 1920; height = 1080; fpsIn = 30; fpsOut = 48; secondsIn = 2; streams = $streams }
-      $result.seconds = [math]::Round($r.seconds + $rp.seconds, 3)
+      $result.workload = @{ width = 1920; height = 1080; fpsIn = 30; fpsOut = 48; secondsIn = 2 }
+      $result.seconds = $r.seconds
       $result.value = $single
-      $result.aggregate = $agg
-      $result.perStream = $per
-      $result.maxStreams = $streams
+
+      # 并发采样：路数按核数收敛（最多 6），每路 0.5s（24 帧输出）。补帧受内存带宽限制，
+      # 单流快不等于并行也快；但并发段失败不能把上面已经测到的单流结果一起丢掉。
+      $streams = [math]::Max(2, [math]::Min(6, ([Environment]::ProcessorCount - 1)))
+      $framesPer = 24
+      try {
+        $src1 = Join-Path $tmp 'src1.mp4'
+        & $ff -y -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=1920x1080:rate=30:duration=0.5' `
+          -c:v libx264 -preset ultrafast -crf 26 $src1 2>$null
+        $jobs = @()
+        for ($i = 0; $i -lt $streams; $i++) {
+          $jobs += ,@('-y', '-hide_banner', '-loglevel', 'error', '-i', $src1,
+            '-vf', 'minterpolate=fps=48', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
+            (Join-Path $tmp ('par' + $i + '.mp4')))
+        }
+        $rp = Invoke-FFmpegParallel $ff $jobs
+        $bad = @($rp.codes | Where-Object { $_ -ne 0 })
+        if ($bad.Count -gt 0) { throw ('并发 exit ' + ($bad -join ',')) }
+        $result.aggregate = [math]::Round(($streams * $framesPer) / [math]::Max($rp.seconds, 0.001), 2)
+        $result.perStream = [math]::Round($framesPer / [math]::Max($rp.seconds, 0.001), 2)
+        $result.maxStreams = $streams
+        $result.workload.streams = $streams
+        $result.seconds = [math]::Round($r.seconds + $rp.seconds, 3)
+      } catch {
+        # 并发段失败只丢并发数据，单流 value 仍然有效。
+        $result.workload.streams = 0
+      }
     }
     'video.render' {
       # 240 帧 1080p 滤镜合成（scale+drawbox+overlay），作为无头渲染的代理指标。
