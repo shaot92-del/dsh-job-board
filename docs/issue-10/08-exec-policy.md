@@ -1321,3 +1321,12 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 - exec 结果契约：板子 `do_mark` 接受 `result`（`_clean_result` 白名单；显式 null 才清、非法值保留旧结论）；插件 `syncRemote` 从副机 stdout 日志解析最后一条 `DSH_RESULT`，随终态回写；`done` 仍只表示命令返回；面板在旁边多一行「结果：通过/不符」（actual/expected 与 reasons），不把状态改成 failed。
 - 边界：契约是「脚本自报」，不校验产物；老脚本不打印 `DSH_RESULT` 时行为不变（无 result 行）；解析从 stdout 末尾向前找最后一条含 `DSH_RESULT` 的行（不看 summary/final，也没有 20 行窗口），只把该行里配平的 JSON 交给校验。
 - 测试：dispatch-recovery 91/91（R31/R31b）、board-server-smoke 全过（F3b）、update-check-smoke 验证标签数值排序；其余套件全绿。
+
+## 41. v2.5.9：文本卫生检查（2026-11-15）
+
+- 新增 `scripts/check-text.mjs`：扫描 `git ls-files`（含未跟踪）里的文本文件，检查 UTF-8/UTF-16 BOM、CRLF（`.cmd` 除外）、孤立 CR、C0/DEL 控制字符、重复中文短语、常见英文拼写错误、Markdown 围栏配平、行尾空白（Markdown 恰好两空格的硬换行豁免），以及 `package.json` 与 `CHANGELOG.md` 顶部版本是否一致。
+- 为什么：过去几轮复审反复出现的 P2/P3 是「拼写/格式」类问题（BOM、CRLF、替换产生的重复短语、CHANGELOG 数字漂移）。这类问题机械可查，放在人和模型复审里既浪费注意力又不稳定。
+- 用法：`npm run check:text`；`--root <dir>` 可指定扫描根；CI 在 `plugcheck` 之前执行；`AGENTS.md` 发布门第 3 步也纳入（必须 exit 0，WARN 不阻断）。
+- 安全与稳健性：`lstat` 跳过符号链接、单文件 2 MiB 上限、NUL 二进制探测；无 `.git` 时跳过并以 exit 0 退出；缺 `package.json` 或 0 文件 exit 2；单行超过 4000 字只 WARN 并跳过重复检测；`process.exitCode` 保证明细不被管道截断。
+- 边界：英文拼写只覆盖内置的常见错词表，不做词典级拼写；中文只查「同短语紧邻重复」，不查语义错别字；Markdown 行尾空白只记为 warning。
+- 自检：`scripts/check-text-smoke.mjs` 用临时仓库造 BOM/CRLF/重复中文/拼写/版本漂移，断言 exit 1；干净目录 exit 0。

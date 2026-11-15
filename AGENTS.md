@@ -6,7 +6,7 @@
 
 1. **AI 生成代码安全审计师**（Security）审 `git diff`，给 P0/P1/P2 结论与证据；
 2. **代码审查工程师**（Engineering / Code Reviewer）审同一份 diff，给 PASS / FAIL 与阻断项；
-3. **主控自己再扫一遍**：secrets、危险构造（eval / 动态执行）、测试全量、部署一致性；
+3. **主控自己再扫一遍**：`node scripts/check-text.mjs`（BOM / CRLF / 控制字符 / 重复中文短语 / 常见拼写 / 围栏 / 版本漂移；必须 exit 0，WARN 不阻断）、secrets、危险构造（eval / 动态执行）、测试全量、部署一致性；
 4. 只有三者都没有未决的 P0/P1 项，才允许提交、打 tag、push、提交市场更新或发 npm。
 
 P2 可以带着发布，但必须写进 CHANGELOG 的「已知问题」或 docs；两位审核员的结论要写进提交说明或对应 docs 小节，便于追溯。

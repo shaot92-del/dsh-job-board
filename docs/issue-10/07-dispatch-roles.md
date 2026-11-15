@@ -129,7 +129,7 @@ v1.3.1 把这段收进 `lib/state-file.mjs`：
 - `dispatch-recovery-smoke` 新增 **R20**：journal 旁边放着 5 分钟前的僵尸锁，
   派工照常完成（dispatch=1、attach=1、journal 清空）。
 - 变异验证：把 `withFileLock` 换成直接执行 → 并发用例从 40 掉到 9（用例确实能抓）。
-  注意第一版用例用 `spawnSync` 起子进程，串行跑出来照样全绿，已改成 `spawn` + 
+  注意第一版用例用 `spawnSync` 起子进程，串行跑出来照样全绿，已改成 `spawn` +
   `Promise.all`。
 ## 5. 同机多进程：实例身份 `holder`（v1.3.3）
 

@@ -1,0 +1,10 @@
+# 仓库统一使用 LF。Windows 上的编辑器/脚本不要写回 CRLF。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.tgz binary
+*.zip binary
+*.cmd text eol=crlf

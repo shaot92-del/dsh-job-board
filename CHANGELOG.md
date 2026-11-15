@@ -1,5 +1,15 @@
 # 变更日志
 
+## v2.5.9 — 2026-11-15
+
+- 新增 `scripts/check-text.mjs`（`npm run check:text`）：机械检查 UTF-8/UTF-16 BOM、CRLF（`.cmd` 除外）、孤立 CR、C0/DEL 控制字符、重复中文短语、常见英文拼写、Markdown 围栏配平、行尾空白（Markdown 恰好两空格的硬换行豁免），以及 `package.json` 与 `CHANGELOG.md` 顶部版本漂移。这些是过去几轮复审反复报的「拼写/格式」类问题，改为每次 CI 与发布门前自动拦截。
+- 安全与稳健性：`lstat` 跳过符号链接、单文件 2 MiB 上限、NUL 二进制探测；无 `.git` 时跳过并以 exit 0 退出（npm 包内可运行）；`--root` 可指定扫描根目录；缺 `package.json` 或 0 文件 exit 2；`process.exitCode` 输出完整明细。
+- 新增 `scripts/check-text-smoke.mjs` 自检：临时仓库造 BOM/CRLF/重复中文/拼写/版本漂移，断言 exit 1；干净目录 exit 0。
+- 首次扫描实测修掉：`AGENTS.md`、`docs/issue-10/07-dispatch-roles.md`、`lib/shell.js` 的 CRLF；`docs/issue-10/07-dispatch-roles.md` 的行尾空白。新增 `.gitattributes`（`* text=auto eol=lf`，`*.cmd -text`）防止再次写回 CRLF。
+- CI 在 `plugcheck` 之前新增 `check-text-smoke` 与 `check-text` 两步；`AGENTS.md` 的发布门第 3 步加入同一检查（必须 exit 0，WARN 不阻断）。
+- 测试：`check-text` 扫描 59 个文件 PASS；`check-text-smoke` PASS；其余 smoke 发布前跑全量。
+
+
 ## v2.5.8 — 2026-11-15
 
 - 更新检查改走 GitHub 标签：`latestReleaseVersion()` 读 `https://api.github.com/repos/shaot92-del/dsh-job-board/tags?per_page=100`，按语义版本排序取最高 `vX.Y.Z`，不再依赖未发布的 npm 包（此前 `latestNpmVersion()` 对所有用户恒 404）。成功缓存 10 分钟、失败 60 秒；错误不回显上游原文。

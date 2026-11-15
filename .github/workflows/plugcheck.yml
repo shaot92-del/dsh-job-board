@@ -20,6 +20,9 @@ jobs:
           node-version: 22
       # 离线自检：不连板子、不启动 DSH，只断言 apply() 注册了 18 个工具、render 输出合法、
       # 核心路由在、Host 调度器 take→dispatch→attach、dispose 清掉 4 个定时器。
+      # 文本卫生（v2.5.9）：BOM/CRLF/控制字符/重复中文短语/常见英文拼写/版本漂移。
+      - run: node scripts/check-text-smoke.mjs
+      - run: node scripts/check-text.mjs
       - run: node scripts/plugcheck.mjs
       # 重载契约：apply→cleanup→apply 不撞名、cleanup 之后工具/路由/订阅归零、
       # 半装载失败要整体回滚（复刻 dsh-host-webserver 的重复路由语义，见 v1.1.11）
