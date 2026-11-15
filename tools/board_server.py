@@ -534,6 +534,7 @@ def do_untake(body: dict) -> tuple[int, dict]:
         # v1.3.3（复核 F8）：退回队列却留着 remote_id 的话，所有 Host 的队列过滤
         # （`!t.remote`）都会跳过它 —— 任务永远派不出去，而板上看起来只是 queued。
         dropped_remote = (t.pop("remote_id", None) or "").strip()
+        t.pop("result", None)
         t["status"] = "queued"
         t["dispatch"] = "auto"
         t["claimed_at"] = 0
@@ -542,6 +543,36 @@ def do_untake(body: dict) -> tuple[int, dict]:
         add_event("untake", machine, task_id, note or "派发失败，退回队列")
         save_state()
         return 200, {"ok": True, "task_id": task_id, "status": "queued"}
+
+
+def _clean_result(v):
+    """v2.5.8 结果契约：只收 {ok, expected, actual, reasons}，其余字段丢弃。"""
+    if not isinstance(v, dict):
+        return None
+    ok = v.get("ok")
+    if not isinstance(ok, bool):
+        return None
+    out = {"ok": ok}
+    for k in ("expected", "actual"):
+        n = v.get(k)
+        if isinstance(n, (int, float)) and not isinstance(n, bool):
+            try:
+                f = float(n)
+            except Exception:
+                continue
+            if 0 <= f <= 1e12:
+                out[k] = int(f) if f.is_integer() else round(f, 3)
+    rs = v.get("reasons")
+    if isinstance(rs, list):
+        cleaned = []
+        for r in rs[:5]:
+            t = (_txt(str(r), 120) if r is not None else "").strip()
+            if t:
+                cleaned.append(t)
+        if cleaned:
+            out["reasons"] = cleaned
+    return out
+
 
 
 def do_mark(body: dict) -> tuple[int, dict]:
@@ -591,9 +622,19 @@ def do_mark(body: dict) -> tuple[int, dict]:
                 t.pop("remote_id", None)
         if "note" in body:
             t["note"] = _txt((body.get("note") or "").strip(), 500)
+        if "result" in body:
+            # 显式 null 才清；非法值保留旧结论，避免一次脏 payload 抹掉已有结果
+            raw_result = body.get("result")
+            if raw_result is None:
+                t.pop("result", None)
+            else:
+                rr = _clean_result(raw_result)
+                if rr is not None:
+                    t["result"] = rr
         if status == "queued":
             # v3.1（安全复审 F7）：回队列要和 untake 一样清干净，否则是
             # "queued 但 remote_id 还在"的僵尸：队列过滤跳过它、同步循环也不看它。
+            t.pop("result", None)
             t.pop("taker", None)
             t.pop("holder", None)
             t.pop("remote_id", None)
@@ -881,6 +922,7 @@ def do_release(body: dict) -> tuple[int, dict]:
         if status == "queued":
             # v3.1（安全复审 F6）：回队列必须同时恢复 dispatch=auto 并清掉 machine，
             # 否则任务会变成"queued 但谁都派不出去 / 谁都认领不了"（与 untake 对齐）。
+            t.pop("result", None)
             t.pop("remote_id", None)
             t.pop("taker", None)
             t.pop("holder", None)

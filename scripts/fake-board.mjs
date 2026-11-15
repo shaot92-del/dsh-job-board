@@ -239,11 +239,16 @@ const ROUTES = {
     }
     if (b.status) t.status = String(b.status)
     if (b.note) t.note = String(b.note)
+    if ('result' in b) {
+      if (b.result && typeof b.result === 'object') t.result = b.result
+      else delete t.result
+    }
     if ('remote_id' in b) {
       if (String(b.remote_id || '')) t.remote_id = String(b.remote_id)
       else delete t.remote_id
     }
     if (String(b.status || '') === 'queued') {
+      delete t.result
       delete t.taker
       delete t.holder
       delete t.remote_id
@@ -286,6 +291,7 @@ const ROUTES = {
     t.lease_until = null
     delete t.holder
     // v1.3.3（复核 F8）：回到队列却带着 remote_id，所有 Host 的队列过滤都会跳过它。
+    delete t.result
     delete t.remote_id
     if (b.note) t.note = String(b.note)
     event('untake', t.id, b.machine, b.note)

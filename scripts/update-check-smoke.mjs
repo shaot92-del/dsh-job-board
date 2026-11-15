@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * update-check 冒烟：假 registry 返回 9.9.9，验证
+ * update-check 冒烟：假 GitHub tags 返回 v9.9.9，验证
  *   1) /api/board/ui/update-check 返回 updateAvailable=true；
  *   2) doctor 的 update 检查存在、level=info、latestVersion 正确；
  *   3) 面板用的 doctor.updateAvailable 为 true。
@@ -21,7 +21,7 @@ function reply(o) {
 const realFetch = globalThis.fetch
 globalThis.fetch = async (u) => {
   const s = String(u)
-  if (s.includes('registry.npmjs.org')) return reply({ version: '9.9.9' })
+  if (s.includes('api.github.com/repos/shaot92-del/dsh-job-board/tags')) return reply([{ name: 'v9.10.0' }, { name: 'v9.9.9' }, { name: 'v9.8.0' }])
   if (s.includes('/api/board')) return reply({ ok: true, updated: Math.floor(Date.now() / 1000), machines: [], tasks: [], events: [], counts: { queued: 0, running: 0, done: 0, bad: 0 } })
   if (s.includes('/api/remote-agent/ui/nodes')) return reply({ ok: true, nodes: [] })
   return reply({ ok: true })
@@ -50,11 +50,11 @@ function callRoute(p) {
 
 const uc = await callRoute('/api/board/ui/update-check')
 assert.equal(uc.status, 200)
-assert.equal(uc.body.latest, '9.9.9')
+assert.equal(uc.body.latest, '9.10.0')
 assert.equal(uc.body.updateAvailable, true)
 
 const doc = await callRoute('/api/board/ui/doctor')
-assert.equal(doc.body.latestVersion, '9.9.9')
+assert.equal(doc.body.latestVersion, '9.10.0')
 assert.equal(doc.body.updateAvailable, true)
 const upd = (doc.body.checks || []).find((c) => c.id === 'update')
 assert.ok(upd, 'doctor 应有 update 检查')

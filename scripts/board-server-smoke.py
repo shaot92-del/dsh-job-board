@@ -141,6 +141,28 @@ def main() -> int:
 
         code, body = call(port, "/api/release", {"task_id": tid, "machine": "gt14", "status": "done"})
         check("F3 gt14 可以交付", code == 200, "%s %s" % (code, body))
+        # v2.5.8 结果契约：mark 可带 result（ok/expected/actual/reasons），快照要原样带回
+        code, body = call(port, "/api/mark", {"task_id": tid, "machine": "GT14", "status": "done",
+                                            "result": {"ok": False, "expected": 30, "actual": 1,
+                                                       "reasons": ["only one case ran"]}})
+        ok_result = code == 200
+        _, board = call(port, "/api/board")
+        tr = ((board or {}).get("tasks") or {}).get(tid) or {}
+        r = tr.get("result") or {}
+        check("F3b result 落库（ok/expected/actual/reasons）",
+              ok_result and r.get("ok") is False and r.get("expected") == 30 and r.get("actual") == 1
+              and r.get("reasons") == ["only one case ran"], "%s %s" % (code, r))
+        code, body = call(port, "/api/mark", {"task_id": tid, "machine": "GT14", "status": "queued"})
+        _, board = call(port, "/api/board")
+        tr = ((board or {}).get("tasks") or {}).get(tid) or {}
+        check("F3c 回队列清掉旧 result", code == 200 and "result" not in tr, "%s %s" % (code, tr.get("result")))
+        call(port, "/api/mark", {"task_id": tid, "machine": "GT14", "status": "done",
+                                 "result": {"ok": False, "expected": 3, "actual": 1}})
+        call(port, "/api/mark", {"task_id": tid, "machine": "GT14", "result": {"ok": "yes"}})
+        _, board = call(port, "/api/board")
+        tr = ((board or {}).get("tasks") or {}).get(tid) or {}
+        rr = tr.get("result") or {}
+        check("F3d 非法 result 不抹掉旧结论", rr.get("ok") is False and rr.get("expected") == 3, "%s" % rr)
 
         # M1（v1.3.11）：非回环客户端改状态必须带 machine/holder，不能靠省略字段绕过
         lan = lan_ip()

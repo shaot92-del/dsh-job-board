@@ -1314,3 +1314,10 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 - 事件阈值偏保守，桌面机应用崩溃噪声可能误报「注意」；需要按机器基线调整。
 - 压测占用本机 GPU/CPU，未与调度器做自动互斥；压测期间不建议派重活。
 - 「未压测」只表示没有我们的负载证据，不表示不安全。
+
+## 40. v2.5.8：GitHub 更新检查与 exec 结果契约（2026-11-15）
+
+- 更新检查从 npm 改为 GitHub tags：npm 侧包名未注册（注册页对 AI 操作拒绝），原实现永远 404；新实现列入 `api.github.com/.../tags`，按语义版本取最高，失败只 trace、不向前端回显上游错误。
+- exec 结果契约：板子 `do_mark` 接受 `result`（`_clean_result` 白名单；显式 null 才清、非法值保留旧结论）；插件 `syncRemote` 从副机 stdout 日志解析最后一条 `DSH_RESULT`，随终态回写；`done` 仍只表示命令返回；面板在旁边多一行「结果：通过/不符」（actual/expected 与 reasons），不把状态改成 failed。
+- 边界：契约是「脚本自报」，不校验产物；老脚本不打印 `DSH_RESULT` 时行为不变（无 result 行）；解析从 stdout 末尾向前找最后一条含 `DSH_RESULT` 的行（不看 summary/final，也没有 20 行窗口），只把该行里配平的 JSON 交给校验。
+- 测试：dispatch-recovery 91/91（R31/R31b）、board-server-smoke 全过（F3b）、update-check-smoke 验证标签数值排序；其余套件全绿。

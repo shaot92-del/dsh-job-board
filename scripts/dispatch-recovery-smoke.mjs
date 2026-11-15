@@ -195,6 +195,10 @@ function startServer({ tasks, hub, seedRemoteTasks, markStatus }) {
         if (t && b.status) {
           t.status = String(b.status)
           if (b.note) t.note = String(b.note)
+    if ('result' in b) {
+      if (b.result && typeof b.result === 'object') t.result = b.result
+      else delete t.result
+    }
         }
         return send(200, { ok: true })
       })
@@ -470,6 +474,7 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteOwne
       }],
       waitMs: 2600,
     })
+    check('R27 没有 DSH_RESULT 时不伪造 result', !('result' in info.tasks['bd-r27']), JSON.stringify(info.tasks['bd-r27'].result))
     check('R27 列表缺失但单条可查 → 板上 done', info.tasks['bd-r27'].status === 'done',
       `status=${info.tasks['bd-r27'].status} mark=${info.stats.mark} probe=${JSON.stringify(info.remoteTasks)}`)
   }
@@ -504,6 +509,52 @@ async function scenario(name, { hub, tasks, machine, seedJournal, seedRemoteOwne
     check('R28 没有把两条板任务绑到同一条远端', info.stats.attach === 0, `attach=${info.stats.attach}`)
     check('R28 bd-other 的远程绑定未被改动', String(info.tasks['bd-other'].remote_id) === 'ui-r28',
       String(info.tasks['bd-other'].remote_id))
+  }
+
+  // ── R30（v2.5.8 结果契约）：stdout 里的 DSH_RESULT 要落到板任务 ─────────────
+  // 脚本只跑 1/30 条时退出码仍是 0；靠约定的 result 行把「完成但结果不符」显式带回来。
+  {
+    const info = await scenario('R31', {
+      machine: 'smoke-r30',
+      extraCfg: { remoteSyncMs: 300 },
+      tasks: { 'bd-r31': { status: 'running', machine: 'GT14', remote_id: 'ui-r31', goal: 'R31 goal' } },
+      seedRemoteTasks: [{
+        taskId: 'ui-r31',
+        nodeId: 'smoke-node',
+        goal: 'R31 goal',
+        status: 'completed',
+        hidden: true,
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now(),
+        logs: [{ line: '[stdout] DSH_RESULT {"ok":false,"expected":30,"actual":1,"reasons":["only one case ran"]}', at: Date.now() }],
+      }],
+      waitMs: 2600,
+    })
+    const rr = info.tasks['bd-r31'] && info.tasks['bd-r31'].result
+    check('R31 DSH_RESULT 写入板任务且 ok=false', !!rr && rr.ok === false && rr.expected === 30 && rr.actual === 1,
+      JSON.stringify(rr))
+  }
+
+  // ── R31b（v2.5.8）：普通任务走 /tasks 列表（不隐藏）时结果同样要落板 ─────────
+  {
+    const info = await scenario('R31b', {
+      machine: 'smoke-r31b',
+      extraCfg: { remoteSyncMs: 300 },
+      tasks: { 'bd-r31b': { status: 'running', machine: 'GT14', remote_id: 'ui-r31b', goal: 'R31b goal' } },
+      seedRemoteTasks: [{
+        taskId: 'ui-r31b',
+        nodeId: 'smoke-node',
+        goal: 'R31b goal',
+        status: 'completed',
+        createdAt: Date.now() - 5000,
+        updatedAt: Date.now(),
+        logs: [{ line: '[stdout] DSH_RESULT {"ok":true,"expected":30,"actual":30,"reasons":[]}', at: Date.now() }],
+      }],
+      waitMs: 2600,
+    })
+    const rr = info.tasks['bd-r31b'] && info.tasks['bd-r31b'].result
+    check('R31b 列表路径也解析 DSH_RESULT', !!rr && rr.ok === true && rr.expected === 30 && rr.actual === 30,
+      JSON.stringify(rr))
   }
 
   // ── R29/R29b（v2.0.7 P2-9 负向）：单条查询失败不能判死 ───────────────────

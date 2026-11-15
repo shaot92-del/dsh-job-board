@@ -1,5 +1,13 @@
 # 变更日志
 
+## v2.5.8 — 2026-11-15
+
+- 更新检查改走 GitHub 标签：`latestReleaseVersion()` 读 `https://api.github.com/repos/shaot92-del/dsh-job-board/tags?per_page=100`，按语义版本排序取最高 `vX.Y.Z`，不再依赖未发布的 npm 包（此前 `latestNpmVersion()` 对所有用户恒 404）。成功缓存 10 分钟、失败 60 秒；错误不回显上游原文。
+- exec 结果契约：脚本最后打印一行 `DSH_RESULT {"ok":true,"expected":30,"actual":30,"reasons":[]}`，插件从副机 `[stdout]` 日志里解析后随终态 `mark` 回写板子；板子只收 `ok`（布尔）、`expected/actual`（0–1e12）、`reasons`（≤5 条 ×120 字），脏数据丢弃。
+- 面板任务详情新增「结果：通过 / 不符 · actual/expected · reasons」一行：状态仍是 `done`（命令返回了），旁边多一行「结果：通过/不符」；结果不符标黄，但不会把任务状态改成 failed。
+- **升级提示：`tools/board_server.py` 不在插件进程内，升级后要重启看板进程，旧板子会静默丢弃 `result` 键（插件侧 mark 仍成功，只是看不到结果行）。**
+- 测试：`dispatch-recovery-smoke` 增至 91 项（R31/R31b：hidden 与列表两条路径的 `DSH_RESULT` 都落板）；`board-server-smoke` 新增 F3b（result 落库/读回）、F3c（回队列清 result）、F3d（非法 result 保留旧结论）；`update-check-smoke` 改用假 GitHub 标签并验证 `v9.10.0 > v9.9.9` 的数值排序。
+
 ## v2.5.7 — 2026-11-15
 
 - 机器卡区可收起/展开：窄屏（CSS 宽度 < 1420px，覆盖 1366×768 的 14 寸笔记本）默认收起为一行摘要，任务列表不再被三张能力卡挤出屏幕；选择写入 `localStorage['dsh-board-machines-collapsed']`。
