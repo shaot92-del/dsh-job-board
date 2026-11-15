@@ -1,10 +1,14 @@
 {
-  "name": "dsh-job-board",
-  "version": "2.5.9",
+  "name": "@wfcj/dsh-job-board",
+  "version": "2.5.10",
   "description": "DSH 插件：多机调度台 —— 多机作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
   "type": "module",
   "scripts": {
-    "check:text": "node scripts/check-text.mjs"
+    "check:text": "node scripts/check-text.mjs",
+    "prepublishOnly": "node scripts/check-text.mjs"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "main": "./lib/index.js",
   "exports": {
@@ -25,6 +29,9 @@
     }
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "lib/",
     "cordis.patch.yml",

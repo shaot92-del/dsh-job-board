@@ -11,7 +11,7 @@
 # 运行时用 ctx.inject() 也不行（子 fiber 会被回收，路由注册完随即 DISPOSED）。
 - insert:
     - id: team
-      name: 'dsh-job-board'
+      name: '@wfcj/dsh-job-board'
       inject: ['webServer', 'tools']
       config:
         # 留空 = 自动探测（主机名 → <board-host> → 本机回环）；写死会让副机永远指向自己。

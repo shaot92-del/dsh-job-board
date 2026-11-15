@@ -52,9 +52,23 @@ $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\ds
 
 # 从 GitHub（装别人的/你自己的这份）
 & $dsh plugin --profile desktop add 'github:shaot92-del/dsh-job-board'
+
+# 从 npm（包名带 scope；产品名仍是 dsh-job-board）
+& $dsh plugin --profile desktop add '@wfcj/dsh-job-board'
 ```
 
-装完确认 profile 的 `package.json` 里 `dsh.profile.bundles` 有 `dsh-job-board` 这一行，
+**已经装过旧版（unscoped `dsh-job-board`）的，先移除再装**，否则两份代码会同时注册同一批
+patch / 工具 / 路由，热重载会报 duplicate route 或让客户端面板起不来：
+
+```powershell
+& $dsh plugin --profile desktop remove dsh-job-board
+# 然后检查 profile 的 package.json：dsh.profile.bundles 里应已无 "dsh-job-board"（有则删掉），
+# dependencies 里也不应再有 dsh-job-board；node_modules\dsh-job-board 若仍存在也一并删掉
+& $dsh plugin --profile desktop add '@wfcj/dsh-job-board'
+```
+
+装完确认 profile 的 `package.json` 里 `dsh.profile.bundles` 有 `@wfcj/dsh-job-board` 这一行
+（现在所有安装方式都以 package.json 的 scoped 包名为准），
 然后重启 DSH（Host 半边改动只有重启才生效；只改 `lib/client.js` 的话刷新页面即可）。
 
 > 要接入别人已经在跑的板子，不用手改 YAML：

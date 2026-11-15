@@ -468,5 +468,15 @@ try {
   /* 清理失败不影响结论 */
 }
 
+// 包名四处一致（v2.0.1/2.0.2 的事故类别：client id 与包名不同步会让面板起不来）
+const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const patchText = fs.readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+const patchName = (patchText.match(/^\s*name:\s*'([^']+)'/m) || [])[1]
+const clientText = fs.readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+const clientId = (clientText.match(/^\s*id:\s*'([^']+)'/m) || [])[1]
+assert.equal(name, pkg.name, 'lib/index.js 导出的 name 必须等于 package.json 的 name')
+assert.equal(patchName, pkg.name, 'cordis.patch.yml 的 name 必须等于 package.json 的 name')
+assert.equal(clientId, pkg.name, 'lib/client.js 的 client bundle id 必须等于 package.json 的 name')
+
 console.log(`PASS  name=${name}  tools=${tools.size}  routes=${routes.length}`)
 console.log('  tools: ' + [...tools.keys()].join(', '))

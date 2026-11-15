@@ -1330,3 +1330,12 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 - 安全与稳健性：`lstat` 跳过符号链接、单文件 2 MiB 上限、NUL 二进制探测；无 `.git` 时跳过并以 exit 0 退出；缺 `package.json` 或 0 文件 exit 2；单行超过 4000 字只 WARN 并跳过重复检测；`process.exitCode` 保证明细不被管道截断。
 - 边界：英文拼写只覆盖内置的常见错词表，不做词典级拼写；中文只查「同短语紧邻重复」，不查语义错别字；Markdown 行尾空白只记为 warning。
 - 自检：`scripts/check-text-smoke.mjs` 用临时仓库造 BOM/CRLF/重复中文/拼写/版本漂移，断言 exit 1；干净目录 exit 0。
+
+## 42. v2.5.10：npm scoped 包名（2026-11-15）
+
+- 触发：npm 判定 `dsh-job-board` 与已存在的 `dsh-jobboard` 名称过于相似，`npm publish` 返回 403；产品名已对外公布，不能为发布改名。
+- 方案：npm 包名用 scope `@wfcj/dsh-job-board`，产品名 / 仓库名 / 界面标题保持 `dsh-job-board`。scope 只影响安装名。
+- 四处必须一致：`package.json` 的 `name`、包内 `cordis.patch.yml` 的 `name`、`lib/client.js` 的 client bundle `id`、`lib/index.js` 导出的插件 `name`。不一致会导致 client 模块找不到、面板起不来。
+- 安装：`dsh plugin add '@wfcj/dsh-job-board'`；profile 的 `dsh.profile.bundles` 写 `@wfcj/dsh-job-board`。GitHub / 本地 `file:` 安装仍以 package.json 的包名为准。
+- 市场：DSH 自带插件市场的索引（`awesome-dsh-plugin.com/index.json`）是 npm 驱动的；没有 npm 条目就不会被收录。发布 scoped 包后，索引条目 `name` 为 `@wfcj/dsh-job-board`、`title` 仍是 `shaot92-del/dsh-job-board`。
+- 测试：`npm pack --dry-run`（33 files / 1.1 MB / 2.5.10）；plugcheck 显示 scoped name；reload / ui-guard / model-pick / update-check / check-text / check-text-smoke 全过。

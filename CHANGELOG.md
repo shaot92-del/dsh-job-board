@@ -1,5 +1,13 @@
 # 变更日志
 
+## v2.5.10 — 2026-11-15
+
+- npm 包名改为 **`@wfcj/dsh-job-board`**：npm 判定 `dsh-job-board` 与已存在的 `dsh-jobboard` 名称过于相似而拒绝发布；产品名、仓库名、界面标题保持 `dsh-job-board` 不变，scope 只影响安装名。
+- 四处名称同步到 scoped 包名：`package.json` 的 `name`、包内 `cordis.patch.yml` 的 `name`、`lib/client.js` 的 client bundle `id`，以及 `lib/index.js` 导出的插件 `name`。四处不一致会导致 client 模块找不到、面板起不来。
+- 安装方式：`dsh plugin add '@wfcj/dsh-job-board'`；`dsh.profile.bundles` 对应行写 `@wfcj/dsh-job-board`。**已装旧版 unscoped 包的用户必须先移除旧包再装**，否则两份代码会同时注册 patch/工具/路由（duplicate route、client 面板起不来）。
+- 发布到 npm 后，DSH 自带插件市场的索引（`awesome-dsh-plugin.com/index.json`，npm 驱动）才会收录；此前虽然 README/数据文件已合入 awesome 仓库，但索引里没有 npm 条目，搜 `dsh-job-board` 搜不到。
+- 测试：`npm pack --dry-run` 包名/版本正确；plugcheck / reload / ui-guard / model-pick / check-text 全部重跑。
+
 ## v2.5.9 — 2026-11-15
 
 - 新增 `scripts/check-text.mjs`（`npm run check:text`）：机械检查 UTF-8/UTF-16 BOM、CRLF（`.cmd` 除外）、孤立 CR、C0/DEL 控制字符、重复中文短语、常见英文拼写、Markdown 围栏配平、行尾空白（Markdown 恰好两空格的硬换行豁免），以及 `package.json` 与 `CHANGELOG.md` 顶部版本漂移。这些是过去几轮复审反复报的「拼写/格式」类问题，改为每次 CI 与发布门前自动拦截。
