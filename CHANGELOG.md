@@ -1,5 +1,9 @@
 # 变更日志
 
+## v2.6.5 — 2026-11-16
+
+- 补上一处漏删的 `timer.unref()`（exec 超时计时器 6 空格缩进版本）；现在超时/宽限/排空计时器都保持事件循环存活，CI 不会再出现「Promise still pending but loop resolved」。
+
 ## v2.6.4 — 2026-11-16
 
 - exec-runner 超时/宽限/排空计时器不再 `unref()`：假子进程场景下事件循环会先清空，测试 Promise 永久 pending（CI Windows Node 24 直接判 cancelledByParent）。收尾路径本来就会 clearTimeout，不影响进程退出。
