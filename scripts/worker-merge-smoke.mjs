@@ -3,7 +3,7 @@
  * v2.6.0 并入冒烟：单包双角色。
  *   W1 workerMode 缺省/off：18 个 host 工具，两个 worker 工具都不注册
  *   W2 workerMode=on：恰 20 个工具 + 24 条路由
- *   W3 worker_status 报包版本 2.6.0、machine，且 boardUrl 用的是宿主传入的地址
+ *   W3 worker_status 报包版本（读 package.json）、machine，且 boardUrl 用的是宿主传入的地址
  *   W4 cleanup：工具摘除、不抛
  */
 import assert from 'node:assert/strict'
@@ -19,6 +19,7 @@ fs.mkdirSync(process.env.DSH_TEAM_STATE_DIR, { recursive: true })
 const plugin = await import(pathToFileURL(path.resolve('lib/index.js')).href)
 
 const BOARD_URL = 'http://127.0.0.1:65534'
+const PKG_VERSION = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')).version
 
 function makeCtx() {
   const tools = new Map()
@@ -93,7 +94,7 @@ console.log(`W2 on: tools=${on._tools.size}, routes=${on.routes}`)
 // W3 — status 版本 / 机器 / boardUrl
 const status = await on._tools.get('worker_status').execute({})
 const text = JSON.stringify(status)
-assert.ok(text.includes('2.6.0'), 'W3 worker_status 应报 2.6.0')
+assert.ok(text.includes(PKG_VERSION), `W3 worker_status 应报 ${PKG_VERSION}，实际 ${text}`)
 assert.ok(/pc2/i.test(text), 'W3 worker_status 应报 machine')
 assert.ok(text.includes(BOARD_URL), `W3 worker_status 必须回显宿主解析的 boardUrl（${BOARD_URL}），实际 ${text}`)
 console.log('W3 version/machine/boardUrl ok')

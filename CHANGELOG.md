@@ -1,5 +1,9 @@
 # 变更日志
 
+## v2.6.2 — 2026-11-16
+
+- 修 CI：worker-merge-smoke 的 W3 不再写死 2.6.0，改读 package.json 版本。
+
 ## v2.6.1 — 2026-11-16
 
 - 修 Linux CI 卡死：agent-runner 的 `handle.dispose()` 无上限等待，假宿主 dispose 永不 resolve 时 `run` 超时/取消用例挂住；改为 `disposeWithTimeout`（最多 1s，失败仅记日志）。
