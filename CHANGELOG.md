@@ -1,5 +1,16 @@
 # 变更日志
 
+## v2.6.0 — 2026-11-16
+
+- **单包双角色**：原 `dsh-job-worker` 的 worker 半边并入 `@wfcj/dsh-job-board`，仍只有一条插件行（`id: team`）。`workerMode: 'off' | 'drain' | 'on'` 决定是否在同一个进程里跑「认领 → 执行 → 回写」；Host/面板/看板工具在三种模式下都照常。drain 启动仍会跑一次孤儿扫描（升级窗口注意）。
+- 并入内容：`lib/worker/`（agent 审批/预算/提示词闸门/agent runner/exec runner/看板客户端/主循环等 13 个模块）、`test/worker/` 13 个测试文件、`scripts/worker/` 的 selftest/agent-selftest/fake-board/pack-check。
+- 看板契约不变：仍走 `/api/claim`、`/api/beat`、`/api/mark`（mark 必带 `machine`）；holder = `<machine>/<pid>-<rand>`，归属只认 holder，不认 note。
+- 安全默认不变：`workerMode` 默认 `off`；即使打开，`worker.allowlist` 为空时不接 exec 任务，`agentEnabled` 默认 `false`（agent 路径需显式打开并配 preset/cwdRoot）。
+- 配置合并：`cordis.patch.yml` 的 `inject` 只保留 `webServer`/`tools`（默认 off 不再因缺 `agentLoop`/`sessions` 整行挂死）；agent 服务在激活时读取一次，缺失则 agent 任务 `agent-unavailable`，exec 不受影响。新增 `workerMode` 与 `worker:` 默认块；worker 顶层沿用 `boardUrl` / `machine` / `token` / `timeoutMs`。
+- 迁移：旧 `dsh-job-worker` 的插件行由它自己的包内 patch 插入，删 profile 行无效。必须先 `dsh plugin remove dsh-job-worker`（或从 `dsh.profile.bundles` 移除），或在 profile patch 里给该行加 `disabled: true`；否则两个 worker 会抢同一任务。agent 状态目录保持 `%LOCALAPPDATA%\dsh-job-worker`，旧审批/预算计数不丢。
+- 版本对齐：worker 内部 `VERSION` 随包版本走（`test/worker/version.test.mjs` 断言等于 `package.json`）；新增 `scripts/worker-merge-smoke.mjs`（W1–W5：off 不注册 worker 工具、on 注册 20 个工具、状态报 2.6.0、cleanup 摘净工具、自动探测路径回显真实 boardUrl）。
+- 测试：`npm test`（worker 153 项）+ 原有全量 smoke；`npm pack` 包含 `test/`、`scripts/worker/`。
+
 ## v2.5.10 — 2026-11-15
 
 - npm 包名改为 **`@wfcj/dsh-job-board`**：npm 判定 `dsh-job-board` 与已存在的 `dsh-jobboard` 名称过于相似而拒绝发布；产品名、仓库名、界面标题保持 `dsh-job-board` 不变，scope 只影响安装名。

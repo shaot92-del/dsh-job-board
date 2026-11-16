@@ -24,3 +24,15 @@
         allowedRoots: []
         shellTimeoutMs: 120000
         maxOutputBytes: 200000
+        # v2.6.0：单包双角色。off = 只做 Host/面板（默认）；on = 同时认领并执行任务。
+        workerMode: 'off'
+        # worker 配置（workerMode=on 时生效）。默认 exec-only：agent 一律显式打开。
+        worker:
+          pollMs: 2000
+          beatMs: 30000
+          leaseMinutes: 10
+          maxConcurrent: 1
+          approvalMode: manual
+          allowInline: false
+          execTimeoutMs: 600000
+          agentEnabled: false

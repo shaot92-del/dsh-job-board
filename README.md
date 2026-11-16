@@ -108,6 +108,8 @@ patch / 工具 / 路由，热重载会报 duplicate route 或让客户端面板�
 | `sh_read` | 读文本文件 |
 | `sh_write` | 写文本文件（UTF-8 无 BOM，自动建父目录） |
 | `sh_list` | 列目录 |
+| `worker_status` | （v2.6.0，`workerMode: on` 才注册）本机 worker 状态：模式/并发/当前任务/计数/白名单/最近日志 |
+| `worker_control` | （v2.6.0，`workerMode: on` 才注册）drain（升级前不接新任务）/ resume / 手动触发一次轮询 |
 
 ## 面板
 
@@ -142,7 +144,40 @@ patch / 工具 / 路由，热重载会报 duplicate route 或让客户端面板�
     dispatchRole: owner      # v1.3.0：同一块板子只让一台 Host 派工。
                              # 设成 observer 的 Host 只建单、不 take/untake，也不跑 reconcile
                              # （见 docs/issue-10/07-dispatch-roles.md）
+    workerMode: 'off'        # v2.6.0：单包双角色。off=只做 Host/面板（默认）；drain=起工具但暂不认领（升级窗口）；
+                             # on=同一进程里再跑 worker：认领 → 执行 → 回写。
 ```
+
+### 副机模式（v2.6.0，原 dsh-job-worker 并入）
+
+**最低 DSH 版本**：插件本体只依赖 `webServer`/`tools`；agent 模式另需 DSH 提供 `agentLoop` 与 `sessions`（0.2.2+）。缺这两个服务时 exec 路径仍可用，agent 任务会以 `agent-unavailable` 失败（服务在插件激活时读取一次，晚注册需重载插件）。
+
+副机不再需要第二个插件包。同一行配置里打开 `workerMode: on`，并给出 worker 参数：
+
+```yaml
+- id: team
+  config:
+    boardUrl: 'http://<board-host>:8965'
+    machine: 'GT14'          # 身份键：用电脑名/固定名，不要用显示名
+    token: '<board-token>'
+    dispatchRole: observer   # 副机不派工，只认领
+    workerMode: 'on'
+    worker:
+      pollMs: 2000
+      beatMs: 30000
+      maxConcurrent: 1
+      execCwd: 'C:/work'
+      allowlist: []          # 空 = 不接任何 exec 任务（fail-closed）
+      agentEnabled: false    # 默认只跑 exec；agent 需显式打开并配 preset/cwdRoot
+```
+
+- 认领只用看板 HTTP：`/api/claim` → `/api/beat` → `/api/mark`；holder 形如 `<machine>/<pid>-<rand>`，归属只认 holder，不认 note。
+- 从旧版升级：旧 `dsh-job-worker` 的插件行是**它自己包内 patch 插入的**，删 profile 里的行没用（下次启动还会回来）。必须二选一：
+  1. `dsh plugin remove dsh-job-worker`（或从 `dsh.profile.bundles` 移除该包）；
+  2. 在 profile patch 里给 `- id: dsh-job-worker` 加 `disabled: true`，并在启动日志确认没有第二个 worker。
+  否则两个 worker 会同时认领同一块板的任务。
+- agent 模式的预算/审批状态目录沿用 `%LOCALAPPDATA%\dsh-job-worker`（兼容旧版迁移，不丢已有审批与预算计数）。
+
 
 ## 自检
 

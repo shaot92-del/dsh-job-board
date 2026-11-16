@@ -1339,3 +1339,46 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 - 安装：`dsh plugin add '@wfcj/dsh-job-board'`；profile 的 `dsh.profile.bundles` 写 `@wfcj/dsh-job-board`。GitHub / 本地 `file:` 安装仍以 package.json 的包名为准。
 - 市场：DSH 自带插件市场的索引（`awesome-dsh-plugin.com/index.json`）是 npm 驱动的；没有 npm 条目就不会被收录。发布 scoped 包后，索引条目 `name` 为 `@wfcj/dsh-job-board`、`title` 仍是 `shaot92-del/dsh-job-board`。
 - 测试：`npm pack --dry-run`（33 files / 1.1 MB / 2.5.10）；plugcheck 显示 scoped name；reload / ui-guard / model-pick / update-check / check-text / check-text-smoke 全过。
+
+## 43. v2.6.0：worker 并入（单包双角色）
+
+### 43.1 为什么并
+
+副机原先要装第二个包 dsh-job-worker；两个包各自维护配置、版本与测试，升级时要动两块 patch。v2.6.0 把 worker 的「认领 → 执行 → 回写」并进同一个包、同一条插件行，靠 `workerMode` 区分角色：Host/面板默认 `off`，副机 `on`。
+
+### 43.2 契约不变
+
+- 仍只走看板 HTTP：`/api/claim`、`/api/beat`、`/api/mark`。
+- `mark` 必带 `machine`（身份名）；holder 形如 `<machine>/<pid>-<rand>`，归属只认 holder，不认 note。
+- 看板、任务表、面板字段没有新增必填项。
+
+### 43.3 配置
+
+`workerMode: 'off' | 'on'`；`worker:` 块沿用原 dsh-job-worker 的键（pollMs/beatMs/leaseMinutes/maxConcurrent/allowlist/approvalMode/execTimeoutMs/agentEnabled/agentCwdRoot/agentPreset/agentAllowlist/agentPromptGate/agentTools/agentApproval/agentBudgetMaxPerDay/stateDir/execCwd/orphanPolicy/pwshPath/logLimit）。顶层沿用 boardUrl/machine/token/timeoutMs。
+
+### 43.4 安全默认
+
+- `workerMode` 默认 off；打开后 `worker.allowlist` 为空仍不接 exec 任务。
+- `agentEnabled` 默认 false；打开时强制要求 `agentPreset` 与 `agentCwdRoot`，缺失拒绝启动 agent（只保留 exec）。
+- agent 审批/预算状态目录沿用 `%LOCALAPPDATA%\dsh-job-worker`，迁移不丢数据。
+
+### 43.5 测试
+
+- `npm test`：worker 153 项（原样搬入，import 路径改到 `lib/worker/`）。
+- `scripts/worker-merge-smoke.mjs`：off 不注册 worker 工具；on 注册 20 个工具；worker_status 版本 2.6.0；cleanup 不抛。
+- 其余 smoke 与 acceptance 全量重跑。
+
+### 43.6 边界
+
+- 旧版独立 dsh-job-worker 与新版同时启用会双抢任务。旧行来自旧包自带 patch，删 profile 行无效：必须 `dsh plugin remove dsh-job-worker`（或从 bundles 移除），或在 profile patch 给该行 `disabled: true`，并确认启动日志只有一个 worker。
+- agent 在 DSH 0.2.2-rc.3 的真机端到端仍未验证（与并入无关，属通讯层）。
+
+### 43.7 v2.6.0 已知边界（并入后）
+- agent 路径只在 DSH 0.2.2-rc.3 的接口层验证过，**真机 GT14/PC2 端到端未跑**；`agentEnabled` 默认 false，开启前要按 §43.3 配 preset/cwd 根。
+- 任务仍可自选 model/provider；`agentBudgetMaxPerDay` 只按会话次数计，不约束 token 成本。
+- exec 的 cwd 允许绝对路径（受 `execCwd` 与 allowedRoots 两层，但 worker 侧不额外收窄）；token 走 HTTP（局域网明文），跨公网必须套隧道/TLS。
+- worker 控制工具靠 `tools.restrict` 对 agent 会话遮蔽；缺 restrict 时已 fail-closed（停认领），status 的 `agentRestrictBroken` 会为 true。
+- 迁移：旧 `dsh-job-worker` 的插件行来自旧包自带 patch，删 profile 行无效；见 README「从旧版升级」。
+
+
+- restrictBroken 是全局的：一旦触发，宿主 approve/revoke 也会被拒，需要重载插件；自动轮询用 drain 停认领、保留在跑任务心跳；resume() 清 stopped 并恢复 mode=on。
