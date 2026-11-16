@@ -973,6 +973,9 @@ def do_release(body: dict) -> tuple[int, dict]:
                 and status != "superseded":
             return 409, {"error": "终态任务不能再改状态", "status": t.get("status")}
         t["status"] = status
+        if status in TERMINAL_STATUS:
+            t.pop("holder", None)
+            t.pop("lease_until", None)
         t["updated_at"] = now()
         t["lease_until"] = 0
         if status == "queued":
