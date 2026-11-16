@@ -481,7 +481,8 @@ test('run：host.start 抛错 → 退还预占额度，任务不白烧配额', a
 test('run：会话目录越过 agentCwdRoot → blocked/agent-cwd-denied，且不 start', async () => {
   const { host, calls } = makeFakeHost({ text: 'x' });
   const runner = createAgentRunner({ host, config: withAgent() });
-  const out = await runner.run({ goal: '写周报', cwd: 'C:\\Windows' }, { taskId: 'a-cwd-e2e' });
+  const outside = process.platform === 'win32' ? 'C:\\Windows' : '/';
+  const out = await runner.run({ goal: '写周报', cwd: outside }, { taskId: 'a-cwd-e2e' });
   assert.equal(out.status, 'blocked');
   assert.equal(out.reason, 'agent-cwd-denied');
   assert.equal(calls.length, 0, '准入失败不能开会话');

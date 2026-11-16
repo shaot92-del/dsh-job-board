@@ -128,7 +128,7 @@ test('失败任务也要把 exitCode + stderr 尾部 + stage 写回看板', asyn
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-worker-e2e-fail-'));
   const scriptPath = path.join(tmp, 'bad.ps1');
-  fs.writeFileSync(scriptPath, "[Console]::Error.WriteLine('模拟上游失败')\nexit 7\n", 'utf8');
+  fs.writeFileSync(scriptPath, "[Console]::Error.WriteLine('upstream failure')\nexit 7\n", 'utf8');
 
   const board = createFakeBoard({});
   const { url } = await board.listen(0, '127.0.0.1');
@@ -173,7 +173,7 @@ test('失败任务也要把 exitCode + stderr 尾部 + stage 写回看板', asyn
     assert.equal(finished.status, 'failed');
     assert.match(finished.note, /stage=exec/);
     assert.match(finished.note, /exit=7/);
-    assert.match(finished.note, /模拟上游失败/);
+    assert.match(finished.note, /upstream failure/);
   } finally {
     if (worker) await worker.stop({ waitMs: 500 });
     await board.close();

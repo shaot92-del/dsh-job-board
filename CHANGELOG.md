@@ -1,5 +1,9 @@
 # 变更日志
 
+## v2.6.3 — 2026-11-16
+
+- CI 跨平台：exec-runner 用例在非 Windows 跳过（exec 只支持 Windows PowerShell）；agent-cwd 用例用平台对应的越界目录；e2e stderr 改 ASCII 避免 Windows runner 代码页把中文变成 `??????`；argv 断言用 `realpathSync.native` 对齐长路径。
+
 ## v2.6.2 — 2026-11-16
 
 - 修 CI：worker-merge-smoke 的 W3 不再写死 2.6.0，改读 package.json 版本。

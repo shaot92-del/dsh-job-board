@@ -14,6 +14,8 @@ import {
 } from '../../lib/worker/exec-runner.js';
 import { resolvePwshPath } from '../../lib/worker/config.js';
 
+const wt = process.platform === 'win32' ? test : (name, fn) => test(name, { skip: 'exec-runner 是 Windows PowerShell 专用' }, fn);
+
 // ── 测试用临时目录 ─────────────────────────────────────────────────────────
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-worker-test-'));
 const allowedDir = path.join(root, 'allowed');
@@ -71,13 +73,13 @@ const baseConfig = {
   execTimeoutMs: 5000,
 };
 
-test('checkScriptAccess：白名单命中的脚本放行', () => {
+wt('checkScriptAccess：白名单命中的脚本放行', () => {
   const r = checkScriptAccess(insideScript, { allowlist: [allowedDir], approvalMode: 'manual' });
   assert.equal(r.allowed, true);
   assert.equal(r.reason, 'allowed');
 });
 
-test('checkScriptAccess：目录内的后缀边界不能被糊弄（allowed-evil）', () => {
+wt('checkScriptAccess：目录内的后缀边界不能被糊弄（allowed-evil）', () => {
   const sibling = `${allowedDir}-evil`;
   fs.mkdirSync(sibling, { recursive: true });
   const p = path.join(sibling, 'x.ps1');
@@ -85,7 +87,7 @@ test('checkScriptAccess：目录内的后缀边界不能被糊弄（allowed-evil
   assert.equal(checkScriptAccess(p, { allowlist: [allowedDir] }).allowed, false);
 });
 
-test('checkScriptAccess：`..` 段与 junction 都不能白名单逃逸（安全审计 P0-1）', () => {
+wt('checkScriptAccess：`..` 段与 junction 都不能白名单逃逸（安全审计 P0-1）', () => {
   // 形态层：`..` 直接拒
   const dotted = `${allowedDir}\\..\\outside\\job.ps1`;
   const r = checkScriptAccess(dotted, { allowlist: [allowedDir], approvalMode: 'manual' });
@@ -113,7 +115,7 @@ test('checkScriptAccess：`..` 段与 junction 都不能白名单逃逸（安全
   assert.equal(checkScriptAccess('\\\\?\\C:\\x.ps1', { allowlist: [allowedDir] }).reason, 'bad-path');
 });
 
-test('run：pwsh 解析不到 → failed/pwsh-missing（不回退裸名，避免 PATH 劫持）', async () => {
+wt('run：pwsh 解析不到 → failed/pwsh-missing（不回退裸名，避免 PATH 劫持）', async () => {
   const runner = createExecRunner({ config: baseConfig, pwshPath: '', spawnImpl: spawnReturning(fakeChild()) });
   const out = await runner.run({ scriptPath: insideScript, timeoutMs: 2000 });
   assert.equal(out.status, 'failed');
@@ -121,7 +123,7 @@ test('run：pwsh 解析不到 → failed/pwsh-missing（不回退裸名，避免
   assert.match(out.note, /pwsh-missing/);
 });
 
-test('checkScriptAccess：各类拒绝原因', () => {
+wt('checkScriptAccess：各类拒绝原因', () => {
   assert.equal(checkScriptAccess('', {}).reason, 'empty');
   assert.equal(checkScriptAccess('relative\\x.ps1', { allowlist: [allowedDir] }).reason, 'not-absolute');
   assert.equal(checkScriptAccess(path.join(allowedDir, 'x.txt'), { allowlist: [allowedDir] }).reason, 'bad-extension');
@@ -130,29 +132,29 @@ test('checkScriptAccess：各类拒绝原因', () => {
   assert.equal(checkScriptAccess(outsideScript, { allowlist: [allowedDir] }).reason, 'not-allowlisted');
 });
 
-test('checkScriptAccess：allowlist 可以是单个文件（全等匹配）', () => {
+wt('checkScriptAccess：allowlist 可以是单个文件（全等匹配）', () => {
   assert.equal(checkScriptAccess(insideScript, { allowlist: [insideScript] }).allowed, true);
   assert.equal(checkScriptAccess(outsideScript, { allowlist: [insideScript] }).allowed, false);
 });
 
-test('checkScriptAccess：approvalMode=auto 放行非白名单并标记来源', () => {
+wt('checkScriptAccess：approvalMode=auto 放行非白名单并标记来源', () => {
   const r = checkScriptAccess(outsideScript, { allowlist: [allowedDir], approvalMode: 'auto' });
   assert.equal(r.allowed, true);
   assert.equal(r.reason, 'not-allowlisted-auto');
 });
 
-test('isWithin / normalizeForCompare：大小写与分隔符不敏感', () => {
+wt('isWithin / normalizeForCompare：大小写与分隔符不敏感', () => {
   assert.equal(isWithin('C:\\Tools\\A\\x.ps1', 'c:/tools/a'), true);
   assert.equal(isWithin('C:\\Tools\\AB\\x.ps1', 'C:\\Tools\\A'), false);
   assert.equal(normalizeForCompare('C:\\A\\\\'), 'c:\\a');
 });
 
-test('oneLine：压成单行并截断', () => {
+wt('oneLine：压成单行并截断', () => {
   assert.equal(oneLine('a\r\nb   c'), 'a b c');
   assert.equal(oneLine('x'.repeat(400)).length, 301);
 });
 
-test('buildChildEnv：只透传白名单变量', () => {
+wt('buildChildEnv：只透传白名单变量', () => {
   const env = buildChildEnv({ SystemRoot: 'C:\\Windows', PATH: 'C:\\bin', DSH_TOKEN: 'secret', RANDOM_VAR: 'x' });
   assert.equal(env.SystemRoot, 'C:\\Windows');
   assert.equal(env.PATH, 'C:\\bin');
@@ -160,7 +162,7 @@ test('buildChildEnv：只透传白名单变量', () => {
   assert.equal(env.RANDOM_VAR, undefined);
 });
 
-test('run：成功路径——argv 形态、DSH_RESULT/DSH_ARTIFACT 解析', async () => {
+wt('run：成功路径——argv 形态、DSH_RESULT/DSH_ARTIFACT 解析', async () => {
   const captured = [];
   const stdout = 'building...\nDSH_RESULT {"ok":true,"expected":30,"actual":30,"reasons":[]}\nDSH_ARTIFACT L:\\out\\r.html\n';
   const runner = createExecRunner({
@@ -175,11 +177,12 @@ test('run：成功路径——argv 形态、DSH_RESULT/DSH_ARTIFACT 解析', asy
   assert.match(out.note, /stage=exec exit=0/);
   assert.match(out.note, /result=ok/);
   const argv = captured[0].args;
-  assert.deepEqual(argv.slice(0, 4), ['-NoProfile', '-NonInteractive', '-File', fs.realpathSync(insideScript)]);
+  const realScript = fs.realpathSync.native ? fs.realpathSync.native(insideScript) : fs.realpathSync(insideScript);
+  assert.deepEqual(argv.slice(0, 4), ['-NoProfile', '-NonInteractive', '-File', realScript]);
   assert.deepEqual(argv.slice(4), ['-Cases', '30']);
 });
 
-test('run：退出码非零 → failed，note 带 exitCode 与 stderr 尾部', async () => {
+wt('run：退出码非零 → failed，note 带 exitCode 与 stderr 尾部', async () => {
   const runner = createExecRunner({
     config: baseConfig,
     spawnImpl: spawnReturning(fakeChild({ code: 3, stderr: 'boom: 文件不存在' })),
@@ -191,7 +194,7 @@ test('run：退出码非零 → failed，note 带 exitCode 与 stderr 尾部', a
   assert.match(out.note, /stderr=boom/);
 });
 
-test('run：exit 0 但没有 DSH_RESULT → done + dsh-result=missing（不是失败）', async () => {
+wt('run：exit 0 但没有 DSH_RESULT → done + dsh-result=missing（不是失败）', async () => {
   const runner = createExecRunner({ config: baseConfig, spawnImpl: spawnReturning(fakeChild({ stdout: 'nothing\n' })) });
   const out = await runner.run({ scriptPath: insideScript });
   assert.equal(out.status, 'done');
@@ -199,7 +202,7 @@ test('run：exit 0 但没有 DSH_RESULT → done + dsh-result=missing（不是�
   assert.match(out.note, /dsh-result=missing/);
 });
 
-test('run：exit 0 但 DSH_RESULT 是脏数据 → done + 具体错误', async () => {
+wt('run：exit 0 但 DSH_RESULT 是脏数据 → done + 具体错误', async () => {
   const runner = createExecRunner({
     config: baseConfig,
     spawnImpl: spawnReturning(fakeChild({ stdout: 'DSH_RESULT {"ok":"yes"}\n' })),
@@ -210,7 +213,7 @@ test('run：exit 0 但 DSH_RESULT 是脏数据 → done + 具体错误', async (
   assert.match(out.note, /dsh-result=shape-invalid/);
 });
 
-test('run：超时 → failed/timedOut，并杀掉进程树', async () => {
+wt('run：超时 → failed/timedOut，并杀掉进程树', async () => {
   // 子进程不自动退出，只有 kill 时才 close —— 模拟卡住的脚本
   const child = fakeChild({ autoClose: false, closeOnKill: true });
   const runner = createExecRunner({ config: baseConfig, spawnImpl: spawnReturning(child) });
@@ -221,7 +224,7 @@ test('run：超时 → failed/timedOut，并杀掉进程树', async () => {
   assert.equal(child.killCalls, 1);
 });
 
-test('run：kill 不掉（进程不退出）→ 宽限期后收尾，不把并发槽拖死', async () => {
+wt('run：kill 不掉（进程不退出）→ 宽限期后收尾，不把并发槽拖死', async () => {
   // 完全不理会 kill：既不 emit close，也不报错
   const child = fakeChild({ autoClose: false, closeOnKill: false });
   const runner = createExecRunner({
@@ -238,7 +241,7 @@ test('run：kill 不掉（进程不退出）→ 宽限期后收尾，不把并�
   assert.ok(child.killCalls >= 1);
 });
 
-test('run：取消 → blocked/canceled', async () => {
+wt('run：取消 → blocked/canceled', async () => {
   const child = fakeChild({ autoClose: false, closeOnKill: true });
   const runner = createExecRunner({ config: baseConfig, spawnImpl: spawnReturning(child) });
   const controller = new AbortController();
@@ -251,7 +254,7 @@ test('run：取消 → blocked/canceled', async () => {
   assert.match(out.note, /reason=canceled/);
 });
 
-test('run：spawn 抛错 → failed/spawn-failed', async () => {
+wt('run：spawn 抛错 → failed/spawn-failed', async () => {
   const runner = createExecRunner({
     config: baseConfig,
     spawnImpl: () => {
@@ -263,7 +266,7 @@ test('run：spawn 抛错 → failed/spawn-failed', async () => {
   assert.match(out.note, /reason=spawn-failed/);
 });
 
-test('run：白名单外 → blocked/approval-required，且不 spawn', async () => {
+wt('run：白名单外 → blocked/approval-required，且不 spawn', async () => {
   const captured = [];
   const runner = createExecRunner({ config: baseConfig, spawnImpl: spawnReturning(fakeChild(), captured) });
   const out = await runner.run({ scriptPath: outsideScript });
@@ -273,14 +276,14 @@ test('run：白名单外 → blocked/approval-required，且不 spawn', async ()
   assert.equal(captured.length, 0);
 });
 
-test('run：内联命令在 allowInline=false 时被拒', async () => {
+wt('run：内联命令在 allowInline=false 时被拒', async () => {
   const runner = createExecRunner({ config: { ...baseConfig, allowInline: false }, spawnImpl: spawnReturning(fakeChild()) });
   const out = await runner.run({ inline: 'Get-Date' });
   assert.equal(out.status, 'blocked');
   assert.equal(out.reason, 'inline-command-not-allowed');
 });
 
-test('真机：用真 pwsh 跑一个脚本（有 pwsh 才跑）', async (t) => {
+wt('真机：用真 pwsh 跑一个脚本（有 pwsh 才跑）', async (t) => {
   const pwsh = resolvePwshPath({}, { exists: (p) => fs.existsSync(p) });
   if (!pwsh) return t.skip('没有 pwsh');
   const script = path.join(allowedDir, 'real.ps1');
@@ -292,7 +295,7 @@ test('真机：用真 pwsh 跑一个脚本（有 pwsh 才跑）', async (t) => {
 });
 
 // ── 第二轮安全审计（修复增量）留下的回归 ────────────────────────────────────
-test('run：exit 到了但 close 一直不来（孙进程占着管道）→ 按 exit 结算，不拖到超时', async () => {
+wt('run：exit 到了但 close 一直不来（孙进程占着管道）→ 按 exit 结算，不拖到超时', async () => {
   const child = fakeChild({ autoClose: false });
   const runner = createExecRunner({
     config: { ...baseConfig },
@@ -311,7 +314,7 @@ test('run：exit 到了但 close 一直不来（孙进程占着管道）→ 按 
   assert.equal(out.result.actual, 1);
 });
 
-test('resolvePwshPath：显式值也要过闸（裸名 / 不存在 / 目录 → 空串）', () => {
+wt('resolvePwshPath：显式值也要过闸（裸名 / 不存在 / 目录 → 空串）', () => {
   const okFs = { exists: () => true, isFile: () => true };
   assert.equal(resolvePwshPath({ pwshPath: 'pwsh' }, okFs), '', '裸名字不能靠 PATH 解析');
   assert.equal(resolvePwshPath({ pwshPath: '.\\pwsh.exe' }, okFs), '', '相对路径不能靠 cwd 解析');
@@ -324,7 +327,7 @@ test('resolvePwshPath：显式值也要过闸（裸名 / 不存在 / 目录 → 
   );
 });
 
-test('resolvePwshPath：PATH 里的相对项不参与候选', () => {
+wt('resolvePwshPath：PATH 里的相对项不参与候选', () => {
   const env = { PATH: 'relbin;C:\\Tools' };
   const calls = [];
   const r = resolvePwshPath(
@@ -342,7 +345,7 @@ test('resolvePwshPath：PATH 里的相对项不参与候选', () => {
 });
 
 
-test('resolvePwshPath：显式值带引号要去掉引号再判（否则合法路径被误拒）', () => {
+wt('resolvePwshPath：显式值带引号要去掉引号再判（否则合法路径被误拒）', () => {
   const fsOk = { exists: () => true, isFile: () => true };
   assert.equal(resolvePwshPath({ pwshPath: '"C:\\Tools\\pwsh.exe"' }, fsOk), 'C:\\Tools\\pwsh.exe');
 });
