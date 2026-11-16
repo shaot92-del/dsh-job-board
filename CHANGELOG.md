@@ -1,4 +1,8 @@
 # 变更日志
+## v2.6.8 — 2026-11-16
+
+- 同一处 Windows 8.3 断言：`resolveCwd` 的 inside 用例两边都改用 `fs.realpathSync.native` 比较；代码不变。
+
 ## v2.6.7 — 2026-11-16
 
 - 修 Windows CI 的 8.3 短路径断言：`resolveCwd` 的 root-default 用例改用 `fs.realpathSync.native` 比较；v2.6.6 的代码不变。

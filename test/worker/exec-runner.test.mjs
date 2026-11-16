@@ -374,7 +374,7 @@ test('resolveCwd：配了 root 就 fail-closed（根无效/候选越界都 block
     const inside = fs.mkdtempSync(path.join(root, 'inner-'));
     r = resolveCwd([inside], fs, root);
     assert.equal(r.reason, '');
-    assert.equal(fs.realpathSync(r.cwd), fs.realpathSync(inside));
+    assert.equal(fs.realpathSync.native(r.cwd), fs.realpathSync.native(inside));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(outside, { recursive: true, force: true });
