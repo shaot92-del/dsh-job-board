@@ -1,5 +1,9 @@
 # 变更日志
 
+## v2.6.4 — 2026-11-16
+
+- exec-runner 超时/宽限/排空计时器不再 `unref()`：假子进程场景下事件循环会先清空，测试 Promise 永久 pending（CI Windows Node 24 直接判 cancelledByParent）。收尾路径本来就会 clearTimeout，不影响进程退出。
+
 ## v2.6.3 — 2026-11-16
 
 - CI 跨平台：exec-runner 用例在非 Windows 跳过（exec 只支持 Windows PowerShell）；agent-cwd 用例用平台对应的越界目录；e2e stderr 改 ASCII 避免 Windows runner 代码页把中文变成 `??????`；argv 断言用 `realpathSync.native` 对齐长路径。
