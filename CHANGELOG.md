@@ -1,4 +1,8 @@
 # 变更日志
+## v2.6.7 — 2026-11-16
+
+- 修 Windows CI 的 8.3 短路径断言：`resolveCwd` 的 root-default 用例改用 `fs.realpathSync.native` 比较；v2.6.6 的代码不变。
+
 ## v2.6.6 — 2026-11-16
 
 外部审查（GLM-5.3 / DeepSeek-V4.1 / HY4，四份报告）后的主要修复：

@@ -368,7 +368,7 @@ test('resolveCwd：配了 root 就 fail-closed（根无效/候选越界都 block
     assert.equal(r.reason, 'cwd-not-in-root');
 
     r = resolveCwd([''], fs, root);
-    assert.equal(r.cwd, fs.realpathSync(root));
+    assert.equal(r.cwd, fs.realpathSync.native(root));
     assert.equal(r.reason, 'cwd-root-default');
 
     const inside = fs.mkdtempSync(path.join(root, 'inner-'));
