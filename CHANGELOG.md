@@ -1,5 +1,10 @@
 # 变更日志
 
+## v2.6.1 — 2026-11-16
+
+- 修 Linux CI 卡死：agent-runner 的 `handle.dispose()` 无上限等待，假宿主 dispose 永不 resolve 时 `run` 超时/取消用例挂住；改为 `disposeWithTimeout`（最多 1s，失败仅记日志）。
+- worker VERSION 与 UA 同步 2.6.1。
+
 ## v2.6.0 — 2026-11-16
 
 - **单包双角色**：原 `dsh-job-worker` 的 worker 半边并入 `@wfcj/dsh-job-board`，仍只有一条插件行（`id: team`）。`workerMode: 'off' | 'drain' | 'on'` 决定是否在同一个进程里跑「认领 → 执行 → 回写」；Host/面板/看板工具在三种模式下都照常。drain 启动仍会跑一次孤儿扫描（升级窗口注意）。
