@@ -256,8 +256,9 @@ _ALIAS_STRIP = re.compile(r"[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202
 def _alias_key(v: str) -> str:
     """显示名归一：去控制/零宽/bidi，只留字母数字，用于唯一性比较。"""
     s = _ALIAS_STRIP.sub("", str(v or ""))
-    # allow CJK so Chinese display names do not all collapse to "" and collide.
-    return re.sub(r"[^0-9a-z\u4e00-\u9fff]", "", s.casefold())
+    # v2.6.9：保留 CJK 与空白，避免「主机 甲」与「主机甲」被折叠成同一个 key。
+    s = re.sub(r"[^0-9a-z\u4e00-\u9fff\s]", "", s.casefold())
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def touch_machine(machine: str, current: str = "", note: str = "") -> None:
@@ -329,8 +330,7 @@ def do_claim(body: dict) -> tuple[int, dict]:
         holder = t.get("machine", "")
         cur_holder = (t.get("holder") or "").strip()
         if eff["status"] in ("claimed", "running"):
-            # v2.6.6 复审 M1：有 holder 时 fail-closed（省略 holder 不能接管）；
-            # 无 holder 的旧任务退回机器级比较，保持升级兼容。
+            # v2.6.9：有 holder 必须同一 holder；无 holder 的旧占位一律 409（不再机器级回退）。
             if cur_holder:
                 if instance_holder != cur_holder:
                     return 409, {
@@ -339,11 +339,12 @@ def do_claim(body: dict) -> tuple[int, dict]:
                         "holder": cur_holder,
                         "lease_until": t.get("lease_until", 0),
                     }
-            elif holder and holder != machine:
+            else:
+                # v2.6.9：旧实例（升级前）不登记 holder，无法确认是否为同一执行者。
+                # 同机再 claim 一律 409，等租约过期转 stale 后再接管 —— 否则旧+新会双跑。
                 return 409, {
-                    "error": "已被占用",
+                    "error": "旧占位没有登记 holder，无法确认归属；等租约过期后再接管",
                     "task_id": task_id,
-                    "holder": holder,
                     "lease_until": t.get("lease_until", 0),
                     "note": t.get("note", ""),
                 }
@@ -371,7 +372,7 @@ def do_claim(body: dict) -> tuple[int, dict]:
             t["model"] = str(body.get("model") or "").strip()[:160]
         if instance_holder:
             t["holder"] = instance_holder
-        elif took_over:
+        else:
             t.pop("holder", None)
         t["claimed_at"] = now()
         t["lease_until"] = now() + minutes * 60
@@ -447,6 +448,8 @@ def do_attach(body: dict) -> tuple[int, dict]:
         t = STATE["tasks"].get(task_id)
         if not t:
             return 404, {"error": "没有这道任务", "task_id": task_id}
+        if (t.get("status") or "") in TERMINAL_STATUS:
+            return 409, {"error": "终态任务不能再 attach", "status": t.get("status")}
         if machine:
             # B1：别名只作查找键；落库前折回身份。若仍不是已知身份、且看起来像显示名
             # （空格/中文等），明确拒绝 —— 免得 touch_machine 造出 ghost。
@@ -504,7 +507,7 @@ def do_take(body: dict) -> tuple[int, dict]:
                 # v1.3.3：同机第二个实例不能把别人的占位当"自己重入"—— 否则两边都会
                 # 往下 /dispatch，同一条板上任务在副机上被派两遍。
                 cur_holder = (t.get("holder") or "").strip()
-                if cur_holder and holder and cur_holder != holder:
+                if cur_holder and holder != cur_holder:
                     return 409, {"error": "已被同机的另一个实例占住",
                                  "taker": taker, "holder": cur_holder}
                 if holder:
@@ -636,8 +639,12 @@ def do_mark(body: dict) -> tuple[int, dict]:
             except Exception:
                 expired = False
             same_machine = bool(machine and t.get("machine") and _canon_machine(machine) == _canon_machine(t.get("machine")))
-            if not (is_local or (expired and same_machine)):
-                return 409, {"error": "mark 必须带同一 holder（回环/租约过期回收除外）", "holder": cur_holder}
+            terminal = t.get("status") in TERMINAL_STATUS and status in TERMINAL_STATUS
+            if not (is_local or terminal or (expired and same_machine)):
+                return 409, {"error": "mark 必须带同一 holder（回环/终态归档/租约过期回收除外）", "holder": cur_holder}
+        if status and t.get("status") in TERMINAL_STATUS and status != t.get("status") \
+                and status != "superseded":
+            return 409, {"error": "终态任务不能再改状态", "status": t.get("status")}
         if dispatch:
             t["dispatch"] = dispatch
         else:
@@ -959,8 +966,12 @@ def do_release(body: dict) -> tuple[int, dict]:
             except Exception:
                 expired = False
             same_machine = bool(machine and t.get("machine") and _canon_machine(machine) == _canon_machine(t.get("machine")))
-            if not (is_local or (expired and same_machine)):
-                return 409, {"error": "release 必须带同一 holder（回环/租约过期回收除外）", "holder": cur_holder}
+            terminal = t.get("status") in TERMINAL_STATUS and status in TERMINAL_STATUS
+            if not (is_local or terminal or (expired and same_machine)):
+                return 409, {"error": "release 必须带同一 holder（回环/终态归档/租约过期回收除外）", "holder": cur_holder}
+        if t.get("status") in TERMINAL_STATUS and status != t.get("status") \
+                and status != "superseded":
+            return 409, {"error": "终态任务不能再改状态", "status": t.get("status")}
         t["status"] = status
         t["updated_at"] = now()
         t["lease_until"] = 0

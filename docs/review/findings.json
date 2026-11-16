@@ -1,5 +1,5 @@
 {
-  "version": "2.6.6",
+  "version": "2.6.9",
   "updated": "2026-11-16",
   "sources": [
     {
@@ -36,7 +36,8 @@
       "summary": "claim 落 holder 且已有 holder 时 fail-closed（省略 holder 409）；beat/mark/release/untake 同步校验。",
       "tests": [
         "board-server-smoke V266 claim/mark 409"
-      ]
+      ],
+      "note": "；v2.6.9 补齐 solo-board 与 old+new 两条路径"
     },
     {
       "id": "v266-get-csrf",
@@ -234,6 +235,62 @@
       "status": "known",
       "where": "lib/index.js cfg.dispatchApproval",
       "summary": "默认 auto 属产品选择（自动派工不等审批），未在本轮改动。"
+    },
+    {
+      "id": "v269-solo-holder",
+      "status": "fixed",
+      "severity": "P0",
+      "source": "OpenPangu-2.1-Pro VULN-001",
+      "note": "solo-board claim/beat 校验并落 holder；S11 回归"
+    },
+    {
+      "id": "v269-oldnew-claim",
+      "status": "fixed",
+      "severity": "P0",
+      "source": "OpenPangu-2.1-Pro VULN-002",
+      "note": "板子无 cur_holder 时 409；V266b 回归"
+    },
+    {
+      "id": "v269-ui-untake-holder",
+      "status": "fixed",
+      "severity": "P1",
+      "source": "OpenPangu-2.1-Pro VULN-003",
+      "note": "UI untake 带 INSTANCE_HOLDER"
+    },
+    {
+      "id": "v269-terminal-archive",
+      "status": "fixed",
+      "severity": "P3",
+      "source": "OpenPangu-2.1-Pro VULN-004",
+      "note": "mark/release 对终态任务无 holder 放行，UI 透传 machine"
+    },
+    {
+      "id": "v269-alias-space",
+      "status": "fixed",
+      "severity": "P3",
+      "source": "OpenPangu-2.1-Pro VULN-005",
+      "note": "_alias_key 保留空白"
+    },
+    {
+      "id": "v269-redact-env",
+      "status": "fixed",
+      "severity": "P3",
+      "source": "OpenPangu-2.1-Pro VULN-006",
+      "note": "redactConfig 覆盖 envPassthrough/passEnv"
+    },
+    {
+      "id": "v269-uiguard-write-routes",
+      "status": "fixed",
+      "severity": "P3",
+      "source": "OpenPangu-2.1-Pro VULN-007",
+      "note": "ui-guard 16 条写型动作路由（13 循环+3 定向）GET 拒绝 38/38"
+    },
+    {
+      "id": "v269-trace-rotation",
+      "status": "fixed",
+      "severity": "P3",
+      "source": "hy4 P3",
+      "note": "trace 归档名 pid+时间戳，不再 unlink 他进程归档"
     }
   ]
 }

@@ -142,7 +142,7 @@ r = await call('/api/board/ui/alias', { method: 'POST', headers: { ...base, 'x-d
 check('alias 超长拒绝', r.status === 400, 'status=' + r.status)
 
 // v2.6.6（外部审查 D1）：写型 UI 路由禁止 GET/HEAD，防 <img> 型 CSRF 触发评估/暂停/喊话。
-for (const p of ['/api/board/ui/assess', '/api/board/ui/say', '/api/board/ui/dispatch-pause', '/api/board/ui/claim', '/api/board/ui/release', '/api/board/ui/retry', '/api/board/ui/untake', '/api/board/ui/create', '/api/board/ui/attach', '/api/board/ui/mark']) {
+for (const p of ['/api/board/ui/assess', '/api/board/ui/say', '/api/board/ui/dispatch-pause', '/api/board/ui/claim', '/api/board/ui/release', '/api/board/ui/retry', '/api/board/ui/untake', '/api/board/ui/create', '/api/board/ui/attach', '/api/board/ui/mark', '/api/board/ui/alias', '/api/board/ui/machine-alias', '/api/board/ui/forget-machine']) {
   const g = await call(p, { headers: { ...base } })
   check('GET ' + p + ' 被拒', g.status === 403 || g.status === 405, 'status=' + g.status)
 }

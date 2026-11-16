@@ -1399,3 +1399,15 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 - agent 路径在 DSH 0.2.2-rc.3 的真机端到端仍未验证（接口层已测）。
 - `mark` 仍无状态 CAS（终态可被本机面板翻回）；holder 是实例标签而非认证，`/api/board` 快照会暴露它（持 token 者可重放）；`update-check` 为 GET 且无缓存；`solo-board` 出站未脱敏——均登记在 `docs/review/findings.json`。
 
+
+
+## §43.9 v2.6.9：holder 归属的最后一轮收紧（2026-11-16）
+
+- 背景：多模型外部审查（合并报告）中 OpenPangu 2.1 Pro 报 2 个 P0：solo-board 的 claim 不认 holder；板子对"无 holder 的旧占位"回退机器级比较，导致旧独立 worker 与新单包同机双跑。复核属实。
+- 修复：
+  - 板子 claim：claimed/running 且无 cur_holder → 409（提示等租约过期）；有 cur_holder 必须相等。
+  - solo claim：同一规则 + 落 holder；beat 对显式不一致 holder 报 409。
+  - UI untake 带 INSTANCE_HOLDER；mark/release 透传 machine；板子对终态任务的无 holder 归档放行（回环/远程一致）。
+- v2.6.9 追加（复审 R1–R4 + code-v269 F1/F2/F6）：board_done/board_fail 与面板 release 回带 INSTANCE_HOLDER（solo 默认部署可用）；无 holder 的 claim 会清掉旧 holder；终态只允许同状态或 done→superseded；trace 归档保留最近 3 份。
+- v2.6.9 追加（复审 R1–R4）：solo 的 take 同款严格 holder；mark/release 的孤儿回收例外恢复为"租约过期且同机"；终态任务禁止改回非终态；面板 release 回带 task.holder 并经 UI 路由透传。
+- 未修边界（已登记）：mark 无状态 CAS、holder 是实例标签而非认证、单 token 明文 HTTP、execCwdRoot 未配时仍回退家目录、agent 真机未验。

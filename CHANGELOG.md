@@ -1,4 +1,21 @@
 # 变更日志
+## v2.6.9 — 2026-11-16
+
+外部审查（多模型合并报告，OpenPangu 2.1 Pro 的 P0）复核后的修复。
+
+- 板子 `claim`：`cur_holder` 为空且任务处于 claimed/running 时，一律 409（不再按 machine 回退）。旧实例不带 holder 的占位无法与新实例区分，只能等租约过期转 stale；杜绝"旧独立 worker + 新单包"同机双跑。
+- `solo-board.claim`：读取并落 `holder`；已有 holder 的占位必须同一 holder 才能续 claim（旧占位无 holder → 409）；`beat` 对不一致的 holder 返回 409（不带 holder 的旧客户端仍可用）。
+- `solo-board` 的 mark/release/untake/beat/take 对齐 Python 板：占位已有 holder 时省略 holder 一律 409；mark/release 保留"租约过期且同机"的孤儿回收例外；终态归档的省略只允许"当前与请求状态都是终态"；claim 的 holder 比较改为严格（不再忽略大小写）。
+- 终态任务不能通过 mark/release 改到别的终态（只允许同状态或任意终态→superseded 归档），防复活/改写结论。
+- 面板 release（完成/打回）回带 `task.holder`，UI 路由透传 holder，solo 板在跑任务的人工收尾不再 409。
+- UI `/untake` 带上 `INSTANCE_HOLDER`，无 holder/本实例占位的面板清理不再 409；UI `mark/release` 透传 `machine`，板子对"终态任务 + 无 holder + 请求状态为终态"放行，远程板归档可用。
+- 显示名归一保留空格（"主机 甲"与"主机甲"不再被折叠为同一 key）。
+- `redactConfig` 覆盖 `envPassthrough/passEnv`；`trace` 轮转改用 `pid+时间戳` 归档名，不再 unlink 其它进程的归档。
+- ui-guard 覆盖全部 13 条写型路由的 GET 拒绝（38/38）。
+- 测试：solo smoke 增加 S11（claim/beat holder 归属）、S12（省略 holder 的 mark/release/untake/take、大小写、终态归档）；board smoke 增加 V266b（旧客户端先 claim、新实例再接 → 409）与终态复活守卫。
+- 边界：升级前无 holder 的旧占位需等租约（默认 30min + 120s stale 宽限）才能接管；solo 板的"租约过期且同机"是 mark/release 的唯一无 holder 例外。
+- 已知问题：面板对 failed/blocked 任务的「交付/完成/打回」按钮仍会渲染，点击返回 409（下一步修）。
+
 ## v2.6.8 — 2026-11-16
 
 - 同一处 Windows 8.3 断言：`resolveCwd` 的 inside 用例两边都改用 `fs.realpathSync.native` 比较；代码不变。

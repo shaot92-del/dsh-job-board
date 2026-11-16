@@ -152,10 +152,30 @@ def main() -> int:
         check("F3b result 落库（ok/expected/actual/reasons）",
               ok_result and r.get("ok") is False and r.get("expected") == 30 and r.get("actual") == 1
               and r.get("reasons") == ["only one case ran"], "%s %s" % (code, r))
+        # v2.6.9 R4：终态不能通过 mark/release 复活成非终态；回队列要另开任务走 running→queued。
         code, body = call(port, "/api/mark", {"task_id": tid, "machine": "GT14", "status": "queued"})
         _, board = call(port, "/api/board")
         tr = ((board or {}).get("tasks") or {}).get(tid) or {}
-        check("F3c 回队列清掉旧 result", code == 200 and "result" not in tr, "%s %s" % (code, tr.get("result")))
+        check("F3c 终态不能回 queued（409）", code == 409, "%s %s" % (code, body))
+        code, body = call(port, "/api/release", {"task_id": tid, "machine": "GT14", "status": "failed"})
+        check("F3c 终态不能改成别的终态（409）", code == 409, "%s %s" % (code, body))
+        code, body = call(port, "/api/release", {"task_id": tid, "machine": "GT14", "status": "done"})
+        check("F3c 终态同状态归档 200", code == 200, "%s %s" % (code, body))
+        # v2.6.9 N1：面板清理需要任意终态 → superseded
+        for st in ("failed", "blocked"):
+            call(port, "/api/create", {"task_id": "f3c-" + st, "goal": "清理", "machine": "GT14", "dispatch": "auto"})
+            call(port, "/api/claim", {"task_id": "f3c-" + st, "machine": "GT14", "holder": "inst-" + st})
+            call(port, "/api/mark", {"task_id": "f3c-" + st, "machine": "GT14", "holder": "inst-" + st, "status": st})
+            code, body = call(port, "/api/release", {"task_id": "f3c-" + st, "machine": "GT14", "status": "superseded", "note": "GUI 清理"})
+            check("F3c %s→superseded 200" % st, code == 200, "%s %s" % (code, body))
+        call(port, "/api/create", {"task_id": "f3e", "goal": "回队列清 result", "machine": "GT14", "dispatch": "auto"})
+        call(port, "/api/claim", {"task_id": "f3e", "machine": "GT14", "holder": "inst-f3"})
+        call(port, "/api/mark", {"task_id": "f3e", "machine": "GT14", "holder": "inst-f3", "status": "running",
+                                 "result": {"ok": False, "expected": 5, "actual": 1}})
+        code, body = call(port, "/api/mark", {"task_id": "f3e", "machine": "GT14", "holder": "inst-f3", "status": "queued"})
+        _, board = call(port, "/api/board")
+        tr = ((board or {}).get("tasks") or {}).get("f3e") or {}
+        check("F3c 非终态回队列清掉旧 result", code == 200 and "result" not in tr, "%s %s" % (code, tr.get("result")))
         call(port, "/api/mark", {"task_id": tid, "machine": "GT14", "status": "done",
                                  "result": {"ok": False, "expected": 3, "actual": 1}})
         call(port, "/api/mark", {"task_id": tid, "machine": "GT14", "result": {"ok": "yes"}})
@@ -367,6 +387,13 @@ def main() -> int:
             check("V266 省略 holder claim 409", c7 == 409, "%s %s" % (c7, b7))
             c7, b7 = call(p6_port, "/api/claim", {"task_id": "v266-h1", "machine": "MB14", "holder": "inst-C"})
             check("V266 跨机 claim 409", c7 == 409, "%s %s" % (c7, b7))
+            # v2.6.9 / OpenPangu VULN-002：旧实例不带 holder claim 后，新实例同机 claim 必须 409
+            c6, b6 = call(p6_port, "/api/create", {"task_id": "v266-old", "goal": "old+new", "dispatch": "auto"})
+            c6, b6 = call(p6_port, "/api/claim", {"task_id": "v266-old", "machine": "GT14"})
+            check("V266b 旧客户端无 holder claim 200", c6 == 200, "%s %s" % (c6, b6))
+            c7, b7 = call(p6_port, "/api/claim", {"task_id": "v266-old", "machine": "GT14", "holder": "inst-new"})
+            check("V266b 新实例接旧占位 409", c7 == 409, "%s %s" % (c7, b7))
+
             c7, b7 = call(p6_port, "/api/mark", {"task_id": "v266-h1", "machine": "GT14", "holder": "inst-B", "status": "done"})
             check("V266 同机另一实例 mark 409", c7 == 409, "%s %s" % (c7, b7))
 
