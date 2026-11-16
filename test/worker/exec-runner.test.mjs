@@ -13,6 +13,7 @@ import {
   normalizeForCompare,
 } from '../../lib/worker/exec-runner.js';
 import { resolvePwshPath } from '../../lib/worker/config.js';
+import { resolveCwd } from '../../lib/worker/exec-runner.js';
 
 const wt = process.platform === 'win32' ? test : (name, fn) => test(name, { skip: 'exec-runner 是 Windows PowerShell 专用' }, fn);
 
@@ -71,6 +72,8 @@ const baseConfig = {
   allowlist: [allowedDir],
   approvalMode: 'manual',
   execTimeoutMs: 5000,
+  // v2.6.6: exec 不再默认回退到 home；测试显式给一个合法 cwd。
+  execCwd: os.homedir(),
 };
 
 wt('checkScriptAccess：白名单命中的脚本放行', () => {
@@ -348,4 +351,38 @@ wt('resolvePwshPath：PATH 里的相对项不参与候选', () => {
 wt('resolvePwshPath：显式值带引号要去掉引号再判（否则合法路径被误拒）', () => {
   const fsOk = { exists: () => true, isFile: () => true };
   assert.equal(resolvePwshPath({ pwshPath: '"C:\\Tools\\pwsh.exe"' }, fsOk), 'C:\\Tools\\pwsh.exe');
+});
+
+
+test('resolveCwd：配了 root 就 fail-closed（根无效/候选越界都 blocked，不静默回落）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cwd-root-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cwd-outside-'));
+  try {
+    const missingRoot = path.join(root, 'no-such-root');
+    let r = resolveCwd([root], fs, missingRoot);
+    assert.equal(r.cwd, '');
+    assert.equal(r.reason, 'cwd-root-invalid');
+
+    r = resolveCwd([outside], fs, root);
+    assert.equal(r.cwd, '');
+    assert.equal(r.reason, 'cwd-not-in-root');
+
+    r = resolveCwd([''], fs, root);
+    assert.equal(r.cwd, fs.realpathSync(root));
+    assert.equal(r.reason, 'cwd-root-default');
+
+    const inside = fs.mkdtempSync(path.join(root, 'inner-'));
+    r = resolveCwd([inside], fs, root);
+    assert.equal(r.reason, '');
+    assert.equal(fs.realpathSync(r.cwd), fs.realpathSync(inside));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('resolveCwd：未配 root 保留旧的家目录回退（并标 reason 供调用方告警）', () => {
+  const r = resolveCwd([], fs, '');
+  assert.equal(r.reason, 'cwd-home-default');
+  assert.ok(r.cwd);
 });

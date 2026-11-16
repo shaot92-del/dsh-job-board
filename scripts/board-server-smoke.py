@@ -339,6 +339,42 @@ def main() -> int:
             _, board7 = call(p6_port, "/api/board")
             check("A3 say 不带机器不造 ? 幻影机", c6 == 200 and "?" not in ((board7 or {}).get("machines") or {}),
                   "%s %s" % (c6, ",".join(((board7 or {}).get("machines") or {}).keys())))
+
+            # v2.6.6（外部审查）：中文显示名不能被 _alias_key 全部剥成空串而互相冲突
+            call(p6_port, "/api/caps", {"machine": "MB14", "caps": {"os": "windows"}})
+            c6, b6 = call(p6_port, "/api/alias", {"machine": "GT14", "alias": "主机甲"})
+            c7, b7 = call(p6_port, "/api/alias", {"machine": "MB14", "alias": "主机乙"})
+            check("V266 中文显示名可共存", c6 == 200 and c7 == 200, "%s %s / %s %s" % (c6, b6, c7, b7))
+            _, board_cjk = call(p6_port, "/api/board")
+            gm = ((board_cjk or {}).get("machines") or {})
+            check("V266 两个中文别名都落库",
+                  (gm.get("GT14", {}).get("caps", {}).get("alias") == "主机甲")
+                  and (gm.get("MB14", {}).get("caps", {}).get("alias") == "主机乙"),
+                  "%s" % (gm.get("GT14", {}).get("caps", {}),))
+
+            # v2.6.6：claim 落 holder，同机第二个实例不能再认领/回写
+            _, _ = call(p6_port, "/api/create", {"task_id": "v266-h1", "machine": "GT14", "mode": "exec",
+                                                 "dispatch": "auto", "goal": "holder test"})
+            c6, b6 = call(p6_port, "/api/claim", {"task_id": "v266-h1", "machine": "GT14", "holder": "inst-A"})
+            check("V266 claim 带 holder 成功", c6 == 200, "%s %s" % (c6, b6))
+            _, board_h = call(p6_port, "/api/board")
+            check("V266 快照落 holder",
+                  ((board_h or {}).get("tasks") or {}).get("v266-h1", {}).get("holder") == "inst-A", "")
+            c7, b7 = call(p6_port, "/api/claim", {"task_id": "v266-h1", "machine": "GT14", "holder": "inst-B"})
+            check("V266 同机另一实例 claim 409", c7 == 409, "%s %s" % (c7, b7))
+            # v2.6.6 复审：省略 holder 不能接管在跑任务（fail-closed）
+            c7, b7 = call(p6_port, "/api/claim", {"task_id": "v266-h1", "machine": "GT14"})
+            check("V266 省略 holder claim 409", c7 == 409, "%s %s" % (c7, b7))
+            c7, b7 = call(p6_port, "/api/claim", {"task_id": "v266-h1", "machine": "MB14", "holder": "inst-C"})
+            check("V266 跨机 claim 409", c7 == 409, "%s %s" % (c7, b7))
+            c7, b7 = call(p6_port, "/api/mark", {"task_id": "v266-h1", "machine": "GT14", "holder": "inst-B", "status": "done"})
+            check("V266 同机另一实例 mark 409", c7 == 409, "%s %s" % (c7, b7))
+
+            # v2.6.6：空 machine 的 release 不能造出 "" 幽灵机器
+            c6, b6 = call(p6_port, "/api/release", {"task_id": "v266-h1", "status": "failed"})
+            _, board_e = call(p6_port, "/api/board")
+            check("V266 空 machine release 不造幽灵机", "" not in ((board_e or {}).get("machines") or {}),
+                  "%s %s" % (c6, ",".join(((board_e or {}).get("machines") or {}).keys())))
         finally:
             p6.terminate()
             try:

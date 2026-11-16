@@ -1,5 +1,239 @@
 {
-  "schema": "review-findings/1",
-  "updated": "2026-11-15",
-  "entries": []
+  "version": "2.6.6",
+  "updated": "2026-11-16",
+  "sources": [
+    {
+      "id": "glm-sec",
+      "file": "glm5.3 重点dsh-job-board-安全审查报告-2026-11-16.md"
+    },
+    {
+      "id": "glm-full",
+      "file": "glm5.3 dsh-job-board-审查报告-2026-11-16.md"
+    },
+    {
+      "id": "dsv41",
+      "file": "deepseekv4.1flash dsh-job-board-review-2026-11-16.md"
+    },
+    {
+      "id": "hy4",
+      "file": "dsh-job-board-hy4全面审查报告-2026-11-16.md"
+    },
+    {
+      "id": "sec-v266",
+      "title": "内部增量复审（sec-v266）",
+      "date": "2026-11-16"
+    }
+  ],
+  "entries": [
+    {
+      "id": "v266-claim-holder",
+      "severity": "P1",
+      "sources": [
+        "glm-sec"
+      ],
+      "status": "fixed",
+      "where": "tools/board_server.py:316-382",
+      "summary": "claim 落 holder 且已有 holder 时 fail-closed（省略 holder 409）；beat/mark/release/untake 同步校验。",
+      "tests": [
+        "board-server-smoke V266 claim/mark 409"
+      ]
+    },
+    {
+      "id": "v266-get-csrf",
+      "severity": "P1",
+      "sources": [
+        "dsv41"
+      ],
+      "status": "fixed",
+      "where": "lib/index.js uiGuard / assess / say / dispatch-pause",
+      "summary": "10 条写型 UI 路由只收 POST；3 条无 body 路由 GET 由 uiGuard 403，其余 7 条 handler 405，写不进去。",
+      "tests": [
+        "ui-guard-smoke GET 三路由被拒"
+      ]
+    },
+    {
+      "id": "v266-exec-cwd-root",
+      "severity": "P1",
+      "sources": [
+        "glm-full"
+      ],
+      "status": "mitigated",
+      "where": "lib/worker/exec-runner.js resolveCwd",
+      "summary": "exec cwd realpath 后必须落在 execCwdRoot 内；root 无效或候选越界均 blocked。execCwdRoot 未配置时等同旧行为（启动 warning，不做根约束）。",
+      "tests": [
+        "test/worker/exec-runner.test.mjs（新增 root 越界/无效/未配用例）"
+      ]
+    },
+    {
+      "id": "v266-approve-retry",
+      "severity": "P2",
+      "sources": [
+        "glm-sec"
+      ],
+      "status": "fixed",
+      "where": "lib/worker/agent-approval.js",
+      "summary": "retry 换新 taskId 导致审批永不命中；现按 goal 指纹在 TTL 内复用。",
+      "tests": [
+        "test/worker/agent-gate.test.mjs approved-fingerprint"
+      ]
+    },
+    {
+      "id": "v266-alias-cjk",
+      "severity": "P2",
+      "sources": [
+        "glm-full"
+      ],
+      "status": "fixed",
+      "where": "tools/board_server.py _alias_key",
+      "summary": "中文别名被剥成空串互相冲突；现保留 Han 字符。",
+      "tests": [
+        "board-server-smoke V266 中文显示名共存"
+      ]
+    },
+    {
+      "id": "v266-release-ghost",
+      "severity": "P2",
+      "sources": [
+        "glm-full"
+      ],
+      "status": "fixed",
+      "where": "tools/board_server.py do_release",
+      "summary": "空 machine release 造幽灵机；现仅在 machine 非空时 touch。",
+      "tests": [
+        "board-server-smoke V266 空 machine release"
+      ]
+    },
+    {
+      "id": "v266-corrupt-state",
+      "severity": "P2",
+      "sources": [
+        "glm-full"
+      ],
+      "status": "fixed",
+      "where": "tools/board_server.py load_state",
+      "summary": "坏 JSON 静默重置可能覆盖；现备份 .corrupt.<ts> 并报 stderr。"
+    },
+    {
+      "id": "v266-redact-trace",
+      "severity": "P2",
+      "sources": [
+        "glm-full"
+      ],
+      "status": "fixed",
+      "where": "lib/index.js redactConfig / trace",
+      "summary": "配置只打码一层、trace 无轮转；现递归打码与 8MiB 轮转。"
+    },
+    {
+      "id": "v266-python-probe",
+      "severity": "P3",
+      "sources": [
+        "glm-full"
+      ],
+      "status": "fixed",
+      "where": "lib/index.js probe()",
+      "summary": "python --version 在 stderr，读数恒空；现回退 stderr。"
+    },
+    {
+      "id": "v266-install-lock",
+      "severity": "P3",
+      "sources": [
+        "glm-full"
+      ],
+      "status": "documented",
+      "where": "scripts/install-board.ps1",
+      "summary": "install-board.ps1 的清理段是死代码（从不创建该锁），服务器真锁 state.json.lock 已自愈，无功能影响。"
+    },
+    {
+      "id": "v266-budget-model",
+      "severity": "P2",
+      "sources": [
+        "glm-sec",
+        "hy4"
+      ],
+      "status": "documented",
+      "where": "lib/worker/agent-budget.js",
+      "summary": "任务可选 model、预算只按会话次数；已在 docs §43.7 声明为残余风险，后续按用量计价。"
+    },
+    {
+      "id": "v266-single-token",
+      "severity": "P1",
+      "sources": [
+        "hy4"
+      ],
+      "status": "documented",
+      "where": "板子鉴权",
+      "summary": "单 token 明文 HTTP 等于可派工 RCE；属设计边界（内网 + 单一 owner），文档写明需可信网络，RBAC 留后续。"
+    },
+    {
+      "id": "v266-approval-rbac",
+      "severity": "P1",
+      "sources": [
+        "hy4"
+      ],
+      "status": "mitigated",
+      "where": "lib/worker/index.js restrict",
+      "summary": "审批边界依赖 tools.restrict；现 restrict 失败 fail-closed 并停认领，非 worker 会话仍能调用，属已知边界。"
+    },
+    {
+      "id": "v266-mark-cas",
+      "severity": "P2",
+      "sources": [
+        "glm-sec",
+        "sec-v266"
+      ],
+      "status": "known",
+      "where": "tools/board_server.py do_mark",
+      "summary": "mark 无状态 CAS/租约前置，终态可被翻回；本轮未改，登记为已知问题。"
+    },
+    {
+      "id": "v266-update-check",
+      "severity": "P3",
+      "sources": [
+        "glm-full"
+      ],
+      "status": "known",
+      "where": "lib/index.js /api/board/ui/update-check",
+      "summary": "GET 路由会打外网且无缓存；不影响写路径。"
+    },
+    {
+      "id": "v266-solo-redact",
+      "severity": "P2",
+      "sources": [
+        "glm-sec"
+      ],
+      "status": "known",
+      "where": "lib/solo-board.mjs",
+      "summary": "solo 板出站 note 未脱敏；板子侧已有 redact，solo 未移植。"
+    },
+    {
+      "id": "v266-stop-abort",
+      "severity": "P2",
+      "sources": [
+        "sec-v266"
+      ],
+      "status": "fixed",
+      "where": "lib/worker/worker.js stop()",
+      "summary": "stop 只停心跳会留下子进程；现同时 abort。"
+    },
+    {
+      "id": "v266-beat-reset",
+      "severity": "P2",
+      "sources": [
+        "sec-v266"
+      ],
+      "status": "fixed",
+      "where": "lib/worker/worker.js beat",
+      "summary": "心跳成功未重置 beatErrors；现重置，连续 3 次才 abort。"
+    },
+    {
+      "id": "v266-dispatch-approval",
+      "severity": "P2",
+      "sources": [
+        "dsv41"
+      ],
+      "status": "known",
+      "where": "lib/index.js cfg.dispatchApproval",
+      "summary": "默认 auto 属产品选择（自动派工不等审批），未在本轮改动。"
+    }
+  ]
 }

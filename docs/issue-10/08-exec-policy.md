@@ -1382,3 +1382,20 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 
 
 - restrictBroken 是全局的：一旦触发，宿主 approve/revoke 也会被拒，需要重载插件；自动轮询用 drain 停认领、保留在跑任务心跳；resume() 清 stopped 并恢复 mode=on。
+
+### 43.8 v2.6.6 外部审查修复与残余边界
+
+- **双实例认领**：`/api/claim` 现在读写 `t["holder"]`；同机两个实例对同一任务 claim/mark 时，holder 不同即 409（此前只比 machine，双 worker 会双跑并互相覆盖结果）。
+- **GET 型 CSRF**：10 条写型 UI 路由全部只收 POST；`uiGuard` 与宿主同用 `new URL().pathname` 归一，GET/HEAD 命中写路由即 403/405。
+- **exec cwd**：任务 `workspace`/`execCwd` 先 realpath，必须绝对、非 UNC，且落在 `execCwdRoot` 内；root 无效或候选越界分别 `cwd-root-invalid`/`cwd-not-in-root` blocked。未配置 `execCwdRoot` 时保留旧的家目录回退并打一次 warning（等于不做根约束）。
+- **审批重派**：`board_retry` 生成新 taskId 后，审批按 goal 指纹在 TTL 内复用（`approved-fingerprint`），approve → retry 能收敛。
+- **其他**：中文显示名保留 Han 字符；空 machine 的 release 不造幽灵机；坏 `state.json` 先备份 `.corrupt.<ts>`；`redactConfig` 递归打码；`trace` 8 MiB 轮转；`python --version` 读 stderr；`install-board.ps1` 的锁名为死代码，未修（见 findings）；`files` 打进 `docs/issue-10/`。
+
+**残余边界（不在本轮改代码）**
+
+- 板子仍是单 token + HTTP（内网明文）；能拿到 token 就能派工，等价于受限 RCE。跨公网必须隧道/TLS；按机器 RBAC 尚未做。
+- agent 审批的自批边界仍押 `tools.restrict`；restrict 失败已 fail-closed（drain + 控制动作拒绝），但非 worker 会话（含操作员子 agent、其它插件）仍拿得到 `worker_control`。
+- 任务可自选 model/provider；`agentBudgetMaxPerDay` 只计会话次数，不约束 token 成本。
+- agent 路径在 DSH 0.2.2-rc.3 的真机端到端仍未验证（接口层已测）。
+- `mark` 仍无状态 CAS（终态可被本机面板翻回）；holder 是实例标签而非认证，`/api/board` 快照会暴露它（持 token 者可重放）；`update-check` 为 GET 且无缓存；`solo-board` 出站未脱敏——均登记在 `docs/review/findings.json`。
+

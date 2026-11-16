@@ -1,4 +1,15 @@
 # 变更日志
+## v2.6.6 — 2026-11-16
+
+外部审查（GLM-5.3 / DeepSeek-V4.1 / HY4，四份报告）后的主要修复：
+
+- 板子：`claim` 在有 `holder` 时 fail-closed（省略 holder 不能接管在跑任务），并落 `t.holder`；`mark`/`release` 的 holder 不一致返回 409（缺 holder 时仅回环或同机租约过期回收例外）；`beat`/`untake` 一律要求同一 holder；空 machine 的 `beat`/`release` 不再造幽灵机；中文显示名保留 Han 字符；坏状态文件先备份 `.corrupt.<ts>` 再重建。
+- Host：10 条写型 UI 路由全部只收 POST（先前仅 3 条），GET/HEAD 返回 403/405；`uiGuard` 与宿主同样用 `new URL().pathname` 归一；`redactConfig` 递归打码；`trace` 8 MiB 轮转；`probe` 回退 stderr（python）。
+- worker：exec cwd 先 realpath，必须绝对、非 UNC 且落在 `execCwdRoot` 内，否则 `cwd-root-invalid`/`cwd-not-in-root` blocked（`execCwdRoot` 未配置时保留旧行为、启动打一次 warning，等于不做根约束；无 workspace 时落在 root）；审批按 goal 指纹复用并把记录迁到新 taskId（修复 retry 换 id 后审批/撤销不收敛）；心跳成功会重置连续失败计数，心跳失败 3 次仍 abort；`stop()` 同时 abort 在跑任务。
+- 打包：`files` 增加 `docs/issue-10/`。
+- 测试：worker 156/156；board smoke 60 项；ui-guard 35/35。
+
+已知问题（本轮未修，见 findings.json）：`mark` 仍无状态 CAS（终态可被翻回）；`update-check` 为 GET 且无缓存；`solo-board` 出站未脱敏；`execCwdRoot` 未配置时等同旧行为（仅 warning）；按机器 RBAC 与单 token HTTP 仍属设计边界；agent 真机端到端未验证。
 
 ## v2.6.5 — 2026-11-16
 
@@ -165,7 +176,7 @@
 - **能力卡字段保留（P3）**：`caps-apply` 先读本机旧卡，把 `features/os/cores/memGB`（以及 gpu 为空时的旧 gpu）补回，避免首次由面板保存后 `requires` 过滤失去事实源。
 - **默认值（P3）**：重测保存沿用旧卡的角色（主职不再被降成副职）；位置缺省显示“未定”（`''`）而不是“本机”（下拉补了 `未定` 选项）。
 - **复核 P3 收尾**：旧卡 `features` 只回填白名单键（shell/pwsh/powershell/ffmpeg/ffmpegHw/gpu/browsers/python/node，字符串值截 240 字）；`cfg.machine` 为空时跳过旧卡读取；`modelsDropped` 文案区分“最多 80 条 / 约 7.0KB”。
-- 测试：全量回归（plugcheck 18/20、ui-guard 18/18、model-pick M1–M11+R1–R4+A1–A3、dispatch 88/88、board smoke 48、acceptance 10+1）。
+- 测试：全量回归（plugcheck 18/20、ui-guard 18/18、model-pick M1–M11+R1–R4+A1–A3、dispatch 88/88、board smoke 60、acceptance 10+1）。
 
 已知未修（P3，记录触发前提）：
 - `caps-probe` 仍带 `-ExecutionPolicy Bypass`：仅在 GPO 强制 AllSigned 的机器上有争议，未在目标机实测。
@@ -193,7 +204,7 @@
 - 品牌行加 `dsh-job-board · N 台在线` 副标题；任务行在机器之后显示模型，失败/打回/作废行标注「可重派」。
 
 ### 4. 测试与边界
-- `plugcheck` 18/20、`ui-guard` 18/18、`model-pick` M1–M11 + R1–R4 + A1–A3（A3 断言 summary 真把 caps 的 location/tags 并进 nodeModels）、`dispatch` 88/88、board smoke 48、acceptance 10+1 全绿。
+- `plugcheck` 18/20、`ui-guard` 18/18、`model-pick` M1–M11 + R1–R4 + A1–A3（A3 断言 summary 真把 caps 的 location/tags 并进 nodeModels）、`dispatch` 88/88、board smoke 60、acceptance 10+1 全绿。
 - 安全复审 3 条 P2 已修：模型元数据按机器建二级索引（不再跨机串味）、索引对象改 null-proto 并拒收 `__proto__/constructor/prototype`、tags/modalities 逐项 trim+截 24 字。
 - 仍是“单面板 + 自检面板”，不是设计稿里的四步向导；云端价格、`taskKind` 自动选型与 eco/boost 留后续版本。
 - 代码复审阻断已修：浅色主题的核心面（任务详情、派工弹窗、清理/自检弹窗）不再用宿主深色底或写死深色字；状态标签补浅色专用色，`data-theme="dark"` 显式生效，宿主浅色也不会串色；桌宠气泡等装饰性配色仍未逐一校准。
@@ -231,7 +242,7 @@
 
 ### 测试
 
-plugcheck 18/18、reload A/B/C、ui-guard 15/15、state-file 16/16、config-persist 11/11、solo/bootstrap/shell、model-pick M1–M11 + R1–R4、dispatch 88/88、board smoke 48、acceptance 10+1；新增 update-check 探针（npm 9.9.9 → updateAvailable=true、doctor info 检查存在）。
+plugcheck 18/18、reload A/B/C、ui-guard 15/15、state-file 16/16、config-persist 11/11、solo/bootstrap/shell、model-pick M1–M11 + R1–R4、dispatch 88/88、board smoke 60、acceptance 10+1；新增 update-check 探针（npm 9.9.9 → updateAvailable=true、doctor info 检查存在）。
 
 ## v2.3.0 — 2026-11-13
 
@@ -243,7 +254,7 @@ plugcheck 18/18、reload A/B/C、ui-guard 15/15、state-file 16/16、config-pers
 
 ### 测试
 
-- plugcheck `tools=18 routes=18`；reload 场景 A/B/C；ui-guard 15/15；state-file 16/16；config-persist 11/11；solo-board / solo-bootstrap / shell-guard 全过；model-pick M1–M11 + R1–R3；dispatch-recovery 88/88；board smoke 48 项；acceptance 10 绿 + acc-08 期望失败。
+- plugcheck `tools=18 routes=18`；reload 场景 A/B/C；ui-guard 15/15；state-file 16/16；config-persist 11/11；solo-board / solo-bootstrap / shell-guard 全过；model-pick M1–M11 + R1–R3；dispatch-recovery 88/88；board smoke 60 项；acceptance 10 绿 + acc-08 期望失败。
 - 说明：npm 发布尚未执行（本机没有 npm 登录凭据）；包内容已通过 `npm pack --dry-run` 校验。
 
 ## v2.2.3 — 2026-11-13

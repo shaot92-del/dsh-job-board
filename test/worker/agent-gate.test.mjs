@@ -178,7 +178,9 @@ test('createAgentApprovals：没有记录就不批；记了才批；换提示词
   assert.equal(ap.record('t1', '写周报').ok, true);
   assert.equal(ap.check('t1', '写周报').ok, true);
   assert.equal(ap.check('t1', '写日报').reason, 'fingerprint-mismatch');
-  assert.equal(ap.check('t2', '写周报').reason, 'no-record');
+  // v2.6.6：重派会生成新 taskId，同一提示词指纹在 TTL 内可复用审批。
+  assert.equal(ap.check('t2', '写周报').reason, 'approved-fingerprint');
+  assert.equal(ap.check('t2', '写日报').reason, 'fingerprint-mismatch');
 
   // 重启后仍有效（落盘）
   const again = createAgentApprovals({ stateDir: dir, now: () => clock, fsImpl: fs });
@@ -187,6 +189,11 @@ test('createAgentApprovals：没有记录就不批；记了才批；换提示词
   // 过期
   clock += APPROVAL_TTL_MS + 1000;
   assert.equal(again.check('t1', '写周报').reason, 'expired');
+
+  // 撤销：同一指纹一起撤（重派后的新 id 不再继承）
+  assert.equal(ap.revoke('t2').revoked, true);
+  assert.equal(ap.check('t2', '写周报').reason, 'no-record');
+  assert.equal(ap.check('t9', '写周报').reason, 'no-record');
 
   // 撤销
   ap.record('t3', '写周报');

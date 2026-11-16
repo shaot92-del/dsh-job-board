@@ -141,6 +141,11 @@ check('alias 回环放行', r.status === 200 && r.body.includes('改名测试机
 r = await call('/api/board/ui/alias', { method: 'POST', headers: { ...base, 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: JSON.stringify({ alias: 'x'.repeat(33) }) })
 check('alias 超长拒绝', r.status === 400, 'status=' + r.status)
 
+// v2.6.6（外部审查 D1）：写型 UI 路由禁止 GET/HEAD，防 <img> 型 CSRF 触发评估/暂停/喊话。
+for (const p of ['/api/board/ui/assess', '/api/board/ui/say', '/api/board/ui/dispatch-pause', '/api/board/ui/claim', '/api/board/ui/release', '/api/board/ui/retry', '/api/board/ui/untake', '/api/board/ui/create', '/api/board/ui/attach', '/api/board/ui/mark']) {
+  const g = await call(p, { headers: { ...base } })
+  check('GET ' + p + ' 被拒', g.status === 403 || g.status === 405, 'status=' + g.status)
+}
 // v2.4.0：动作型路由 caps-probe 必须只认 POST；GET 不能触发本机 pwsh。
 // v2.5.0：工作大类探测同样是动作路由，GET 不能触发；目录只读。
 r = await call('/api/board/ui/workload-probe', { headers: { ...base, 'x-dsh-team-ui': '1' } })

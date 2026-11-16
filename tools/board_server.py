@@ -154,8 +154,13 @@ def load_state() -> None:
         try:
             with open(STATE_PATH, "r", encoding="utf-8") as f:
                 STATE = json.load(f)
-        except Exception:
-            pass
+        except Exception as exc:
+            backup = STATE_PATH + ".corrupt." + str(int(time.time()))
+            try:
+                os.replace(STATE_PATH, backup)
+                sys.stderr.write("state.json 损坏，已备份到 %s：%s\n" % (backup, exc))
+            except Exception as bexc:
+                sys.stderr.write("state.json 损坏且备份失败：%s / %s\n" % (exc, bexc))
     STATE.setdefault("tasks", {})
     STATE.setdefault("machines", {})
     STATE.setdefault("events", [])
@@ -251,7 +256,8 @@ _ALIAS_STRIP = re.compile(r"[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202
 def _alias_key(v: str) -> str:
     """显示名归一：去控制/零宽/bidi，只留字母数字，用于唯一性比较。"""
     s = _ALIAS_STRIP.sub("", str(v or ""))
-    return re.sub(r"[^0-9a-z]", "", s.casefold())
+    # allow CJK so Chinese display names do not all collapse to "" and collide.
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]", "", s.casefold())
 
 
 def touch_machine(machine: str, current: str = "", note: str = "") -> None:
@@ -311,6 +317,7 @@ def do_claim(body: dict) -> tuple[int, dict]:
     task_id = (body.get("task_id") or "").strip()
     machine = (body.get("machine") or "").strip()
     agent = (body.get("agent") or "").strip()
+    instance_holder = (body.get("holder") or "").strip()[:120]
     note = _txt((body.get("note") or "").strip(), 300)
     minutes = _minutes(body, DEFAULT_MINUTES)
     if not task_id or not machine:
@@ -320,14 +327,26 @@ def do_claim(body: dict) -> tuple[int, dict]:
         t = STATE["tasks"].get(task_id) or {"status": "queued", "note": ""}
         eff = effective_task(t)
         holder = t.get("machine", "")
-        if eff["status"] in ("claimed", "running") and holder and holder != machine:
-            return 409, {
-                "error": "已被占用",
-                "task_id": task_id,
-                "holder": holder,
-                "lease_until": t.get("lease_until", 0),
-                "note": t.get("note", ""),
-            }
+        cur_holder = (t.get("holder") or "").strip()
+        if eff["status"] in ("claimed", "running"):
+            # v2.6.6 复审 M1：有 holder 时 fail-closed（省略 holder 不能接管）；
+            # 无 holder 的旧任务退回机器级比较，保持升级兼容。
+            if cur_holder:
+                if instance_holder != cur_holder:
+                    return 409, {
+                        "error": "已被另一个实例占住（claim 需带同一 holder）",
+                        "task_id": task_id,
+                        "holder": cur_holder,
+                        "lease_until": t.get("lease_until", 0),
+                    }
+            elif holder and holder != machine:
+                return 409, {
+                    "error": "已被占用",
+                    "task_id": task_id,
+                    "holder": holder,
+                    "lease_until": t.get("lease_until", 0),
+                    "note": t.get("note", ""),
+                }
         if eff["status"] in ("done", "superseded"):
             return 409, {"error": "已完成" if eff["status"] == "done" else "已作废", "task_id": task_id}
 
@@ -350,6 +369,10 @@ def do_claim(body: dict) -> tuple[int, dict]:
         # v2.1.0：模型属于建单决策，认领方不能改写（除任务本来没有 model 的旧任务）。
         if "model" not in t and str(body.get("model") or "").strip():
             t["model"] = str(body.get("model") or "").strip()[:160]
+        if instance_holder:
+            t["holder"] = instance_holder
+        elif took_over:
+            t.pop("holder", None)
         t["claimed_at"] = now()
         t["lease_until"] = now() + minutes * 60
         t["updated_at"] = now()
@@ -527,8 +550,8 @@ def do_untake(body: dict) -> tuple[int, dict]:
             return 409, {"error": "不是你占的", "taker": t.get("taker", "")}
         # v3.1（安全复审 F5）：同机第二个实例不能把别人有效占位放回队列（会导致双跑）。
         cur_holder = (t.get("holder") or "").strip()
-        if cur_holder and holder and cur_holder != holder:
-            return 409, {"error": "已被同机的另一个实例占住", "holder": cur_holder}
+        if cur_holder and holder != cur_holder:
+            return 409, {"error": "untake 的 holder 与占位不一致", "holder": cur_holder}
         t.pop("taker", None)
         t.pop("holder", None)
         # v1.3.3（复核 F8）：退回队列却留着 remote_id 的话，所有 Host 的队列过滤
@@ -604,8 +627,17 @@ def do_mark(body: dict) -> tuple[int, dict]:
         if machine and t.get("machine") and _canon_machine(machine) != _canon_machine(t.get("machine")):
             return 409, {"error": "不是你占的", "holder": t.get("machine")}
         cur_holder = (t.get("holder") or "").strip()
-        if cur_holder and holder and cur_holder != holder:
-            return 409, {"error": "已被同机的另一个实例占住", "holder": cur_holder}
+        if cur_holder and holder and holder != cur_holder:
+            return 409, {"error": "mark 的 holder 与占位不一致", "holder": cur_holder}
+        if cur_holder and not holder:
+            # 只有回环 Host 代理或租约过期的同机回收可以不带 holder；其余 fail-closed。
+            try:
+                expired = float(t.get("lease_until") or 0) > 0 and float(t.get("lease_until") or 0) <= now()
+            except Exception:
+                expired = False
+            same_machine = bool(machine and t.get("machine") and _canon_machine(machine) == _canon_machine(t.get("machine")))
+            if not (is_local or (expired and same_machine)):
+                return 409, {"error": "mark 必须带同一 holder（回环/租约过期回收除外）", "holder": cur_holder}
         if dispatch:
             t["dispatch"] = dispatch
         else:
@@ -656,13 +688,18 @@ def do_beat(body: dict) -> tuple[int, dict]:
             return 404, {"error": "没有这道任务", "task_id": task_id}
         if _canon_machine(t.get("machine") or "") != _canon_machine(machine):
             return 409, {"error": "不是你占的", "holder": t.get("machine", "")}
+        beat_holder = (body.get("holder") or "").strip()[:120]
+        cur_holder = (t.get("holder") or "").strip()
+        if cur_holder and beat_holder != cur_holder:
+            return 409, {"error": "心跳 holder 与占位不一致", "holder": cur_holder}
         t["lease_until"] = now() + minutes * 60
         t["updated_at"] = now()
         if t.get("status") == "claimed":
             t["status"] = "running"
         if body.get("progress"):
             t["progress"] = str(body["progress"])[:200]
-        touch_machine(machine, current=task_id)
+        if machine:
+            touch_machine(machine, current=task_id)
         save_state()
         return 200, {"ok": True, "lease_until": t["lease_until"]}
 
@@ -914,8 +951,16 @@ def do_release(body: dict) -> tuple[int, dict]:
                              "hint": "release 必须带 machine（执行机）或 holder；本机回环调用可省略"}
         # v3.1（安全复审 F5）：holder 参与归属校验 —— 同机第二个实例不能把别人的占位放回队列。
         cur_holder = (t.get("holder") or "").strip()
-        if cur_holder and holder and cur_holder != holder:
-            return 409, {"error": "已被同机的另一个实例占住", "holder": cur_holder}
+        if cur_holder and holder and holder != cur_holder:
+            return 409, {"error": "release 的 holder 与占位不一致", "holder": cur_holder}
+        if cur_holder and not holder:
+            try:
+                expired = float(t.get("lease_until") or 0) > 0 and float(t.get("lease_until") or 0) <= now()
+            except Exception:
+                expired = False
+            same_machine = bool(machine and t.get("machine") and _canon_machine(machine) == _canon_machine(t.get("machine")))
+            if not (is_local or (expired and same_machine)):
+                return 409, {"error": "release 必须带同一 holder（回环/租约过期回收除外）", "holder": cur_holder}
         t["status"] = status
         t["updated_at"] = now()
         t["lease_until"] = 0
@@ -932,8 +977,9 @@ def do_release(body: dict) -> tuple[int, dict]:
         t["note"] = _txt((body.get("note") or ""), 500)
         if body.get("artifact"):
             t["artifact"] = str(body["artifact"])[:300]
-        touch_machine(machine)
-        STATE["machines"].setdefault(_canon_machine(machine), {})["current"] = ""
+        if machine:
+            touch_machine(machine)
+            STATE["machines"].setdefault(_canon_machine(machine), {})["current"] = ""
         add_event(status, machine, task_id, t["note"])
         save_state()
         return 200, {"ok": True, "task_id": task_id, "status": status}
