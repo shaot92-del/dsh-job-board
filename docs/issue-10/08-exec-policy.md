@@ -1452,6 +1452,14 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 | P2 resume 绕过 | journal 恢复那一支不过滤 maint | 同一道过滤 |
 | P3 | `Number()` 接受数组/布尔/小数/十六进制；非法 maint spec 报 `stage=exec`；两份动词表 | 整数校验；stage 按 mode 报；单一 `MAINTENANCE_VERBS` |
 
+**第二轮复核（只读，只核 `git diff`）补的三处收尾**：
+
+| 项 | 原状 | 现态 |
+|---|---|---|
+| 盘根误判（P2，功能回归） | `rootAbs + path.sep` 在 `maintenanceOutDir = 'Z:\'` 时得到 `Z:\\`，任何文件都不匹配 ⇒ payload 静默不落盘，只有一条 warn | `rootPrefix = rootAbs.endsWith(path.sep) ? rootAbs : rootAbs + path.sep`，回执 `artifact` 恢复正常；带盘根回归测试 |
+| Host 预检只比动词名（P3） | `{"verb":"logs","lines":12.7}` 本机放行、到副机才 `maint-spec-invalid` | Host 直接调副机同一个 `parseMaintenanceGoal`，校验只有一份 |
+| `sanitizeUrl` 三形态（P3） | 漏 fragment（`#access_token=`、裸票据）、复合键名（`x-board-token`/`X-Amz-*`）、非 URL 串里的 `u:p@host` | 键名正则去掉 `^…$` 锚定；fragment 逐个打码、裸票据整段置 `#***`；字面兜底加 `//user:pass@`；普通 hash 与无凭证地址仍原样 |
+
 **审计确认安全、且这次没动的边界**：不 spawn（只 import `fs`/`path`）；`collect()` 里没有 `readFile/readdir`；动词冻结表 + 执行前复校；`log.tail` 环形缓冲兜底行数上界；板子 claim 的 holder 互斥保证不双跑；旧 `ok` 判定 bug（HTTP 200 + 非 JSON 曾算成功）已由 `!parseFailed` 修掉并有断言。
 
 **仍然存在的残余边界（已知、不改）**：持 token 者能读到副机 `config`（含本机绝对路径）与日志尾部；日志只做行级压缩、没做字段级脱敏；`path.resolve` 不解析 junction/symlink ⇒ 若 `<outDir>` 内已存在指向外部的 junction，仍可写出去（需本地预置，与配置权限同级）；`startsWith` 大小写敏感在 Windows 上是 fail-closed 方向（拒绝而不是放行）。

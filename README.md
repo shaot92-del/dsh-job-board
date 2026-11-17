@@ -193,7 +193,7 @@ board_dispatch({ machine: 'GT14', mode: 'maint', goal: '{"verb":"logs","lines":8
 |---|---|
 | `version` | 插件版本、node 版本、平台、machine、workerMode、approvalMode、白名单条数、agent 开关 |
 | `status` | worker 运行态：并发、当前任务、计数、最近错误、看板心跳年龄、孤儿恢复 |
-| `config` | **生效配置**（白名单条目原样列出——它就是「远程为什么被拒」的答案）；token 类键永不出现，`boardUrl` 里的 userinfo 与 `token`/`key`/`secret` 一类 query 参数也打码 |
+| `config` | **生效配置**（白名单条目原样列出——它就是「远程为什么被拒」的答案）；token 类键永不出现，`boardUrl` 里的 userinfo、query **与 fragment** 里的 `token`/`key`/`secret`/`sig`/`auth` 类参数都打码（复合键名如 `x-board-token`/`X-Amz-Signature` 一样命中；不带凭证的地址原样输出） |
 | `logs` | 日志环形缓冲尾部（行数 1..200，缺省 40） |
 
 安全边界（这就是它为什么不需要审批门）：

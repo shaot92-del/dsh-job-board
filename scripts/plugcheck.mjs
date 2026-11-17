@@ -282,6 +282,18 @@ const dispatchBoard = {
   assert.equal(bad.ok, false, 'maint 动词表外的 goal 必须被拒: ' + JSON.stringify(bad))
   assert.match(String(bad.error || ''), /version/, '拒绝信息要列出可用动词')
   assert.equal(calls2.filter((c) => c.path === '/api/create').length, 0, '被拒时不应建单')
+
+  // lines 校验也与副机同源（parseMaintenanceGoal）：`12.7` 这种到副机才 blocked 就是白跑一趟
+  const calls3 = router({ '/api/board': dispatchBoard })
+  const badLines = await tools.get('board_dispatch').execute({ goal: '{"verb":"logs","lines":12.7}', mode: 'maint' })
+  assert.equal(badLines.ok, false, 'lines 非整数必须本地拒: ' + JSON.stringify(badLines))
+  assert.match(String(badLines.error || ''), /整数/, '拒绝信息要说明 lines 收整数')
+  assert.equal(calls3.filter((c) => c.path === '/api/create').length, 0, '被拒时不应建单')
+
+  const calls4 = router({ '/api/board': dispatchBoard })
+  const okLines = await tools.get('board_dispatch').execute({ goal: '{"verb":"logs","lines":80}', mode: 'maint' })
+  assert.equal(okLines.ok, true, '合法 lines 应放行: ' + JSON.stringify(okLines))
+  assert.equal(calls4.filter((c) => c.path === '/api/create').length, 1, '合法 goal 要建单')
 }
 
 // ── v1.1：#6 Host 调度器 take → dispatch → attach ──────────────────────

@@ -102,6 +102,36 @@ test('redactConfig：boardUrl 里的 userinfo 与 query 凭证必须打码（板
   assert.equal(sanitizeUrl(''), '');
 });
 
+test('sanitizeUrl：fragment / 复合键名 / 非 URL 串里的 userinfo 也必须关掉（审计二轮）', () => {
+  // ① fragment：OAuth 隐式流把凭证放 `#access_token=…`，旧版只看 searchParams
+  const frag = sanitizeUrl('http://h:8965/#access_token=frag-secret-1');
+  assert.equal(frag.includes('frag-secret-1'), false, `fragment 里的 token 漏了：${frag}`);
+  assert.equal(sanitizeUrl('http://h:8965/#/cb?access_token=at-secret-2').includes('at-secret-2'), false);
+  // 裸票据（整段 hash 就是一张高熵串）
+  assert.equal(sanitizeUrl('http://h:8965/#deadbeefcafe12345678').includes('deadbeefcafe12345678'), false);
+  // 不带凭证的 hash 要保住（前端路由）
+  assert.match(sanitizeUrl('http://h:8965/#/settings'), /#\/settings/);
+
+  // ② 复合键名：锚死的 `^token$` 挡不住线上真实写法
+  for (const url of [
+    'http://h:8965/?x-board-token=bt-secret',
+    'http://h:8965/?board_token=bt-secret',
+    'http://h:8965/?X-Amz-Signature=sig-secret',
+    'http://h:8965/?X-Amz-Security-Token=sts-secret',
+  ]) {
+    const out = sanitizeUrl(url);
+    assert.equal(/bt-secret|sig-secret|sts-secret/.test(out), false, `复合键名漏了：${out}`);
+  }
+
+  // ③ 非 URL 串：`u:p@host` 被当成 scheme `u:` 时 userinfo 仍在字面里
+  assert.equal(sanitizeUrl('u:hunter2@10.0.0.5:8965/x?token=1').includes('hunter2'), false);
+  assert.equal(sanitizeUrl('//u:hunter2@host/x').includes('hunter2'), false);
+  assert.equal(sanitizeUrl('not a url token=zzz').includes('zzz'), false);
+
+  // 不带凭证的地址必须原样（排障时 config 输出要能和本机配置对上）
+  assert.equal(sanitizeUrl('http://h:8965'), 'http://h:8965');
+});
+
 test('redactConfig：白名单原样给出（这正是远程被拒的答案）', () => {
   const red = redactConfig({ allowlist: ['C:\\tools\\a.ps1'], agentAllowlist: ['C:\\tools\\b.ps1'] });
   assert.deepEqual(red.allowlist, ['C:\\tools\\a.ps1']);
@@ -133,6 +163,19 @@ test('writePayload：绝对路径 → <root>/<machine>/<task>-<verb>.json，UTF-
   const body = writes[0].body;
   assert.equal(body.charCodeAt(0), '{'.charCodeAt(0), '不许带 BOM');
   assert.equal(JSON.parse(body).verb, 'logs');
+});
+
+test('writePayload：盘根（`Z:\`）不能因为多拼一个分隔符就静默不落盘（审计二轮）', () => {
+  // `path.resolve('Z:\\')` 已自带尾分隔符，旧代码再 + path.sep 得到 `Z:\\` ⇒ 任何文件都不匹配，
+  // 配置成共享盘根（这功能的目标场景）就一条 payload 都不落，只留一句 warn。
+  const writes = [];
+  const fakeFs = { mkdirSync() {}, writeFileSync(file) { writes.push(file); } };
+  const root = path.parse(process.cwd()).root; // 本机就是某个盘根，如 `C:\`
+  assert.ok(root.endsWith(path.sep), '前提：盘根自带尾分隔符');
+  const out = writePayload(root, { ok: true }, { fs: fakeFs, machine: 'PC2', taskId: 'bd-9', verb: 'logs' });
+  assert.equal(out.error, '');
+  assert.equal(out.path, path.join(root, 'PC2', 'bd-9-logs.json'));
+  assert.equal(writes.length, 1, '盘根下必须真的写一次');
 });
 
 test('writePayload：`..` / 保留名 / 尾随点都不许把文件写出 maintenanceOutDir', () => {
