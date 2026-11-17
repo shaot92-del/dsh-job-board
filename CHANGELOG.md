@@ -1,4 +1,20 @@
 # 变更日志
+## v2.6.12 — 2026-11-17
+
+维护通道（handoff A 项的根因修复）+ 通信层抽出 + 一个真 bug。
+
+- **新增 maintenance 只读通道**（`board_dispatch mode: 'maint'`）：goal 写 `version` / `status` / `config` / `logs`（`logs` 可带行数 1..200，JSON 形态 `{"verb":"logs","lines":80}`）。
+  - 为什么：worker 一开，`dispatch:auto` 的任务被 worker 抢走，内联命令被拒 `inline-command-not-allowed`、非白名单脚本被拒 `approval-required` —— 远程排障与升级被自己的安全闸门堵死，而闸门是对的。维护通道只把「看」单独放行，执行面仍然是 0：**不 spawn 子进程、不读任意路径**，信息源只有进程内 config / 日志环形缓冲 / `worker.status()`，动词是代码里的冻结常量表。写动作（升级/重启）留给 v2.7 的签名一次性授权。
+  - 板子带宽有限（note 500 / reasons 5×120）：摘要进板子，完整 payload 落 `worker.maintenanceOutDir/<machine>/<taskId>-<verb>.json`（UTF-8 无 BOM），路径写进 `artifact`。
+  - `config` 动词用白名单式重建输出（`redactConfig`）：token 类键永不出现，将来加字段的失败方向是「不出现」而不是「泄漏」。
+  - 新配置 `maintenanceEnabled`（默认 `true`：只读，默认关会让远程排障永远需要一次物理接触）、`maintenanceOutDir`（默认空=只回板子摘要）。
+  - 板子对 `mode` 有 `mode[:10]` 截断（"maintenance" → "maintenanc"），主控与 worker 都按 `maint` 前缀认，别改成精确匹配。
+  - Host 调度器**不认领** `mode` 以 `maint` 开头的任务（跳过派发队列）：否则它会被当成 agent 任务推给 remote-agent，等于让一个会话去「读版本号」。这类任务只由副机 worker 自己认领。
+- **通信层抽出**：看板 HTTP 请求从 `lib/worker/board-client.js` 移到 `lib/worker/transport/http.js`，`board-client` 变成薄转发（对外导出不变，`createBoardClient` 只是 `createHttpTransport` 的别名）。行为与 v2.6.11 逐项等价，唯一有意的差异见下一条。
+- **修 `ok` 判定（真 bug，v2.6.11 及其之前一直存在）**：HTTP 200 + 非 JSON 正文曾被算成 `ok:true`——`{error:'非 JSON 响应…'}` 没有 `ok` 字段，逃过了 `data.ok === false` 检查，主循环会把一个空快照当成「板子正常」。现在解析失败即 `ok:false`。
+- 测试：新增 `test/worker/maintenance.test.mjs`（22 例，覆盖解析/脱敏/落盘/执行器/分流）；`test/worker/transport.test.mjs`（11 例）为假看板加了 `after` 兜底关闭 —— 断言失败会跳过测试末尾的 `close()`，监听 socket 于是握着事件循环，`npm test` 表现为**卡住**而不是失败（v2.6.11 的 gate 就卡在这一条上）。
+- 版本同步 2.6.12（worker VERSION / UA）。
+
 ## v2.6.11 — 2026-11-17
 
 外部审查（OpenPangu 2.1 Pro，v2.6.10 基线）的 P0/P2/P3 修复。

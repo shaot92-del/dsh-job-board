@@ -97,7 +97,7 @@ patch / 工具 / 路由，热重载会报 duplicate route 或让客户端面板�
 | `board_done` | 交付（可带 `artifact`） |
 | `board_fail` | 打回（`blocked`）/ 失败（`failed`），必须写原因 |
 | `board_say` | 往事件流播报一句 |
-| `board_dispatch` | 选机 + 建单（`dryRun` 只预览）；v1.1 起建的单带 `dispatch:'auto'`，由 Host 自己派。**goal 必须 ≤ 300 字**（板子按 `goal[:300]` 存，超了会把 exec 命令截成半句；v1.1.3 起超限直接拒绝） |
+| `board_dispatch` | 选机 + 建单（`dryRun` 只预览）；v1.1 起建的单带 `dispatch:'auto'`，由 Host 自己派。**goal 必须 ≤ 300 字**（板子按 `goal[:300]` 存，超了会把 exec 命令截成半句；v1.1.3 起超限直接拒绝）。v2.6.12 起 `mode: 'maint'` 走只读维护通道（goal 只写 `version`/`status`/`config`/`logs`） |
 | `board_options` | 列在线机器的模型清单（派工选机 + 选模型用） |
 | `board_retry` | 重派失败/打回的任务（复制原 goal/machine/mode/model/workspace） |
 | `board_attach` | 把远程任务号绑到板子任务，状态转 running |
@@ -169,6 +169,8 @@ patch / 工具 / 路由，热重载会报 duplicate route 或让客户端面板�
       execCwd: 'C:/work'
       allowlist: []          # 空 = 不接任何 exec 任务（fail-closed）
       agentEnabled: false    # 默认只跑 exec；agent 需显式打开并配 preset/cwdRoot
+      maintenanceEnabled: true      # v2.6.12 只读维护通道（见下节）；只读，默认开
+      maintenanceOutDir: ''         # 完整 payload 落盘目录，建议填共享盘（如 Z:/_maintenance）
 ```
 
 - 认领只用看板 HTTP：`/api/claim` → `/api/beat` → `/api/mark`；holder 形如 `<machine>/<pid>-<rand>`，归属只认 holder，不认 note。
@@ -177,6 +179,32 @@ patch / 工具 / 路由，热重载会报 duplicate route 或让客户端面板�
   2. 在 profile patch 里给 `- id: dsh-job-worker` 加 `disabled: true`，并在启动日志确认没有第二个 worker。
   否则两个 worker 会同时认领同一块板的任务。
 - agent 模式的预算/审批状态目录沿用 `%LOCALAPPDATA%\dsh-job-worker`（兼容旧版迁移，不丢已有审批与预算计数）。
+
+### 维护通道（v2.6.12，只读）
+
+**为什么要有它**：worker 一开，`dispatch:auto` 的任务就被 worker 抢走 —— 内联命令被 fail closed（`inline-command-not-allowed`）、非白名单脚本被拒（`approval-required`）。闸门是对的，但「远程排障 / 远程升级」于是永远需要一次物理接触。维护通道只把**看**这一件事单独放行。
+
+```powershell
+board_dispatch({ machine: 'GT14', mode: 'maint', goal: 'version' })
+board_dispatch({ machine: 'GT14', mode: 'maint', goal: '{"verb":"logs","lines":80}' })
+```
+
+| 动词 | 回什么 |
+|---|---|
+| `version` | 插件版本、node 版本、平台、machine、workerMode、approvalMode、白名单条数、agent 开关 |
+| `status` | worker 运行态：并发、当前任务、计数、最近错误、看板心跳年龄、孤儿恢复 |
+| `config` | **生效配置**（白名单条目原样列出——它就是「远程为什么被拒」的答案）；token 类键永不出现 |
+| `logs` | 日志环形缓冲尾部（行数 1..200，缺省 40） |
+
+安全边界（这就是它为什么不需要审批门）：
+
+- **不 spawn 任何子进程**，也就不存在命令注入面；
+- **不读任意路径**：信息源只有进程内 `config` / 日志环形缓冲 / `worker.status()`；
+- 动词是代码里的冻结常量表（`MAINTENANCE_VERBS`），不从任务书取命令；
+- 唯一入参是 `logs` 的行数（纯数字，越界即拒）；
+- 板子带宽有限（`note` 500 字 / `reasons` 5×120），所以配了 `maintenanceOutDir` 时完整 payload 另外落 `<dir>/<machine>/<taskId>-<verb>.json`（UTF-8 无 BOM），路径写进 `artifact`；不配就只回摘要。
+
+写动作（升级 / 重启 / 改配置）**不在本通道内**：那需要签名一次性授权，属 v2.7。
 
 
 ## 自检
@@ -194,7 +222,8 @@ node scripts/plugcheck.mjs
 `board_dispatch` 带 `dispatch:'auto'`、Host 调度器真的走 `take → dispatch → attach`、
 `aborted` 折成 `failed`、`board_list` 能看到 230 条、`dispose()` 清掉 4 个定时器；
 v1.1.1 的会话 cookie 换取与 401 重试、nodeId 别名；v1.1.2 派发带 `approval:'auto'`；
-v1.1.3 的 goal 超 300 字被拒、终态 note 带副机最后一条 stdout。
+v1.1.3 的 goal 超 300 字被拒、终态 note 带副机最后一条 stdout；
+v2.6.12 的 `mode:'maint'` 建单（mode 原样进板子、不带模型）与动词笔误在本地被拒。
 全程 `stubFetch`，不连真板子。
 
 真板子相关的验收（真派发、多机、桌宠）走 `scripts/acceptance.mjs`，需要板子服务和本机媒体素材。

@@ -265,6 +265,25 @@ const dispatchBoard = {
   assert.equal(calls.filter((c) => c.path === '/api/create').length, 0, '被拒时不应建单')
 }
 
+// ── v2.6.12：maintenance 只读通道（mode 原样进板子，动词在本地先校验）──
+{
+  const calls = router({ '/api/board': dispatchBoard })
+  const out = await tools.get('board_dispatch').execute({ goal: 'version', mode: 'maint' })
+  assert.equal(out.ok, true, 'maint 建单应成功: ' + JSON.stringify(out))
+  const created = calls.find((c) => c.path === '/api/create')
+  assert.ok(created, 'maint 也要建单（副机据此认领）')
+  assert.equal(created.body.mode, 'maint', 'mode 必须是 maint，写成 agent/exec 会把只读任务丢给白名单闸门')
+  assert.equal(created.body.model, '', 'maint 不需要模型，不许把模型写进任务')
+  assert.equal(created.body.dispatch, 'auto', 'maint 同样由 Host 派发')
+
+  // 动词笔误在本地拦住：否则要等副机 blocked 之后回板子翻原因
+  const calls2 = router({ '/api/board': dispatchBoard })
+  const bad = await tools.get('board_dispatch').execute({ goal: 'reboot', mode: 'maint' })
+  assert.equal(bad.ok, false, 'maint 动词表外的 goal 必须被拒: ' + JSON.stringify(bad))
+  assert.match(String(bad.error || ''), /version/, '拒绝信息要列出可用动词')
+  assert.equal(calls2.filter((c) => c.path === '/api/create').length, 0, '被拒时不应建单')
+}
+
 // ── v1.1：#6 Host 调度器 take → dispatch → attach ──────────────────────
 {
   const board = {

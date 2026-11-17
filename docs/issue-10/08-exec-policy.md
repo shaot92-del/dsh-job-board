@@ -1419,3 +1419,23 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 - 安全复核增量：`reconcile_once` 写终态清 holder；solo `release` 进终态清 holder；两板 `beat` 对终态 409（迟到心跳不复活租约）；smoke 重试仅限 GET。
 - P2-1：`solo-board-smoke` 仅对 GET 请求的连接失败重试一次（POST 不重放，S12 批量串跑抖动），仍失败才判 FAIL。
 - 边界不变：mark 无状态 CAS、holder 是实例标签非认证、单 token 明文 HTTP、execCwdRoot 未配回退家目录、agent 真机未验。
+
+## §43.11 v2.6.12：维护通道（handoff A 项的根因修复）
+
+**根因**：worker 一开，`dispatch:auto` 的任务会被 worker 抢走；内联命令被 fail closed（`inline-command-not-allowed`），非白名单脚本被拒（`approval-required`）。于是「远程排障 / 远程升级」被自己的安全闸门堵死——闸门是对的，不能为了通路拆闸门，只能给「只读」单开一条面积极小的通道。
+
+**被放行的面**（`mode: 'maint'` → `lib/worker/maintenance.js`）：
+
+- 动词是代码常量表：`version` / `status` / `config` / `logs`（`logs` 只接纯数字行数 1..200）。
+- **不 spawn 子进程、不读任意路径**：信息源只有进程内 `config`、日志环形缓冲、`worker.status()`。任务书里的字符串永远不当命令/路径用，因此**不需要** exec 白名单与审批门——它与 exec 是两条互不相交的路（拒绝理由也分开：`maint-disabled` / `maint-verb-unknown` / `maint-spec-invalid` / `maint-unavailable` / `maint-internal`，不要混进 `approval-required` 排障）。
+- `config` 用 `redactConfig` **白名单式重建**：token 类键永不出现；将来加字段的失败方向是「不出现」，不是「泄漏」。
+- 回传受板子带宽限制（`note` 500 / `reasons` 5×120），完整 payload 落 `maintenanceOutDir/<machine>/<taskId>-<verb>.json`（UTF-8 无 BOM），路径进 `artifact`；写盘失败只降级为摘要，不让任务失败。
+- 板子 `mode[:10]` 截断（`maintenance` → `maintenanc`）：主控与 worker 都按 `maint` 前缀认，**别改成精确匹配**。
+
+**仍然没被放行的**：升级 / 重启 / 改配置等写动作。它们需要「签名一次性授权」（v2.7），本版不提供任何写路径；`maintenanceEnabled: false` 可整条关掉（关掉后远程只剩物理接触一条路）。
+
+**顺带修的真 bug**：`transport` 的 `ok` 判定把 HTTP 200 + 非 JSON 正文当成成功（`{error:'非 JSON 响应…'}` 没有 `ok` 字段，逃过 `data.ok === false`），主循环会把空快照当「板子正常」。现在解析失败即 `ok:false`。
+
+**测试侧**：`transport.test.mjs` 的假看板加了 `after` 兜底关闭——断言失败会跳过测试末尾的 `close()`，监听 socket 握着事件循环，`npm test` 表现为**卡住**而不是失败（v2.6.11 的 gate 就卡在这条）。`maintenance.test.mjs` 新增 22 例。
+
+**残余边界**：维护通道读过 `config` 与日志，等于把一个「只读的运维视角」暴露给持 token 的派工者；日志内容本身可能含任务标题/路径（已过 `oneLine` 压行，未做字段级脱敏）。跨公网仍需隧道/TLS。
