@@ -154,6 +154,22 @@ test('sanitizeUrl：分号分隔 / 百分号等号 / 空格键名 / JSON fragmen
   assert.equal(sanitizeUrl('http://h:8965/?machine=PC2'), 'http://h:8965/?machine=PC2');
 });
 
+test('sanitizeUrl：fragment 与「解析不了的整串」里未知键名也打码（三轮回退修复）', () => {
+  // 键名门控是用来保住 `?machine=PC2` 这类排障信息的；fragment 与非 URL 串没有 query 约定，
+  // `#ticket=`/`#otp=`/`#code=` 都是凭证写法 ⇒ 那里必须全打，否则等于把凭证放出去。
+  for (const [url, secret] of [
+    ['http://h:8965/#ticket=tk-secret-1', 'tk-secret-1'],
+    ['http://h:8965/#sessid=sess-secret-1', 'sess-secret-1'],
+    ['http://h:8965/#otp=otp-secret-1', 'otp-secret-1'],
+    ['not a url ticket=tk-secret-2', 'tk-secret-2'],
+  ]) {
+    assert.equal(sanitizeUrl(url).includes(secret), false, `漏了 ${secret}：${sanitizeUrl(url)}`);
+  }
+  // 普通前端路由 hash 不含键值对，必须原样
+  assert.equal(sanitizeUrl('http://h:8965/#/settings'), 'http://h:8965/#/settings');
+  assert.equal(sanitizeUrl('http://h:8965/#/cb?x=1'), 'http://h:8965/#/cb?x=***');
+});
+
 test('redactConfig：白名单原样给出（这正是远程被拒的答案）', () => {
   const red = redactConfig({ allowlist: ['C:\\tools\\a.ps1'], agentAllowlist: ['C:\\tools\\b.ps1'] });
   assert.deepEqual(red.allowlist, ['C:\\tools\\a.ps1']);
