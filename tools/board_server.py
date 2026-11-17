@@ -327,7 +327,6 @@ def do_claim(body: dict) -> tuple[int, dict]:
     with STATE_LOCK:
         t = STATE["tasks"].get(task_id) or {"status": "queued", "note": ""}
         eff = effective_task(t)
-        holder = t.get("machine", "")
         cur_holder = (t.get("holder") or "").strip()
         if eff["status"] in ("claimed", "running"):
             # v2.6.9：有 holder 必须同一 holder；无 holder 的旧占位一律 409（不再机器级回退）。
@@ -374,6 +373,7 @@ def do_claim(body: dict) -> tuple[int, dict]:
             t["holder"] = instance_holder
         else:
             t.pop("holder", None)
+        t.setdefault("created_at", now())
         t["claimed_at"] = now()
         t["lease_until"] = now() + minutes * 60
         t["updated_at"] = now()
@@ -424,6 +424,7 @@ def do_create(body: dict) -> tuple[int, dict]:
             "mode": task_mode,
             "workspace": workspace,
             "model": model,
+            "created_at": now(),
             "claimed_at": 0,
             "lease_until": 0,
             "updated_at": now(),
@@ -651,6 +652,9 @@ def do_mark(body: dict) -> tuple[int, dict]:
             t.pop("dispatch", None)
         if status:
             t["status"] = status
+            if status in TERMINAL_STATUS:
+                t.pop("holder", None)
+                t.pop("lease_until", None)
         if "remote_id" in body:
             rid = (body.get("remote_id") or "").strip()[:120]
             if rid:
@@ -697,6 +701,8 @@ def do_beat(body: dict) -> tuple[int, dict]:
             return 409, {"error": "不是你占的", "holder": t.get("machine", "")}
         beat_holder = (body.get("holder") or "").strip()[:120]
         cur_holder = (t.get("holder") or "").strip()
+        if (t.get("status") or "") in TERMINAL_STATUS:
+            return 409, {"error": "终态任务不再接受 beat", "status": t.get("status")}
         if cur_holder and beat_holder != cur_holder:
             return 409, {"error": "心跳 holder 与占位不一致", "holder": cur_holder}
         t["lease_until"] = now() + minutes * 60
@@ -787,6 +793,7 @@ def reconcile_once() -> int:
             cur["note"] = note
             cur["updated_at"] = now()
             cur["lease_until"] = 0
+            cur.pop("holder", None)
             add_event(fin, cur.get("machine") or "", tid, note[:200])
             save_state()
         changed += 1
@@ -1031,6 +1038,12 @@ def do_seed(body: dict) -> tuple[int, dict]:
         return 413, {"error": "一次导入太多", "limit": MAX_SEED_ITEMS, "got": len(items)}
     added = 0
     with STATE_LOCK:
+        seed_base = now()
+        for _v in STATE["tasks"].values():
+            try:
+                seed_base = max(seed_base, int(_v.get("created_at") or 0) + 1)
+            except (TypeError, ValueError):
+                pass
         for it in items:
             tid = (it.get("task_id") or "").strip() if isinstance(it, dict) else str(it).strip()
             if not tid:
@@ -1047,6 +1060,7 @@ def do_seed(body: dict) -> tuple[int, dict]:
                     "goal": (it.get("goal") or "")[:300] if isinstance(it, dict) else "",
                     "owner": (it.get("machine") or "")[:20] if isinstance(it, dict) else "",
                     "model": str(it.get("model") or "").strip()[:160] if isinstance(it, dict) else "",
+                    "created_at": seed_base + added,
                     "claimed_at": 0,
                     "lease_until": 0,
                     "updated_at": now(),

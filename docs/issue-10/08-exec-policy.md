@@ -1411,3 +1411,11 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 - v2.6.9 追加（复审 R1–R4 + code-v269 F1/F2/F6）：board_done/board_fail 与面板 release 回带 INSTANCE_HOLDER（solo 默认部署可用）；无 holder 的 claim 会清掉旧 holder；终态只允许同状态或 done→superseded；trace 归档保留最近 3 份。
 - v2.6.9 追加（复审 R1–R4）：solo 的 take 同款严格 holder；mark/release 的孤儿回收例外恢复为"租约过期且同机"；终态任务禁止改回非终态；面板 release 回带 task.holder 并经 UI 路由透传。
 - 未修边界（已登记）：mark 无状态 CAS、holder 是实例标签而非认证、单 token 明文 HTTP、execCwdRoot 未配时仍回退家目录、agent 真机未验。
+
+## §43.10 v2.6.11（OpenPangu 2.1 Pro 报告）
+
+- P0-1（文档/实现矛盾）：v2.6.10 CHANGELOG 声称 mark 进入终态清 holder/lease，实际只覆盖 release；solo 的清理字段名误写 `leaseUntil`（内部是 `lease_until`）。本版在 `do_mark` 终态分支补 pop，并修正 solo 字段名。
+- P3：删 `do_claim` 死变量；`do_create`/`do_seed`/solo `create`/claim 自动建单补 `created_at`（seed 按序号递增保序）；修正 CHANGELOG 的 GET 拒绝覆盖措辞。
+- 安全复核增量：`reconcile_once` 写终态清 holder；solo `release` 进终态清 holder；两板 `beat` 对终态 409（迟到心跳不复活租约）；smoke 重试仅限 GET。
+- P2-1：`solo-board-smoke` 仅对 GET 请求的连接失败重试一次（POST 不重放，S12 批量串跑抖动），仍失败才判 FAIL。
+- 边界不变：mark 无状态 CAS、holder 是实例标签非认证、单 token 明文 HTTP、execCwdRoot 未配回退家目录、agent 真机未验。

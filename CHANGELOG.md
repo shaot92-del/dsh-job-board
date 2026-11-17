@@ -1,8 +1,20 @@
 # 变更日志
+## v2.6.11 — 2026-11-17
+
+外部审查（OpenPangu 2.1 Pro，v2.6.10 基线）的 P0/P2/P3 修复。
+
+- P0-1：`do_mark` 进入终态时清掉 `holder` 与 `lease_until`；`reconcile_once` 写回终态也清 `holder`；solo 同段清理的字段名从 `leaseUntil` 修正为 `lease_until`，solo `release` 进终态同样清 holder（v2.6.10 的声明在 mark/reconcile/release 路径未完整落实，本版补齐）。
+- 终态守卫：两板 `beat` 对终态任务返回 409，迟到的租约回写不再复活终态。
+- `seed` 的 `created_at` 按导入序号递增，worker 排序保持 seed 顺序；claim 自动建单也补 `created_at`。
+- P3：删除 `do_claim` 死变量；`do_create` / `do_seed` / solo `create` 写入 `created_at`，worker 排序不再退化为按 id。
+- P2-1：`solo-board-smoke` 的 `call` 仅对 GET 请求偶发连接失败重试一次（POST 不重放），降低批量串跑时 S12 的 status=0 抖动。
+- 文档：修正 v2.6.9 关于 GET 拒绝覆盖范围的措辞（3 条 guard 403 + 15 条 handler 405）；handoff 文档标注最终形态为单包双角色（v2.6.0）。
+- 测试：board smoke 增加「终态 mark 清 holder/lease」断言。
+- 版本同步 2.6.11（worker VERSION/UA）。
 ## v2.6.10 — 2026-11-16
 
 - 面板任务按钮按终态收敛：failed/blocked 不再渲染「完成」，交付/打回对 failed 禁用并提示先重派（P3）。
-- mark 进入终态时清掉 holder 与 lease_until（两板一致），避免终态任务仍被旧占位归因（CR-P3-1）。
+- release 进入终态时清掉 holder 与 lease_until；mark 路径于 v2.6.11 补齐（CR-P3-1）。
 - 版本同步 2.6.10（worker VERSION/UA）。
 
 ## v2.6.9 — 2026-11-16
@@ -17,7 +29,7 @@
 - UI `/untake` 带上 `INSTANCE_HOLDER`，无 holder/本实例占位的面板清理不再 409；UI `mark/release` 透传 `machine`，板子对"终态任务 + 无 holder + 请求状态为终态"放行，远程板归档可用。
 - 显示名归一保留空格（"主机 甲"与"主机甲"不再被折叠为同一 key）。
 - `redactConfig` 覆盖 `envPassthrough/passEnv`；`trace` 轮转改用 `pid+时间戳` 归档名，不再 unlink 其它进程的归档。
-- ui-guard 覆盖全部 13 条写型路由的 GET 拒绝（38/38）。
+- 写型路由全部拒绝 GET：3 条由 uiGuard 返回 403，15 条由 handler 返回 405（38/38）。
 - 测试：solo smoke 增加 S11（claim/beat holder 归属）、S12（省略 holder 的 mark/release/untake/take、大小写、终态归档）；board smoke 增加 V266b（旧客户端先 claim、新实例再接 → 409）与终态复活守卫。
 - 边界：升级前无 holder 的旧占位需等租约（默认 30min + 120s stale 宽限）才能接管；solo 板的"租约过期且同机"是 mark/release 的唯一无 holder 例外。
 - 已知问题：面板对 failed/blocked 任务的「交付/完成/打回」按钮仍会渲染，点击返回 409（下一步修）。

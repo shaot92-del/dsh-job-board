@@ -397,6 +397,30 @@ def main() -> int:
             c7, b7 = call(p6_port, "/api/mark", {"task_id": "v266-h1", "machine": "GT14", "holder": "inst-B", "status": "done"})
             check("V266 同机另一实例 mark 409", c7 == 409, "%s %s" % (c7, b7))
 
+            # v2.6.11（P0-1）：mark 进入终态必须清掉 holder/lease_until
+            c8, _ = call(p6_port, "/api/create", {"task_id": "v2611-clean", "goal": "cleanup", "dispatch": "auto"})
+            c8, _ = call(p6_port, "/api/claim", {"task_id": "v2611-clean", "machine": "GT14", "holder": "inst-clean"})
+            c8, _ = call(p6_port, "/api/mark", {"task_id": "v2611-clean", "machine": "GT14", "holder": "inst-clean", "status": "done"})
+            _, board_c = call(p6_port, "/api/board")
+            t_clean = (((board_c or {}).get("tasks") or {}).get("v2611-clean") or {})
+            check("V2611 终态 mark 清 holder/lease", c8 == 200 and not t_clean.get("holder") and not t_clean.get("lease_until"),
+                  "%s holder=%r lease=%r" % (c8, t_clean.get("holder"), t_clean.get("lease_until")))
+
+            # v2.6.11（sec-v2611 P3-C）：终态任务不再接受 beat
+            c9, _ = call(p6_port, "/api/create", {"task_id": "v2611-beat", "goal": "beat-guard", "dispatch": "auto"})
+            c9, _ = call(p6_port, "/api/claim", {"task_id": "v2611-beat", "machine": "GT14", "holder": "inst-beat"})
+            c9, _ = call(p6_port, "/api/mark", {"task_id": "v2611-beat", "machine": "GT14", "holder": "inst-beat", "status": "done"})
+            c9, b9 = call(p6_port, "/api/beat", {"task_id": "v2611-beat", "machine": "GT14", "holder": "inst-beat"})
+            check("V2611 终态 beat 409", c9 == 409, "%s %s" % (c9, b9))
+
+            # v2.6.11（sec-v2611 P3-A）：seed 批次 created_at 递增，保留导入顺序
+            c9, _ = call(p6_port, "/api/seed", {"tasks": [{"task_id": "seed-a", "goal": "a"}, {"task_id": "seed-b", "goal": "b"}]})
+            _, board_s = call(p6_port, "/api/board")
+            ts = ((board_s or {}).get("tasks") or {})
+            ta = (ts.get("seed-a") or {}).get("created_at") or 0
+            tb = (ts.get("seed-b") or {}).get("created_at") or 0
+            check("V2611 seed created_at 递增", c9 == 200 and ta > 0 and tb > ta, "%s a=%s b=%s" % (c9, ta, tb))
+
             # v2.6.6：空 machine 的 release 不能造出 "" 幽灵机器
             c6, b6 = call(p6_port, "/api/release", {"task_id": "v266-h1", "status": "failed"})
             _, board_e = call(p6_port, "/api/board")

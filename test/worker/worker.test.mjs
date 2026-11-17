@@ -57,6 +57,7 @@ function makeBoard(tasks, opts = {}) {
     },
     async beat(body) {
       calls.push({ kind: 'beat', ...body });
+      if (opts.beatTerminal409) return { ok: false, status: 409, error: '终态任务不再接受 beat' };
       return { ok: true, status: 200, data: { ok: true } };
     },
   };
@@ -479,4 +480,31 @@ test('进度上行前也要脱敏（同一条 job.progress 会被 beat 与 statu
   assert.ok(seen.includes('进度'), `进度原文应保留（只脱敏凭证）：${seen}`);
   assert.ok(!seen.includes('Tok-abcdef123456'), `进度泄漏 token：${seen}`);
   assert.ok(!seen.includes(home), `进度泄漏家目录：${seen}`);
+});
+
+
+test('终态 beat 409：停止心跳并 abort 本地执行，不累计失败', async () => {
+  let aborted = false;
+  const boards = makeBoard({ t1: task('t1') }, { beatTerminal409: true });
+  const worker = makeWorker(
+    boards,
+    async (t, { signal }) => {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 500);
+        signal.addEventListener('abort', () => {
+          aborted = true;
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+      return doneOutcome();
+    },
+    { beatMs: 20, pollMs: 10 },
+  );
+  await worker.start();
+  await new Promise((r) => setTimeout(r, 150));
+  await worker.stop({ waitMs: 200 });
+  assert.equal(aborted, true, '终态 409 应 abort 本地执行');
+  const beats = boards.calls.filter((c) => c.kind === 'beat').length;
+  assert.ok(beats <= 2, '终态后不应继续心跳 beats=' + beats);
 });

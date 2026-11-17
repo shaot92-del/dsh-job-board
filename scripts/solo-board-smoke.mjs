@@ -26,26 +26,39 @@ function check(name, cond, detail = '') {
   }
 }
 
-const call = async (base, p, body, token) => {
+const callOnce = async (base, p, body, token) => {
   const headers = { accept: 'application/json' }
   if (body !== undefined) headers['content-type'] = 'application/json'
   if (token) headers['x-board-token'] = token
+  const res = await fetch(base + p, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  let data = null
   try {
-    const res = await fetch(base + p, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    })
-    let data = null
-    try {
-      data = await res.json()
-    } catch {
-      data = null
-    }
-    return { status: res.status, data }
+    data = await res.json()
   } catch {
-    // 端口被关掉/被 undici 判为 bad port 时不要炸整个测试，交给断言报 FAIL。
-    return { status: 0, data: null }
+    data = null
+  }
+  return { status: res.status, data }
+}
+
+const call = async (base, p, body, token) => {
+  try {
+    return await callOnce(base, p, body, token)
+  } catch {
+    // 只对 GET 重试：POST 非幂等（create/claim/mark），响应丢失时重发可能得到 409，
+    // 会把网络抖动变成硬 FAIL，也会重复执行副作用。
+    if (body !== undefined) return { status: 0, data: null }
+    // 偶发连接被拒（S12 在批量串跑时出现过 status=0）：短暂退避后重试一次；
+    // 仍失败才交给断言报 FAIL，避免把基础设施抖动当成代码回归。
+    await new Promise((r) => setTimeout(r, 150))
+    try {
+      return await callOnce(base, p, body, token)
+    } catch {
+      return { status: 0, data: null }
+    }
   }
 }
 
@@ -178,6 +191,11 @@ r = await call(b8.url, '/api/untake', { task_id: 's12', machine: 'm12' }, b8.tok
 check('S12 untake 省略 holder 409', r.status === 409, 'status=' + r.status)
 r = await call(b8.url, '/api/mark', { task_id: 's12', machine: 'm12', status: 'done', holder: 'Holder-A' }, b8.token)
 check('S12 自己的 holder mark done 200', r.status === 200, 'status=' + r.status)
+r = await call(b8.url, '/api/board', undefined, b8.token)
+const s12 = ((r.data || {}).tasks || {}).s12 || {}
+check('S12 终态 mark 清 holder', !s12.holder, 'holder=' + JSON.stringify(s12.holder))
+r = await call(b8.url, '/api/beat', { task_id: 's12', machine: 'm12', holder: 'Holder-A' }, b8.token)
+check('S12 终态 beat 409', r.status === 409, 'status=' + r.status)
 r = await call(b8.url, '/api/release', { task_id: 's12', machine: 'm12', status: 'done' }, b8.token)
 check('S12 终态归档省略 holder 200', r.status === 200, 'status=' + r.status)
 await call(b8.url, '/api/create', { task_id: 's12b', goal: '大小写', dispatch: 'auto' }, b8.token)
@@ -194,6 +212,13 @@ await call(b8.url, '/api/claim', { task_id: 's12d', machine: 'm12', holder: 'Hol
 await call(b8.url, '/api/mark', { task_id: 's12d', machine: 'm12', holder: 'Holder-A', status: 'failed' }, b8.token)
 r = await call(b8.url, '/api/release', { task_id: 's12d', machine: 'm12', status: 'superseded', note: 'GUI 清理' }, b8.token)
 check('S12 failed→superseded 200', r.status === 200, 'status=' + r.status)
+await call(b8.url, '/api/create', { task_id: 's12e', goal: 'release 清 holder', dispatch: 'auto' }, b8.token)
+await call(b8.url, '/api/claim', { task_id: 's12e', machine: 'm12', holder: 'Holder-A' }, b8.token)
+r = await call(b8.url, '/api/release', { task_id: 's12e', machine: 'm12', holder: 'Holder-A', status: 'done' }, b8.token)
+check('S12 release 终态 200', r.status === 200, 'status=' + r.status)
+r = await call(b8.url, '/api/board', undefined, b8.token)
+const s12e = ((r.data || {}).tasks || {}).s12e || {}
+check('S12 release 终态清 holder', !s12e.holder, 'holder=' + JSON.stringify(s12e.holder))
 await b8.close()
 fs.rmSync(dir7, { recursive: true, force: true })
 
