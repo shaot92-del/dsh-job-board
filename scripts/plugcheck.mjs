@@ -274,7 +274,7 @@ const dispatchBoard = {
   assert.ok(created, 'maint 也要建单（副机据此认领）')
   assert.equal(created.body.mode, 'maint', 'mode 必须是 maint，写成 agent/exec 会把只读任务丢给白名单闸门')
   assert.equal(created.body.model, '', 'maint 不需要模型，不许把模型写进任务')
-  assert.equal(created.body.dispatch, 'auto', 'maint 同样由 Host 派发')
+  assert.equal(created.body.dispatch, 'auto', 'maint 也要 dispatch=auto（副机按它认领；Host 调度器不派 maint）')
 
   // 动词笔误在本地拦住：否则要等副机 blocked 之后回板子翻原因
   const calls2 = router({ '/api/board': dispatchBoard })

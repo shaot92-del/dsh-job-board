@@ -132,6 +132,28 @@ test('sanitizeUrl：fragment / 复合键名 / 非 URL 串里的 userinfo 也必�
   assert.equal(sanitizeUrl('http://h:8965'), 'http://h:8965');
 });
 
+test('sanitizeUrl：分号分隔 / 百分号等号 / 空格键名 / JSON fragment 也要打码（审计三轮）', () => {
+  // 这四类都不是 WHATWG 眼里的 `k=v`：`;` 被当成值的一部分、`%3D` 让等号变成键名的一部分、
+  // 空格键名切断了前缀/后缀匹配、JSON 用的是 `:`。只有整串字面扫才抓得住。
+  const cases = [
+    ['http://h:8965/?a=1;token=semi-secret-1', 'semi-secret-1'],
+    ['http://h:8965/?a=1;access_token=semi-secret-2', 'semi-secret-2'],
+    ['http://h:8965/?token%3Dpct-secret-1', 'pct-secret-1'],
+    ['http://h:8965/?sig%3Dpct-secret-2', 'pct-secret-2'],
+    ['http://h:8965/?access%20token=sp-secret-1', 'sp-secret-1'],
+    ['http://h:8965/?access+token=sp-secret-2', 'sp-secret-2'],
+    ['http://h:8965/#{"token":"json-secret-1"}', 'json-secret-1'],
+    ['http://h:8965/#{"api_key":"json-secret-2"}', 'json-secret-2'],
+  ];
+  for (const [url, secret] of cases) {
+    const out = sanitizeUrl(url);
+    assert.equal(out.includes(secret), false, `漏了 ${secret}：${out}`);
+  }
+  // 非凭证的部分要保住：排障时得看清是哪台机器、哪个地址
+  assert.match(sanitizeUrl('http://h:8965/?machine=PC2&token=zzz'), /machine=PC2/);
+  assert.equal(sanitizeUrl('http://h:8965/?machine=PC2'), 'http://h:8965/?machine=PC2');
+});
+
 test('redactConfig：白名单原样给出（这正是远程被拒的答案）', () => {
   const red = redactConfig({ allowlist: ['C:\\tools\\a.ps1'], agentAllowlist: ['C:\\tools\\b.ps1'] });
   assert.deepEqual(red.allowlist, ['C:\\tools\\a.ps1']);
