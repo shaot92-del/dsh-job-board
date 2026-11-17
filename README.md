@@ -193,7 +193,7 @@ board_dispatch({ machine: 'GT14', mode: 'maint', goal: '{"verb":"logs","lines":8
 |---|---|
 | `version` | 插件版本、node 版本、平台、machine、workerMode、approvalMode、白名单条数、agent 开关 |
 | `status` | worker 运行态：并发、当前任务、计数、最近错误、看板心跳年龄、孤儿恢复 |
-| `config` | **生效配置**（白名单条目原样列出——它就是「远程为什么被拒」的答案）；token 类键永不出现 |
+| `config` | **生效配置**（白名单条目原样列出——它就是「远程为什么被拒」的答案）；token 类键永不出现，`boardUrl` 里的 userinfo 与 `token`/`key`/`secret` 一类 query 参数也打码 |
 | `logs` | 日志环形缓冲尾部（行数 1..200，缺省 40） |
 
 安全边界（这就是它为什么不需要审批门）：
@@ -201,10 +201,12 @@ board_dispatch({ machine: 'GT14', mode: 'maint', goal: '{"verb":"logs","lines":8
 - **不 spawn 任何子进程**，也就不存在命令注入面；
 - **不读任意路径**：信息源只有进程内 `config` / 日志环形缓冲 / `worker.status()`；
 - 动词是代码里的冻结常量表（`MAINTENANCE_VERBS`），不从任务书取命令；
-- 唯一入参是 `logs` 的行数（纯数字，越界即拒）；
+- 唯一入参是 `logs` 的行数（整数 1..200；`[50]`/`true`/`12.7`/`0x10` 一律拒，越界即拒）；
 - 板子带宽有限（`note` 500 字 / `reasons` 5×120），所以配了 `maintenanceOutDir` 时完整 payload 另外落 `<dir>/<machine>/<taskId>-<verb>.json`（UTF-8 无 BOM），路径写进 `artifact`；不配就只回摘要。
 
 写动作（升级 / 重启 / 改配置）**不在本通道内**：那需要签名一次性授权，属 v2.7。
+
+板上只看得到 5 条 `reasons`，所以取哪 5 条是按动词定的：`config` 取**头部**（`allowlist[...]` 在最前 —— 那才是「为什么被拒」的答案），`logs` 取**尾部**（最新几行）。`artifact` 路径写进板子前会跟着 `note` 一起脱敏（`%USERPROFILE%` 之类的替换），所以从板子上取的路径不一定能直接打开，配了共享盘时以 `maintenanceOutDir` 下的真实路径为准。
 
 
 ## 自检

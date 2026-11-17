@@ -11,6 +11,7 @@ import { createBoardClient } from '../../lib/worker/board-client.js';
 import { createExecRunner } from '../../lib/worker/exec-runner.js';
 import { createTaskExecutor } from '../../lib/worker/executor.js';
 import { createWorker } from '../../lib/worker/worker.js';
+import { createMaintenanceRunner } from '../../lib/worker/maintenance.js';
 import { resolvePwshPath } from '../../lib/worker/config.js';
 
 const TOKEN = 'e2e-token';
@@ -176,6 +177,85 @@ test('失败任务也要把 exitCode + stderr 尾部 + stage 写回看板', asyn
     assert.match(finished.note, /stage=exec/);
     assert.match(finished.note, /exit=7/);
     assert.match(finished.note, /upstream failure/);
+  } finally {
+    if (worker) await worker.stop({ waitMs: 500 });
+    await board.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// v2.6.12 端到端：维护通道走完「claim → maint 采集 → mark 回写」全程，不进 exec、不起会话。
+// 板子把 mode 截到 10 字符（maintenanc）——这里就用截断后的写法，模拟真实板子存下来的样子。
+test('maint 任务：worker 认领后原地采集，result/artifact/note 落回看板且不碰 exec', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-worker-e2e-maint-'));
+  const outDir = path.join(tmp, 'maint-out');
+
+  const board = createFakeBoard({});
+  const { url } = await board.listen(0, '127.0.0.1');
+  const client = createBoardClient({ baseUrl: url, timeoutMs: 3000 });
+
+  let worker = null;
+  try {
+    board.state.tasks['maint-1'] = {
+      status: 'queued',
+      machine: 'host',
+      mode: 'maintenanc',
+      dispatch: 'auto',
+      title: '取版本号',
+      goal: 'version',
+      created_at: 1,
+    };
+
+    const config = {
+      machine: 'host',
+      workerId: 'host',
+      boardUrl: url,
+      token: 'e2e-secret-token',
+      pollMs: 200,
+      beatMs: 60000,
+      leaseMinutes: 5,
+      maxConcurrent: 1,
+      allowlist: [tmp],
+      execCwd: tmp,
+      approvalMode: 'manual',
+      execTimeoutMs: 30000,
+      orphanPolicy: 'blocked',
+      maintenanceEnabled: true,
+      maintenanceOutDir: outDir,
+    };
+    const execRunner = createExecRunner({ config, log: quietLog });
+    const maintenanceRunner = createMaintenanceRunner({
+      config,
+      log: quietLog,
+      version: '2.6.12',
+      statusFn: () => ({ mode: 'on', running: true }),
+      warnings: ['测试用 warning'],
+    });
+    const executeTask = createTaskExecutor({ config, log: quietLog, execRunner, agentRunner: null, maintenanceRunner });
+    worker = createWorker({ config, board: client, executeTask, log: quietLog, recoverOnStart: false });
+    await worker.start();
+
+    const finished = await waitFor(async () => {
+      const snap = await client.snapshot();
+      const task = snap.ok ? snap.data.tasks['maint-1'] : null;
+      return task && ['done', 'failed', 'blocked'].includes(task.status) ? task : null;
+    });
+    assert.ok(finished, '维护任务没有进入终态');
+    assert.equal(finished.status, 'done', finished.note);
+    // note 是板子上的单行摘要：前缀 + maintenance 摘要，必须压在 500 字以内
+    assert.match(finished.note, /stage=maint verb=version/);
+    assert.ok(finished.note.length <= 500, `note 超长：${finished.note.length}`);
+    // result 形状必须能被板子 _clean_result 接受
+    assert.equal(finished.result.ok, true);
+    assert.ok(Array.isArray(finished.result.reasons));
+    assert.ok(finished.result.reasons.length > 0);
+    // payload 落盘：artifact 指向 JSON（板上存的是脱敏后的路径，所以按真实路径读文件），且文件里没有 token
+    assert.match(finished.artifact, /maint-1-version\.json$/);
+    const artifactFile = path.join(outDir, 'host', 'maint-1-version.json');
+    assert.ok(fs.existsSync(artifactFile), `payload 没落盘：${artifactFile}`);
+    const body = fs.readFileSync(artifactFile, 'utf8');
+    assert.equal(body.includes('e2e-secret-token'), false, 'token 不许进 payload');
+    assert.equal(JSON.parse(body).data.plugin, '2.6.12');
   } finally {
     if (worker) await worker.stop({ waitMs: 500 });
     await board.close();

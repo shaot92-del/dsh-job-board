@@ -1439,3 +1439,19 @@ GitHub `windows-latest` 没有 ffmpeg：A5 真实探测在 CI 里断言「500 + 
 **测试侧**：`transport.test.mjs` 的假看板加了 `after` 兜底关闭——断言失败会跳过测试末尾的 `close()`，监听 socket 握着事件循环，`npm test` 表现为**卡住**而不是失败（v2.6.11 的 gate 就卡在这条）。`maintenance.test.mjs` 新增 22 例。
 
 **残余边界**：维护通道读过 `config` 与日志，等于把一个「只读的运维视角」暴露给持 token 的派工者；日志内容本身可能含任务标题/路径（已过 `oneLine` 压行，未做字段级脱敏）。跨公网仍需隧道/TLS。
+## §43.12 发布前独立审计的加固（同上 v2.6.12）
+
+审计由独立只读代理执行，结论是「无 P0；两条 P1 必须修完再推」。修完的事实与边界：
+
+| 项 | 原状 | 现态 |
+|---|---|---|
+| P1 路径穿越 | `machine: '..'` ⇒ payload 写到 `maintenanceOutDir` 的父目录（实测复现） | `safeName` 剥首尾 `[._]` + 拒保留名；`path.resolve(file)` 必须落在 root 内（第二道闸按文件系统规则算，不靠字符猜） |
+| P1 凭证泄漏 | `config` 原样外发 `boardUrl`；板子 `redact()` 不认 userinfo / 裸 `?token=` | `sanitizeUrl()`：清 userinfo、按键名打码 query；无凭证时原样返回（不改变地址形态） |
+| P2 reasons 取反 | `slice(-5)` 让 `allowlist`（行序最前）永远被截掉 | 按动词取头/尾：config/version/status 取头，logs 取尾 |
+| P2 判据不对称 | Host `startsWith` vs worker `trim`；BOM 让两边理解分叉 | `lib/dispatch-filter.js` 单点定义，Host 与 task-spec 共用 |
+| P2 resume 绕过 | journal 恢复那一支不过滤 maint | 同一道过滤 |
+| P3 | `Number()` 接受数组/布尔/小数/十六进制；非法 maint spec 报 `stage=exec`；两份动词表 | 整数校验；stage 按 mode 报；单一 `MAINTENANCE_VERBS` |
+
+**审计确认安全、且这次没动的边界**：不 spawn（只 import `fs`/`path`）；`collect()` 里没有 `readFile/readdir`；动词冻结表 + 执行前复校；`log.tail` 环形缓冲兜底行数上界；板子 claim 的 holder 互斥保证不双跑；旧 `ok` 判定 bug（HTTP 200 + 非 JSON 曾算成功）已由 `!parseFailed` 修掉并有断言。
+
+**仍然存在的残余边界（已知、不改）**：持 token 者能读到副机 `config`（含本机绝对路径）与日志尾部；日志只做行级压缩、没做字段级脱敏；`path.resolve` 不解析 junction/symlink ⇒ 若 `<outDir>` 内已存在指向外部的 junction，仍可写出去（需本地预置，与配置权限同级）；`startsWith` 大小写敏感在 Windows 上是 fail-closed 方向（拒绝而不是放行）。

@@ -10,6 +10,7 @@ import {
   NOTE_MAX,
   parseMaintenanceGoal,
   redactConfig,
+  sanitizeUrl,
   writePayload,
   createMaintenanceRunner,
 } from '../../lib/worker/maintenance.js';
@@ -37,8 +38,18 @@ test('parseMaintenanceGoal：裸动词与大小写归一', () => {
 
 test('parseMaintenanceGoal：JSON 形态给 logs 带行数', () => {
   assert.deepEqual(parseMaintenanceGoal('{"verb":"logs","lines":80}').spec, { verb: 'logs', lines: 80 });
-  // 取整：板子上的行数只用来切片，非整数没有意义
-  assert.equal(parseMaintenanceGoal('{"verb":"logs","lines":12.7}').spec.lines, 13);
+  // 纯数字字符串是自然写法（工具参数常被序列化成字符串），照收
+  assert.equal(parseMaintenanceGoal('{"verb":"logs","lines":"120"}').spec.lines, 120);
+});
+
+test('parseMaintenanceGoal：只认整数——数组/布尔/小数/十六进制都拒（README 说「纯数字」）', () => {
+  // 审计 P3：`Number([50])`=50、`Number(true)`=1、`Number('0x10')`=16 会让
+  // 「纯数字」这句承诺变成谎话，也会让日志行数凭空翻倍。
+  for (const bad of [[50], true, 12.7, '0x10', '12.7', {}, ' 80x']) {
+    const r = parseMaintenanceGoal(JSON.stringify({ verb: 'logs', lines: bad }));
+    assert.equal(r.ok, false, `lines=${JSON.stringify(bad)} 应该被拒`);
+    assert.match(r.error, /整数/);
+  }
 });
 
 test('parseMaintenanceGoal：动词表外的输入一律拒绝', () => {
@@ -80,6 +91,17 @@ test('redactConfig：token 永不出现，白名单式重建', () => {
   assert.equal(red.boardUrl, 'http://192.168.3.40:8965');
 });
 
+test('redactConfig：boardUrl 里的 userinfo 与 query 凭证必须打码（板子的 redact 不管这些）', () => {
+  // 审计 P1-#2：板子侧 redact() 只认 `x-board-token` / `token=` 之类，裸 userinfo 不管；
+  // 而 config 动词是把 boardUrl 原样送上板子的 —— 不打码就等于把凭证写进 state 和面板。
+  const red = redactConfig({ boardUrl: 'http://u:hunter2@10.0.0.5:8965/?token=abc123&machine=PC2' });
+  assert.equal(red.boardUrl.includes('hunter2'), false);
+  assert.equal(red.boardUrl.includes('abc123'), false);
+  assert.match(red.boardUrl, /machine=PC2/, '非凭证的 query 要保住，排障要看');
+  assert.equal(sanitizeUrl('not a url?a=1&token=zzz').includes('zzz'), false);
+  assert.equal(sanitizeUrl(''), '');
+});
+
 test('redactConfig：白名单原样给出（这正是远程被拒的答案）', () => {
   const red = redactConfig({ allowlist: ['C:\\tools\\a.ps1'], agentAllowlist: ['C:\\tools\\b.ps1'] });
   assert.deepEqual(red.allowlist, ['C:\\tools\\a.ps1']);
@@ -111,6 +133,24 @@ test('writePayload：绝对路径 → <root>/<machine>/<task>-<verb>.json，UTF-
   const body = writes[0].body;
   assert.equal(body.charCodeAt(0), '{'.charCodeAt(0), '不许带 BOM');
   assert.equal(JSON.parse(body).verb, 'logs');
+});
+
+test('writePayload：`..` / 保留名 / 尾随点都不许把文件写出 maintenanceOutDir', () => {
+  const root = path.join(path.parse(process.cwd()).root, 'maint-out');
+  const cases = [
+    { machine: '..', taskId: 'bd-1', verb: 'logs', expect: path.join(root, 'machine', 'bd-1-logs.json') },
+    { machine: '....', taskId: 'bd-2', verb: 'logs', expect: path.join(root, 'machine', 'bd-2-logs.json') },
+    { machine: 'CON', taskId: 'bd-3', verb: 'logs', expect: path.join(root, 'machine', 'bd-3-logs.json') },
+    { machine: 'PC2', taskId: '../../evil', verb: 'logs', expect: path.join(root, 'PC2', 'evil-logs.json') },
+    { machine: 'PC2', taskId: 'bd-4', verb: '..', expect: path.join(root, 'PC2', 'bd-4-payload.json') },
+  ];
+  for (const c of cases) {
+    const fakeFs = { mkdirSync() {}, writeFileSync() {} };
+    const out = writePayload(root, { ok: true }, { fs: fakeFs, machine: c.machine, taskId: c.taskId, verb: c.verb });
+    assert.equal(out.error, '', `不应报错：${JSON.stringify(c)}`);
+    assert.equal(out.path, c.expect);
+    assert.ok(path.resolve(out.path).startsWith(path.resolve(root) + path.sep), '不许跑出 root');
+  }
 });
 
 test('writePayload：写盘失败只回错误，不抛（盘没映射不该让整条任务失败）', () => {
@@ -155,13 +195,24 @@ test('runner：status 取自 statusFn（延迟绑定），并算 board 心跳年
   assert.equal(out.payload.data.stats.claimed, 7);
 });
 
-test('runner：config 回白名单条目但在 reasons 里只留最后 5 条（板子上限）', async () => {
+test('runner：config 的 reasons 必须包含 allowlist（取头部，不是尾部）', async () => {
+  // 审计 P2：原来 slice(-5) 取尾部，而 allowlist 排在行序最前、尾部固定被
+  // execCwd/pwshPath/orphanPolicy/warning 占满 ⇒ 默认配置下「为什么被拒」永远不回板子。
   const allow = ['C:\\a.ps1', 'C:\\b.ps1', 'C:\\c.ps1', 'C:\\d.ps1'];
-  const out = await makeRunner({ allowlist: allow, token: 'secret-token' }).run({ verb: 'config' }, {});
+  const out = await makeRunner({ allowlist: allow, token: 'secret-token' }, { statusFn: () => ({}) }).run({ verb: 'config' }, {});
   assert.equal(out.status, 'done');
   assert.equal(JSON.stringify(out.payload).includes('secret-token'), false);
   assert.deepEqual(out.payload.data.allowlist, allow);
   assert.ok(out.result.reasons.length <= 5);
+  assert.ok(out.result.reasons.some((r) => r.includes('allowlist[0]=C:\\a.ps1')), 'allowlist 必须在 reasons 里');
+});
+
+test('runner：logs 的 reasons 取尾部（最新几行），config/version 取头部', async () => {
+  const log = { ...quietLog, tail: (n) => Array.from({ length: n }, (_, i) => `line-${i + 1}`) };
+  const r = makeRunner({}, { log });
+  const out = await r.run({ verb: 'logs', lines: 20 }, {});
+  assert.deepEqual(out.result.reasons, ['line-16', 'line-17', 'line-18', 'line-19', 'line-20']);
+  assert.equal(out.payload.data.got, 20);
 });
 
 test('runner：logs 按请求行数向环形缓冲要，超长行被压成一行', async () => {

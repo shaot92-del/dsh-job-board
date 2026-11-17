@@ -1,7 +1,16 @@
 # 变更日志
-## v2.6.12 — 2026-11-17
+## v2.6.12 — 2026-11-17（含发布前独立安全审计的加固）
 
 维护通道（handoff A 项的根因修复）+ 通信层抽出 + 一个真 bug。
+
+**发布前安全审计（独立子 agent，只读复核）结论：无 P0（无远程命令执行面、无 maint→exec 分流、无 token 直出）；P1 两条已全部修掉后提交。**
+
+- **审计加固 1（P1，路径穿越）**：`writePayload` 原来用 `path.join(outDir, machine)`，而 `safeName` 保留了 `.` ⇒ `machine: '..'` 能把 payload 写出 `maintenanceOutDir`（实测落到父目录）。现在 `safeName` 剥掉首尾 `[._]`、拒绝 `CON/PRN/NUL/COM1…` 保留名，并加第二道闸 `path.resolve(file).startsWith(rootAbs + path.sep)`；`machine`/`taskId`/`verb` 的 18 类恶意输入全部落在 root 内（有回归测试）。
+- **审计加固 2（P1，凭证泄漏）**：`config` 把 `boardUrl` 原样送上板子，而板子的 `redact()` 只认 `x-board-token` 之类 ⇒ `http://u:p@host`、`?token=xxx` 会进 board state 与面板 UI。新增 `sanitizeUrl()`：清 userinfo、按 `/token|key|secret|password|sig|auth/` 打码 query 值；解析不出 URL 时整串打码；**没有凭证要脱敏时原样返回**（不把 `http://h:8965` 规范成带斜杠的形式，免得和本机配置对不上）。
+- **审计加固 3（P2，reasons 取反）**：`config` 的 reasons 原来 `slice(-5)` 取尾部，而 `allowlist` 排在行序最前、尾部固定被 `execCwd/pwshPath/orphanPolicy/warning` 占满 ⇒ 默认配置下「为什么被拒」永远回不到板子。改成按动词取：`config`/`version`/`status` 取头部，`logs` 取尾部。
+- **审计加固 4（P2，Host/worker 判据不对称）**：板子 `mode[:10]` 截断 + Python `.strip()` 不吃 BOM，而 Host 侧直接 `startsWith`、worker 侧只 `trim()` ⇒ `mode:'\uFEFFmaint'` 会被 Host 当 agent 派、worker 当维护任务读。判据抽到 `lib/dispatch-filter.js`（`normalizeTaskMode`/`isMaintMode`/`shouldAutoDispatch`，纯函数 + 单测），Host 与 `task-spec.js` 共用同一套「去 BOM → trim → 小写 → 前缀」。
+- **审计加固 5（P2）**：`resume.concat(queue)` 那一支也补上 maint 过滤（`/api/board/ui/attach` 能手工给 maint 任务写 `remote_id`，重启后会被当 agent 续派）；`board_dispatch` 的返回文案对 maint 不再谎称「派给 remote-agent」，并提示「目标机 worker 不在跑就会停在 queued」。
+- **审计加固 6（P3）**：`lines` 真的是整数校验了（`[50]`/`true`/`12.7`/`0x10` 全拒，之前 `Number()` 会悄悄接受）；maint 任务书非法时 `stage` 按任务 mode 报（原来写死 `exec`，把排查引到命令策略上）；Host 的唯一动词表改为 import `MAINTENANCE_VERBS`（原来是两份硬编码）；`version` 里的 `port=` 改 `pid=`；`result.js` 里板子行号漂移修正。
 
 - **新增 maintenance 只读通道**（`board_dispatch mode: 'maint'`）：goal 写 `version` / `status` / `config` / `logs`（`logs` 可带行数 1..200，JSON 形态 `{"verb":"logs","lines":80}`）。
   - 为什么：worker 一开，`dispatch:auto` 的任务被 worker 抢走，内联命令被拒 `inline-command-not-allowed`、非白名单脚本被拒 `approval-required` —— 远程排障与升级被自己的安全闸门堵死，而闸门是对的。维护通道只把「看」单独放行，执行面仍然是 0：**不 spawn 子进程、不读任意路径**，信息源只有进程内 config / 日志环形缓冲 / `worker.status()`，动词是代码里的冻结常量表。写动作（升级/重启）留给 v2.7 的签名一次性授权。
