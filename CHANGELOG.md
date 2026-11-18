@@ -1,4 +1,16 @@
 # 变更日志
+## v2.6.13 — 2026-11-18（面板常显版本号 + 三处小瑕疵）
+
+- **面板标题旁常显版本 pill（handoff 待办 1，「UI 显示插件版本号」）**：`插件 v2.6.13`。以前版本号只在「自检横幅」里出现，而横幅的渲染条件是 `doctorIssues.length || doctor.ok === false`，`doctorIssues` 只收 `warn`/`error`（`info` 不算）⇒ doctor 全绿时**用户在任何界面都看不到自己在跑哪个版本**（这件事被问过 4 次）。现在：
+  - 标题「多机调度台」右边常显版本 pill，doctor 已返回用 `doctor.version`，未返回/doctor 挂了用 `CLIENT_VERSION` 兜底；
+  - 磁盘版本 ≠ 运行版本 ⇒ 追加黄色 `→ 磁盘 vX`（提示重启 DSH 后生效）；有新版 ⇒ 追加蓝色 `↑ vX`；
+  - hover 汇总 `version / installedVersion / latestVersion / role`，点一下立刻重拉 doctor（不必等 30 秒轮询，也不用按「刷新」把整块面板重刷）。
+- **版本号单一来源**：新增 `lib/worker/version.js`（`export const VERSION`），`lib/worker/index.js` 原样 re-export（对外 API 与 `worker_status` 输出不变）；`lib/worker/transport/http.js` 的默认 UA 改成 `dsh-job-board/${VERSION}`，不再写死 `'dsh-job-board/2.6.12'`（此前发版漏改会让远端看到的 UA 停在旧版本）。
+- **空快照不再算成功**：`createHttpTransport().snapshot()` 在 204/空正文时拿到 `data = null`，而 `request()` 的 `ok` 只看 `data.ok === false` ⇒ 主循环会把「没有任何任务」当正常、无休止空转。现在正文不是 JSON 对象即 `ok:false`（error 为「看板快照为空（响应正文不是 JSON 对象）」），主循环照常走 backoff；`tasks` 仍允许数组或 map（`taskList` 两种都吃，不动既有契约）。
+- **去掉 `timer.unref()`**：独立进程里只有这一条请求在飞时，unref 的超时兜底不参与保活，可能在响应落地前被事件循环丢掉；timer 仍在 `finally` 里 clear，不会泄漏。
+- **门禁**：`scripts/plugcheck.mjs` 新增「三处版本号一致」断言（`package.json` / `lib/worker/version.js` / `lib/client.js` 的 `CLIENT_VERSION`），发版漏改会卡 gate；`test/worker/transport.test.mjs` 新增「204 空正文判失败」与「默认 UA 带版本」两例。
+- 版本同步 2.6.13（worker VERSION / UA / 面板 CLIENT_VERSION）。
+
 ## v2.6.12 — 2026-11-17（含发布前独立安全审计的加固）
 
 维护通道（handoff A 项的根因修复）+ 通信层抽出 + 一个真 bug。

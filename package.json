@@ -1,6 +1,6 @@
 {
   "name": "@wfcj/dsh-job-board",
-  "version": "2.6.12",
+  "version": "2.6.13",
   "description": "DSH 插件：多机调度台 —— 多机作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "prepublishOnly": "node scripts/check-text.mjs",
     "test": "node --test \"test/worker/*.test.mjs\"",
     "test:worker": "node --test test/worker/",
-    "gate": "node scripts/check-text.mjs && node scripts/plugcheck.mjs && npm test && node scripts/worker/pack-check.mjs"
+    "gate": "node scripts/check-text.mjs && node scripts/plugcheck.mjs && node scripts/client-render-smoke.mjs && npm test && node scripts/worker/pack-check.mjs",
+    "smoke:client": "node scripts/client-render-smoke.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -68,7 +69,8 @@
     "test/",
     "scripts/worker/",
     "LICENSE.worker",
-    "scripts/worker-merge-smoke.mjs"
+    "scripts/worker-merge-smoke.mjs",
+    "scripts/client-render-smoke.mjs"
   ],
   "keywords": [
     "dsh",

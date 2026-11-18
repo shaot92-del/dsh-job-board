@@ -45,6 +45,7 @@ const files = (info.files || []).map((f) => f.path);
 const required = [
   'lib/index.js',
   'lib/worker/index.js',
+  'lib/worker/version.js',
   'lib/worker/agent-gate.js',
   'lib/worker/agent-approval.js',
   'lib/worker/agent-budget.js',
@@ -58,6 +59,7 @@ const required = [
   'scripts/worker/selftest.mjs',
   'scripts/worker/fake-board.mjs',
   'scripts/worker-merge-smoke.mjs',
+  'scripts/client-render-smoke.mjs',
   'test/worker/version.test.mjs',
 ];
 for (const r of required) {

@@ -30,6 +30,7 @@ test('version：worker 模块文件齐全', () => {
     'log.js',
     'result.js',
     'task-spec.js',
+    'version.js',
     'worker.js',
   ];
   for (const name of expected) {

@@ -7,6 +7,7 @@ import { test, after } from 'node:test';
 
 import { createHttpTransport, BoardError } from '../../lib/worker/transport/index.js';
 import { createBoardClient } from '../../lib/worker/board-client.js';
+import { VERSION } from '../../lib/worker/version.js';
 
 // 假看板必须无论如何都被关掉：断言失败会跳过测试末尾的 `await fb.close()`，
 // 于是监听中的 server 一直握着事件循环，`node --test` 永远不退出
@@ -97,6 +98,26 @@ test('非 JSON 响应：ok:false, error 含「非 JSON 响应」', async () => {
   const r = await t.snapshot();
   assert.equal(r.ok, false);
   assert.match(r.error, /非 JSON 响应/);
+  await fb.close();
+});
+
+test('204 空正文：snapshot 判失败，不再当「板子正常」（v2.6.13）', async () => {
+  const fb = await startFakeBoard((req, res) => {
+    res.writeHead(204, { connection: 'close' });
+    res.end();
+  });
+  const t = createHttpTransport({ baseUrl: fb.url });
+  const r = await t.snapshot();
+  assert.equal(r.ok, false);
+  assert.match(r.error, /快照为空/);
+  await fb.close();
+});
+
+test('默认 UA 带插件版本（v2.6.13 起不写死字面量）', async () => {
+  const fb = await startFakeBoard((req, res) => jsonRes(res, 200, { tasks: [] }));
+  const t = createHttpTransport({ baseUrl: fb.url });
+  await t.snapshot();
+  assert.equal(fb.last.req.headers['user-agent'], `dsh-job-board/${VERSION}`);
   await fb.close();
 });
 

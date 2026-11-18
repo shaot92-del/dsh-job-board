@@ -509,5 +509,14 @@ assert.equal(name, pkg.name, 'lib/index.js 导出的 name 必须等于 package.j
 assert.equal(patchName, pkg.name, 'cordis.patch.yml 的 name 必须等于 package.json 的 name')
 assert.equal(clientId, pkg.name, 'lib/client.js 的 client bundle id 必须等于 package.json 的 name')
 
+// 版本号三处一致（v2.6.13：面板标题旁常显版本）
+//   package.json / lib/worker/version.js / lib/client.js 的 CLIENT_VERSION
+// 漏改的后果：面板显示旧版本、远端 UA 停在旧版本，用户问「我到底装的哪个版本」时无从回答。
+const versionJsText = fs.readFileSync(new URL('../lib/worker/version.js', import.meta.url), 'utf8')
+const workerVersion = (versionJsText.match(/export\s+const\s+VERSION\s*=\s*'([^']+)'/) || [])[1]
+const clientVersion = (clientText.match(/const\s+CLIENT_VERSION\s*=\s*'([^']+)'/) || [])[1]
+assert.equal(workerVersion, pkg.version, 'lib/worker/version.js 的 VERSION 必须等于 package.json 的 version')
+assert.equal(clientVersion, pkg.version, 'lib/client.js 的 CLIENT_VERSION 必须等于 package.json 的 version')
+
 console.log(`PASS  name=${name}  tools=${tools.size}  routes=${routes.length}`)
 console.log('  tools: ' + [...tools.keys()].join(', '))
