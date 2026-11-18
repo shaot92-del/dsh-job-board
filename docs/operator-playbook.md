@@ -1,7 +1,7 @@
 # 运维手册（operator playbook）
 
 > 面向「要用它、要排障、要回滚」的人。讲的是这台插件在真实机器上的行为，不是设计意图。
-> 版本基线：v2.6.15（文档可能滞后于代码，以代码里的 reason 常量为准）。
+> 版本基线：v2.6.18（文档可能滞后于代码，以代码里的 reason 常量为准）。
 
 ## 1. 三个角色，一条链路
 
@@ -63,7 +63,7 @@ Get-NetTCPConnection -State Listen |
 
 ## 3. 任务状态与错误码（排障先看 `note` / `reasons`）
 
-板子上每条任务的 `note` 都带 `stage=<阶段> reason=<原因>` 前缀。按阶段分：
+板子上多数任务的 `note` 带 `stage=<阶段> reason=<原因>` 前缀；**claim 阶段的 note 只有 `preamble`（不含 stage/reason）**，别拿它当错误码找。按阶段分：
 
 **claim / 领任务**
 - `claim 409`：别人已经抢到（正常并发，不是错误）。
@@ -72,7 +72,7 @@ Get-NetTCPConnection -State Listen |
 **exec（跑脚本）**
 | reason | 含义 | 处置 |
 | --- | --- | --- |
-| `not-allowlisted` | 脚本不在白名单内，且 `approvalMode=manual` | 加白名单，或人工审批 |
+| `empty` | 任务里没给脚本路径 | 补 `script` 参数 |`n| `not-allowlisted` | 脚本不在白名单内，且 `approvalMode=manual`（**运行期 note 里显示为 `approval-required`**） | 加白名单，或人工审批 |
 | `not-allowlisted-auto` | **放行**了非白名单脚本（`approvalMode=auto`） | 你开的是自动放行，确认机器受控 |
 | `not-absolute` / `bad-path` / `bad-extension` | 路径不是绝对路径 / 含 `..` / 不是 `.ps1` | 修正任务参数 |
 | `missing` / `not-file` | 脚本不存在 / 是目录 | 检查副机上文件是否真的在 |
@@ -94,11 +94,11 @@ Get-NetTCPConnection -State Listen |
 | `agent-budget-exceeded` | 当日预算用尽 | 等次日或调 `agentBudgetMaxPerDay` |
 | `agent-start-failed` / `agent-error` / `agent-run-failed` | 起会话失败 / 运行报错 / 异常退出 | 看 `agent/error` 事件与副机日志 |
 
-**maint（只读维护通道）**：`stage=maint verb=version|status|config|logs`。它不 spawn、不跑任意命令；`config` 会脱敏（token 之类只回「已配置」）。
+**maint（只读维护通道）**：`stage=maint verb=version|status|config|logs`。它不 spawn、不跑任意命令；`config` 按白名单重建（token / nodeToken 这类键**根本不出现**在输出里，不是打「已配置」占位）。
 
 ## 4. 常见故障
 
-1. **面板 403 `forbidden`**：`uiGuard` 拒了。原因是 Host 不是 loopback、也不在 `uiAllowedHosts`；或 Origin 与 Host 不一致（反代改写 Host 时常见）；或写请求缺 `x-dsh-team-ui: 1`。
+1. **面板 403 `forbidden`**：`uiGuard` 拒了，看返回体里的 `why`：`host`（Host 不是 loopback、也不在 `uiAllowedHosts`）、`origin`（Origin 与 Host 不一致，反代改写 Host 时常见）、`header`（写请求缺 `x-dsh-team-ui: 1`）、`content-type`（写请求不是 `application/json`）、`method`（对写型路由发了 GET/HEAD）。返回体形如 `{ok:false,error:'forbidden',why}`。
 2. **面板转圈、任务列表空**：看板服务没起（`8965` 不通）、或 `boardUrl` 写成了 `127.0.0.1` 但你是从别的机器访问。
 3. **副机一直 idle**：`workerMode` 不是 `on`；或 `boardUrl` 指向的错误；或 `machine` 与看板上的注册名不同（`worker_status` 会显示 machine）。
 4. **任务卡在 running**：副机崩了/断网。租约（`leaseMinutes`，默认 10 分钟）过期后按 `orphanPolicy` 处理：`blocked`（默认，保守）/`requeue`/`ignore`。
@@ -109,14 +109,14 @@ Get-NetTCPConnection -State Listen |
 - **`sh_run` 不是沙箱**：它只管「文件路径必须在 `allowedRoots` 内」，**命令内容本身不受限**。它是给受信任的 in-process 会话用的，不是给不可信任务用的。
 - **`exec` 才是远程任务的执行面**：绝对路径 + `.ps1` + realpath 白名单 + 审批模式，才是给「看板上任意任务」准备的闸门。
 - **`agent` 不是沙箱**：agent 会话里的工具随 preset 决定，能读写就是能读写。`confirm` 审批是唯一的人审口。
-- **白名单是前缀匹配**：`C:\scripts\` 会放行 `C:\scripts-evil\x.ps1` 吗？不会——比较前两边都 realpath 成规范路径再按目录边界比。但**条目本身别写成盘根**（`C:\`），那等于全放行。
+- **白名单按目录边界匹配，不是朴素字符串前缀**：`C:\scripts\` 不会放行 `C:\scripts-evil\x.ps1` —— 比较前两边都 realpath 成规范路径、再按目录边界（`isWithin`）比。但**条目本身别写成盘根**（`C:\`），那等于全放行。
 - **token 只在 header 里**：`x-board-token`。板子返回、note、日志不该出现它；看到就是 bug。
 
 ## 6. 回滚
 
 1. 代码层：`git -C D:\gp_video\dsh-job-board checkout <上一个 tag>`，重新复制 `lib/` 到 profile，重启 DSH。
 2. 配置层：改 `cordis.patch.yml` 前先备份（`.bak-<时间戳>`），回滚就是换回备份再重启。
-3. 任务层：`worker_control` 可以把任务打回 `queued`；状态写坏的条目用看板 UI 的「重试 / 打回」。
+3. 任务层：状态写坏的条目用 `board_retry`（工具）或看板 UI 的「重试 / 打回」。`worker_control` 的动作只有 `drain / resume / cancel / tick / orphans / approve / revoke`，**没有 requeue**。
 4. 插件层：`plugin_manager` 里先 `disable` 再 `enable` 拿回干净实例——注意它不会替你清状态目录。
 
 ## 7. 发版前自检（给维护者）

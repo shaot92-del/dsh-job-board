@@ -1,6 +1,6 @@
 {
-  "version": "2.6.9",
-  "updated": "2026-11-16",
+  "version": "2.6.18",
+  "updated": "2026-11-18",
   "sources": [
     {
       "id": "glm-sec",
@@ -26,33 +26,6 @@
   ],
   "entries": [
     {
-      "id": "v266-claim-holder",
-      "severity": "P1",
-      "sources": [
-        "glm-sec"
-      ],
-      "status": "fixed",
-      "where": "tools/board_server.py:316-382",
-      "summary": "claim 落 holder 且已有 holder 时 fail-closed（省略 holder 409）；beat/mark/release/untake 同步校验。",
-      "tests": [
-        "board-server-smoke V266 claim/mark 409"
-      ],
-      "note": "；v2.6.9 补齐 solo-board 与 old+new 两条路径"
-    },
-    {
-      "id": "v266-get-csrf",
-      "severity": "P1",
-      "sources": [
-        "dsv41"
-      ],
-      "status": "fixed",
-      "where": "lib/index.js uiGuard / assess / say / dispatch-pause",
-      "summary": "10 条写型 UI 路由只收 POST；3 条无 body 路由 GET 由 uiGuard 403，其余 7 条 handler 405，写不进去。",
-      "tests": [
-        "ui-guard-smoke GET 三路由被拒"
-      ]
-    },
-    {
       "id": "v266-exec-cwd-root",
       "severity": "P1",
       "sources": [
@@ -64,75 +37,6 @@
       "tests": [
         "test/worker/exec-runner.test.mjs（新增 root 越界/无效/未配用例）"
       ]
-    },
-    {
-      "id": "v266-approve-retry",
-      "severity": "P2",
-      "sources": [
-        "glm-sec"
-      ],
-      "status": "fixed",
-      "where": "lib/worker/agent-approval.js",
-      "summary": "retry 换新 taskId 导致审批永不命中；现按 goal 指纹在 TTL 内复用。",
-      "tests": [
-        "test/worker/agent-gate.test.mjs approved-fingerprint"
-      ]
-    },
-    {
-      "id": "v266-alias-cjk",
-      "severity": "P2",
-      "sources": [
-        "glm-full"
-      ],
-      "status": "fixed",
-      "where": "tools/board_server.py _alias_key",
-      "summary": "中文别名被剥成空串互相冲突；现保留 Han 字符。",
-      "tests": [
-        "board-server-smoke V266 中文显示名共存"
-      ]
-    },
-    {
-      "id": "v266-release-ghost",
-      "severity": "P2",
-      "sources": [
-        "glm-full"
-      ],
-      "status": "fixed",
-      "where": "tools/board_server.py do_release",
-      "summary": "空 machine release 造幽灵机；现仅在 machine 非空时 touch。",
-      "tests": [
-        "board-server-smoke V266 空 machine release"
-      ]
-    },
-    {
-      "id": "v266-corrupt-state",
-      "severity": "P2",
-      "sources": [
-        "glm-full"
-      ],
-      "status": "fixed",
-      "where": "tools/board_server.py load_state",
-      "summary": "坏 JSON 静默重置可能覆盖；现备份 .corrupt.<ts> 并报 stderr。"
-    },
-    {
-      "id": "v266-redact-trace",
-      "severity": "P2",
-      "sources": [
-        "glm-full"
-      ],
-      "status": "fixed",
-      "where": "lib/index.js redactConfig / trace",
-      "summary": "配置只打码一层、trace 无轮转；现递归打码与 8MiB 轮转。"
-    },
-    {
-      "id": "v266-python-probe",
-      "severity": "P3",
-      "sources": [
-        "glm-full"
-      ],
-      "status": "fixed",
-      "where": "lib/index.js probe()",
-      "summary": "python --version 在 stderr，读数恒空；现回退 stderr。"
     },
     {
       "id": "v266-install-lock",
@@ -207,26 +111,6 @@
       "summary": "solo 板出站 note 未脱敏；板子侧已有 redact，solo 未移植。"
     },
     {
-      "id": "v266-stop-abort",
-      "severity": "P2",
-      "sources": [
-        "sec-v266"
-      ],
-      "status": "fixed",
-      "where": "lib/worker/worker.js stop()",
-      "summary": "stop 只停心跳会留下子进程；现同时 abort。"
-    },
-    {
-      "id": "v266-beat-reset",
-      "severity": "P2",
-      "sources": [
-        "sec-v266"
-      ],
-      "status": "fixed",
-      "where": "lib/worker/worker.js beat",
-      "summary": "心跳成功未重置 beatErrors；现重置，连续 3 次才 abort。"
-    },
-    {
       "id": "v266-dispatch-approval",
       "severity": "P2",
       "sources": [
@@ -237,60 +121,102 @@
       "summary": "默认 auto 属产品选择（自动派工不等审批），未在本轮改动。"
     },
     {
-      "id": "v269-solo-holder",
-      "status": "fixed",
-      "severity": "P0",
-      "source": "OpenPangu-2.1-Pro VULN-001",
-      "note": "solo-board claim/beat 校验并落 holder；S11 回归"
-    },
-    {
-      "id": "v269-oldnew-claim",
-      "status": "fixed",
-      "severity": "P0",
-      "source": "OpenPangu-2.1-Pro VULN-002",
-      "note": "板子无 cur_holder 时 409；V266b 回归"
-    },
-    {
-      "id": "v269-ui-untake-holder",
+      "id": "v2616-log-extra-patharmor",
       "status": "fixed",
       "severity": "P1",
-      "source": "OpenPangu-2.1-Pro VULN-003",
-      "note": "UI untake 带 INSTANCE_HOLDER"
+      "source": "self",
+      "note": "extra 在 stringify 后打码，反斜杠转义使家目录永不匹配；改为序列化前打码"
     },
     {
-      "id": "v269-terminal-archive",
+      "id": "v2617-token-redirect",
       "status": "fixed",
-      "severity": "P3",
-      "source": "OpenPangu-2.1-Pro VULN-004",
-      "note": "mark/release 对终态任务无 holder 放行，UI 透传 machine"
+      "severity": "P1",
+      "source": "agent-1",
+      "note": "看板 fetch 无 redirect，x-board-token 跟 302 到异源；改 redirect:\"error\""
     },
     {
-      "id": "v269-alias-space",
+      "id": "v2617-response-cap",
       "status": "fixed",
-      "severity": "P3",
-      "source": "OpenPangu-2.1-Pro VULN-005",
-      "note": "_alias_key 保留空白"
+      "severity": "P1",
+      "source": "agent-1",
+      "note": "res.text() 无上限，80 MiB 可打满内存；新增 readTextCapped 8 MiB"
     },
     {
-      "id": "v269-redact-env",
+      "id": "v2618-home-slash",
       "status": "fixed",
-      "severity": "P3",
-      "source": "OpenPangu-2.1-Pro VULN-006",
-      "note": "redactConfig 覆盖 envPassthrough/passEnv"
+      "severity": "P1",
+      "source": "agent-2",
+      "note": "家目录只匹配反斜杠，C:/ 与 file:/// 漏打码；三形态 + 前缀边界守卫"
     },
     {
-      "id": "v269-uiguard-write-routes",
+      "id": "v2618-key-escape",
       "status": "fixed",
-      "severity": "P3",
-      "source": "OpenPangu-2.1-Pro VULN-007",
-      "note": "ui-guard 16 条写型动作路由（13 循环+3 定向）GET 拒绝 38/38"
+      "severity": "P2",
+      "source": "agent-2",
+      "note": "secret 在 key 名里被 JSON 转义后漏打码；补转义形态替换"
     },
     {
-      "id": "v269-trace-rotation",
+      "id": "v2618-numeric-secret",
+      "status": "fixed",
+      "severity": "P2",
+      "source": "agent-2",
+      "note": "数字 secret 全文替换把 JSON 打坏；改 replacer 内打码"
+    },
+    {
+      "id": "v2618-log-fallback",
+      "status": "fixed",
+      "severity": "P2",
+      "source": "agent-2",
+      "note": "序列化失败且 toString 抛错时日志二次抛错；兜底落占位"
+    },
+    {
+      "id": "v2618-secret-order",
       "status": "fixed",
       "severity": "P3",
-      "source": "hy4 P3",
-      "note": "trace 归档名 pid+时间戳，不再 unlink 他进程归档"
+      "source": "agent-2",
+      "note": "重叠 secret 留后缀残渣；按长度降序、忽略空白"
+    },
+    {
+      "id": "v2618-playbook-drift",
+      "status": "fixed",
+      "severity": "P2",
+      "source": "agent-2",
+      "note": "手册 6 处与代码不符（requeue/403 why/empty/白名单语义等）"
+    },
+    {
+      "id": "v2617-agent-tool-scope",
+      "status": "open",
+      "severity": "P1",
+      "source": "agent-1",
+      "note": "agent 会话持 sh_run 与 board_*，不是沙箱；任务文本注入=命令执行"
+    },
+    {
+      "id": "v2617-exec-cwd-root",
+      "status": "open",
+      "severity": "P1",
+      "source": "agent-1",
+      "note": "execCwdRoot 缺省空时 cwd 由任务任意指定"
+    },
+    {
+      "id": "v2617-auto-dispatch",
+      "status": "open",
+      "severity": "P2",
+      "source": "agent-1",
+      "note": "autoDispatch 与 dispatchApproval 缺省无人确认（产品选择）"
+    },
+    {
+      "id": "v2618-approval-fingerprint",
+      "status": "open",
+      "severity": "P2",
+      "source": "agent-1",
+      "note": "审批指纹只绑 goal、跨 taskId 迁移；revoke 未连坐"
+    },
+    {
+      "id": "v2618-ui-local-authz",
+      "status": "open",
+      "severity": "P2",
+      "source": "self",
+      "note": "/api/board/ui/* 无应用层鉴权；仅监听 loopback，伪造 Host 被 403"
     }
   ]
 }

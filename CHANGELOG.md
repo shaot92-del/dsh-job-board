@@ -1,4 +1,13 @@
 # 变更日志
+## v2.6.18 — 2026-11-18（家目录脱敏补正斜杠/file URL + 数字与 key 名边角 + 手册纠错）
+
+- **修 P1：家目录只匹配反斜杠形态**。`maskText` 以前只替换 `C:\Users\X`；`C:/Users/X`（Node ESM 栈、部分工具输出就是这种）与 `file:///C:/Users/X` 都会原样漏出去，而 `exec-runner` 会把子进程 `stderrTail` 拼进 note、`worker.js` 用 `home: os.homedir()` 打码 —— 有生产路径。现在三种形态都替换，并加边界守卫（home 是 `C:\Users\Al` 时不吃掉 `C:\Users\Alice`）。
+- **修 P2：key 名里的秘密漏打码**。JSON 序列化会把反斜杠/引号转义，外层 `maskText` 看到的是转义后的文本，原始串匹配不上；现在 `maskText` 同时替换 secret 的 JSON 转义形态，测试补了带 `\` 与 `"` 的 key。
+- **修 P2：数字形态的秘密会把 JSON 打坏**。数字 `123456789` 作值再按全文替换会得到 `{"pin":***}`（非法 JSON）；改为在 replacer 里就地打码成字符串。
+- **修 P2：日志兜底可能二次抛错**。序列化失败且对象自定义 `toString` 也抛错时，`log.info` 会抛；现在落 `[unserializable extra]`。
+- **替换顺序**：secret 从长到短替换，重叠 secret 不再留 `***789` 后缀残渣；纯空白 secret 直接忽略。
+- **手册纠错（`docs/operator-playbook.md`）**：exec 原因表补 `empty`、注明 `not-allowlisted` 在运行期 note 里显示为 `approval-required`；403 的 `why` 补全 `host/origin/header/content-type/method` 五种；`worker_control` 没有 `requeue`（打回用 `board_retry` 或看板 UI）；maint `config` 是白名单重建、token 键根本不出现；白名单是目录边界匹配而非朴素前缀；claim 阶段 note 只有 preamble；基线版本同步到 2.6.18。
+- **测试**：`test/worker/log.test.mjs` 16 → 26 条（正斜杠/file URL/前缀边界/secret 长度边界/重叠/空白/转义 key/数字/toString 兜底）。版本同步 2.6.18。
 ## v2.6.17 — 2026-11-18（看板 token 不跟 302 走 + 响应正文上限 + 票据模块）
 
 - **修 P1：token 会跟着 302 跑到别的域**。两处看板 fetch（`lib/index.js` 的 `call()` 与 `lib/worker/transport/http.js` 的 `request()`）都没传 `redirect`，Node/undici 只剥 `Authorization`/`Cookie`，自定义的 `x-board-token` 会原样跟到重定向目标 —— 被劫持/被替换的看板回一个 302 就能拿到看板全权凭据（独立审计用两个 loopback server 实测复现）。现在两处都显式 `redirect: 'error'`。

@@ -128,3 +128,69 @@ test('createLogger：extra 里的 Date 仍序列化成 ISO（replacer 只动字�
   log.info('t', { at: new Date(Date.UTC(2026, 0, 2, 3, 4, 5)) });
   assert.equal(log.recent()[0].extra, '{"at":"2026-01-02T03:04:05.000Z"}');
 });
+
+// ── v2.6.18：独立审查指出的脱敏边角 ────────────────────────────────────────────
+
+test('maskText：家目录的正斜杠形态也要打码（Node 栈 / 工具输出常见）', () => {
+  assert.equal(maskText('C:/Users/Alice/proj', { home: 'C:\\Users\\Alice' }), '%USERPROFILE%/proj');
+});
+
+test('maskText：file:/// 前缀的家目录也要打码', () => {
+  assert.equal(
+    maskText('at file:///C:/Users/Alice/proj/a.mjs:3', { home: 'C:\\Users\\Alice' }),
+    'at file:///%USERPROFILE%/proj/a.mjs:3',
+  );
+});
+
+test('maskText：家目录只做前缀不能过度匹配（Al 不该吃掉 Alice）', () => {
+  assert.equal(maskText('C:\\Users\\Alice', { home: 'C:\\Users\\Al' }), 'C:\\Users\\Alice');
+});
+
+test('maskText：secret 长度边界 5 不打码、6 打码', () => {
+  assert.equal(maskText('xabcdeabcde', { secrets: ['abcde'] }), 'xabcdeabcde');
+  assert.equal(maskText('v=abcdef!', { secrets: ['abcdef'] }), 'v=***!');
+});
+
+test('maskText：重叠 secret 从长到短替换，不留后缀残渣', () => {
+  assert.equal(
+    maskText('abcdef123456789', { secrets: ['abcdef123456', 'abcdef123456789'] }),
+    '***',
+  );
+});
+
+test('maskText：纯空白 secret 被忽略，不误伤正文空格', () => {
+  assert.equal(maskText('hello       world', { secrets: ['      '] }), 'hello       world');
+});
+
+test('createLogger：带反斜杠/引号的 secret 出现在 key 名里也要打码且 JSON 仍有效', () => {
+  const tricky = ['tok\\abc123456', 'tok"abc123456'];
+  const log = createLogger({ secrets: tricky });
+  log.info('x', { 'tok\\abc123456': 1, 'tok"abc123456': 2 });
+  const [entry] = log.recent();
+  for (const secret of tricky) assert.equal(entry.extra.includes(secret), false, entry.extra);
+  assert.doesNotThrow(() => JSON.parse(entry.extra), entry.extra);
+});
+
+test('createLogger：数字形态的 secret 不会把 JSON 打坏', () => {
+  const log = createLogger({ secrets: ['123456789'] });
+  log.info('x', { pin: 123456789, note: 'ok' });
+  const [entry] = log.recent();
+  const parsed = JSON.parse(entry.extra);
+  assert.equal(entry.extra.includes('123456789'), false, entry.extra);
+  assert.equal(parsed.note, 'ok');
+});
+
+test('createLogger：序列化失败且 toString 也抛错时，落占位而不抛错', () => {
+  const log = createLogger();
+  const evil = { name: 'x' };
+  evil.self = evil; // 循环引用 → JSON.stringify 抛
+  evil.toString = () => { throw new Error('tostring boom'); };
+  assert.doesNotThrow(() => log.info('evil', evil));
+  assert.equal(log.recent()[0].extra, '[unserializable extra]');
+});
+
+test('createLogger：普通对象（toString 是默认的）仍按 JSON 输出', () => {
+  const log = createLogger();
+  log.info('plain', { a: 1 });
+  assert.equal(log.recent()[0].extra, '{"a":1}');
+});
