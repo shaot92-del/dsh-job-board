@@ -1,4 +1,21 @@
 # 变更日志
+## v2.6.17 — 2026-11-18（看板 token 不跟 302 走 + 响应正文上限 + 票据模块）
+
+- **修 P1：token 会跟着 302 跑到别的域**。两处看板 fetch（`lib/index.js` 的 `call()` 与 `lib/worker/transport/http.js` 的 `request()`）都没传 `redirect`，Node/undici 只剥 `Authorization`/`Cookie`，自定义的 `x-board-token` 会原样跟到重定向目标 —— 被劫持/被替换的看板回一个 302 就能拿到看板全权凭据（独立审计用两个 loopback server 实测复现）。现在两处都显式 `redirect: 'error'`。
+- **修 P1：响应正文无上限**。`res.text()` 以前不设限，恶意看板回 200 + 80 MiB 正文就能把副机内存打满。新增 `readTextCapped()`（按流读、不信 `content-length`、超限即取消并报「响应过大」），上限 8 MiB（正常快照几百 KB）。
+- **新增 `lib/worker/maint-ticket.js`（A1，尚未接线）**：一次性写授权的票据校验模块 —— ed25519 签名覆盖 8 个字段、9 步校验序（配置关 → 票据形态 → 公钥 → 签名 → 机器 → 时间窗 → 重放 → payload 哈希），已用 nonce 集合落盘（FIFO 上限 1000），reason 常量与任务书约定一致。`test/worker/maint-ticket.test.mjs` 33 条（签名/篡改/过期/重放/payload/顺序/FIFO）。动词接线（A2）下个版本做，本版只入库。
+- **`test/worker/transport.test.mjs` 补 3 条回归**：`redirect:'error'` 生效、声明超限、流式超限。
+- 门禁：`check-text` / `plugcheck` / `client-render-smoke` / `npm test`（261 条）/ `pack-check` 全绿。
+- 版本同步 2.6.17。
+
+## v2.6.16 — 2026-11-18（日志脱敏漏掉 extra 里的路径 + 运维手册）
+
+- **修一个真泄露：`extra` 里的路径从来没被打过码**。`createLogger` 以前是「先 `JSON.stringify(extra)` 再 `maskText`」，而 JSON 会把 Windows 路径的反斜杠转义成 `\\` —— 家目录 `C:\Users\<你>` 在序列化文本里变成 `C:\\Users\\<你>`，跟待替换的模式对不上，于是 **extra 字段里的用户名路径原样进日志、进而进共享看板**（note/日志是同一条通道）。现在改成「序列化时用 replacer 对每个字符串先打码、序列化后再兜一层」（key 名里出现秘密也挡）；Date / Buffer / toJSON 的语义不变（replacer 只动字符串），循环引用与 BigInt 不再让 logger 抛错（catch 兜底成 `String(extra)` 再打码）。
+- **`lib/worker/log.js` 从零测试到 16 条**（新增 `test/worker/log.test.mjs`）：secret 打码与短 secret 不误伤、家目录大小写不敏感、正则元字符转义、环形缓冲上限、level 过滤、`child()` 前缀共用缓冲、`tail()` 时间来自注入的 `now()`、sink 抛错不影响主循环、**extra 路径打码（本次修复的回归用例）**、Date 仍序列化成 ISO。脱敏写错的后果是「看板上出现别人的路径」，以前这个模块一条测试都没有。
+- **新增 `docs/operator-playbook.md`（运维手册）**：三角色最小配置、`file:` 依赖「改了仓库不生效」的部署真相与 doctor 自检、exec/agent/maint 三张错误码表（reason 直接照代码抄）、五类常见故障、安全边界（`sh_run` 不是沙箱 / `agent` 不是沙箱 / 白名单别写成盘根 / token 只在 header）、回滚四步、发版自检。同时把它加进 `package.json` 的 `files`。
+- 门禁：`check-text` / `plugcheck` / `client-render-smoke` / `npm test`（225 条）/ `pack-check` 全绿。
+- 版本同步 2.6.16。
+
 ## v2.6.15 — 2026-11-18（14 寸屏头部收容：三组各占一行、窄屏让位）
 
 - **头部从「一串 flex 子元素平铺」改成三组语义容器**：`dsb-brand`（标题 + 版本 pill + 副标题）、`dsb-meta`（待办/进行/完成/打回 四个计数 pill）、`dsb-acts`（更新 pill + 9 个操作按钮，`margin-left:auto` 靠右）。DOM 顺序不变、按钮一个不少（smoke 里数着 9 个），只是把「该整体换行的东西」包成组，窄栏时按组折行，而不是每个按钮各自乱折。

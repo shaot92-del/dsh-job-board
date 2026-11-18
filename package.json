@@ -1,6 +1,6 @@
 {
   "name": "@wfcj/dsh-job-board",
-  "version": "2.6.15",
+  "version": "2.6.17",
   "description": "DSH 插件：多机调度台 —— 多机作业板工具 + GUI 面板 + sh_* 命令工具，一个包装齐",
   "type": "module",
   "scripts": {
@@ -44,6 +44,7 @@
     "README.md",
     "CHANGELOG.md",
     "docs/review-response.md",
+    "docs/operator-playbook.md",
     "docs/issue-10/",
     "LICENSE",
     "tools/board_server.py",

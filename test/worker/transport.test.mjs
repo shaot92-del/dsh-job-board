@@ -195,3 +195,66 @@ test('BoardError：空 baseUrl 抛 BoardError', () => {
   assert.throws(() => createHttpTransport({ baseUrl: '' }), BoardError);
   assert.throws(() => createBoardClient({ baseUrl: '' }), BoardError);
 });
+
+test("redirect: 'error'：令牌不跟 302 走（审计 P1-1 回归）", async () => {
+  // 用注入的 fetchImpl 断言选项：真 server 上无法观察到「fetch 是否跟随」。
+  let seen = null;
+  const fakeFetch = async (url, opts) => {
+    seen = opts;
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      text: async () => '{"ok":true}',
+    };
+  };
+  const t = createHttpTransport({ baseUrl: 'http://127.0.0.1:9', token: 'tok-secret', fetchImpl: fakeFetch });
+  const r = await t.snapshot();
+  assert.equal(r.ok, true);
+  assert.equal(seen.redirect, 'error', '必须显式禁止跟随重定向');
+  assert.equal(seen.headers['x-board-token'], 'tok-secret');
+});
+
+test('响应过大（content-length 声明超限）→ ok:false, error 含「响应过大」', async () => {
+  const fb = await startFakeBoard((req, res) => {
+    try {
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': String(9000000), connection: 'close' });
+      res.end('{}');
+    } catch {
+      /* socket closed */
+    }
+  });
+  const t = createHttpTransport({ baseUrl: fb.url });
+  const r = await t.snapshot();
+  assert.equal(r.ok, false);
+  assert.match(r.error, /响应过大/);
+  await fb.close();
+});
+
+test('响应过大（无 content-length、流式超限）→ ok:false, 不把正文整个读进来', async () => {
+  const fb = await startFakeBoard((req, res) => {
+    try {
+      res.writeHead(200, { 'content-type': 'application/json', connection: 'close' });
+      const chunk = 'x'.repeat(256 * 1024);
+      let sent = 0;
+      const pump = () => {
+        while (sent < 9 * 1024 * 1024) {
+          sent += chunk.length;
+          if (!res.write(chunk)) {
+            res.once('drain', pump);
+            return;
+          }
+        }
+        res.end();
+      };
+      pump();
+    } catch {
+      /* socket closed */
+    }
+  });
+  const t = createHttpTransport({ baseUrl: fb.url });
+  const r = await t.snapshot();
+  assert.equal(r.ok, false);
+  assert.match(r.error, /响应过大/);
+  await fb.close();
+});
