@@ -1,4 +1,10 @@
 # 变更日志
+## v2.6.14 — 2026-11-18（agent 派工的路障：补 inject agentLoop/sessions）
+
+- **组合包补丁的 inject 补齐 agent 侧服务**：`cordis.patch.yml` 的插入行从 `['webServer', 'tools']` 改成 `['webServer', 'tools', 'agentLoop', 'sessions']`。`workerMode: 'on'` 且 `agentEnabled: true` 时 `lib/worker/index.js:117-127` 会建 `createDshAgentHost()`，而它要读 `ctx.agentLoop` / `ctx.sessions`（`lib/worker/agent-runner.js` 的 `readService`）；cordis 的规则是「行上没有声明 inject 就不能访问该服务（`cannot get property … without inject`）」，readService 的 try/catch 会把它变成 `null` ⇒ v2.6.13 及以前**副机即使把 `agentEnabled` / `agentPreset` / `agentCwdRoot` / `agentAllowlist` 全配齐，任务仍以 `reason=agent-unavailable` 被拦**（note：「agentLoop.createAgent 不可用 …」），看起来像配置写错，实际是补丁少声明两个服务。多声明的两个只在 agent 分支被访问，host 角色（不跑 worker）下无害，且本行会等这些服务就绪再激活（agentLoop / sessions 都是 DSH 核心服务）。agent 的 ctx 还继承本行的依赖声明，所以 `tools` 也必须留着。
+- **新增 `test/worker/patch.test.mjs`**：断言插入行 inject 至少含 `webServer/tools/agentLoop/sessions`、`id: team` 与包名正确、默认仍是「只看板不执行」（`workerMode: 'off'` / `agentEnabled: false` / `approvalMode: manual`）——以后谁把 inject 收窄会当场卡 gate。
+- 版本同步 2.6.14。
+
 ## v2.6.13 — 2026-11-18（面板常显版本号 + 三处小瑕疵）
 
 - **面板标题旁常显版本 pill（handoff 待办 1，「UI 显示插件版本号」）**：`插件 v2.6.13`。以前版本号只在「自检横幅」里出现，而横幅的渲染条件是 `doctorIssues.length || doctor.ok === false`，`doctorIssues` 只收 `warn`/`error`（`info` 不算）⇒ doctor 全绿时**用户在任何界面都看不到自己在跑哪个版本**（这件事被问过 4 次）。现在：

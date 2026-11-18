@@ -9,10 +9,21 @@
 # inject 必须声明：cordis 的防护是「没声明 inject 就不能访问服务」，
 # 直接读 ctx.webServer / ctx.tools 会抛 cannot get property "..." without inject。
 # 运行时用 ctx.inject() 也不行（子 fiber 会被回收，路由注册完随即 DISPOSED）。
+#
+# ── 为什么是这四个服务（v2.6.14 修正）────────────────────────────────
+# 前三个是本插件自己用的：webServer（注册 /api/board/ui/*）、tools（board_* / sh_*）。
+# 后两个是 **agent 派工**用的：`workerMode: 'on'` 且 `agentEnabled: true` 时，
+# lib/worker/index.js 会建 createDshAgentHost()，而它要读 ctx.agentLoop 与 ctx.sessions
+# （见 lib/worker/agent-runner.js 的 readService）。
+# v2.6.13 及以前这里只写了 ['webServer','tools'] —— 于是副机把 agent 配置全配齐，
+# 任务仍会以 reason=agent-unavailable 被拦（note: agentLoop.createAgent 不可用 …），
+# 表现跟「没配」一样。agent 的 ctx 还**继承本行的依赖声明**，所以 tools 也不能少。
+# 多声明的两个服务只在 agent 分支被访问，host 角色（不跑 worker）下无害；
+# 本行的激活会等这些服务就绪，而 agentLoop / sessions 都是 DSH 核心服务。
 - insert:
     - id: team
       name: '@wfcj/dsh-job-board'
-      inject: ['webServer', 'tools']
+      inject: ['webServer', 'tools', 'agentLoop', 'sessions']
       config:
         # 留空 = 自动探测（主机名 → <board-host> → 本机回环）；写死会让副机永远指向自己。
         boardUrl: ''

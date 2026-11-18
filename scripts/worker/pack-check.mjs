@@ -61,6 +61,7 @@ const required = [
   'scripts/worker-merge-smoke.mjs',
   'scripts/client-render-smoke.mjs',
   'test/worker/version.test.mjs',
+  'test/worker/patch.test.mjs',
 ];
 for (const r of required) {
   if (!files.includes(r)) problems.push(`缺文件：${r}`);
