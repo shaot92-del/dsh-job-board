@@ -1,5 +1,16 @@
 # 变更日志
-## v2.6.18 — 2026-11-18（家目录脱敏补正斜杠/file URL + 数字与 key 名边角 + 手册纠错）
+## v2.6.19 — 2026-11-18（盘古审计四条：预算计数跨进程丢失、票据 nonce/版本校验、响应上限补两处、tmp 名带 pid）
+
+- **修 P1：agent 每日预算的计数会丢**。`lib/worker/agent-budget.js` 的 `consume()` 是 read → 判 → write 三步，没有跨进程互斥；同机多实例（主控 + 副机 worker 同 stateDir、或两个 worker 进程）并发时会同时读到 `used=18`、各写 `19`，实际应到 `20` —— 连投任务能在额度打满后继续超发。现在整段用 `state-file.mjs` 的 `withFileLock` 包住，**抢不到锁 fail-closed**（本次不放行、不写盘，`error` 说明 busy/stale-lock-*）；`refund()` 同样包锁，失败退回无锁 apply 并 warn。注入 `fsImpl` 的测试路径不加锁。
+- **修 P1：`checkTicket` 不校验 nonce 长度**。`MIN_NONCE_LEN=16` 早先只定义没使用，1 个字符的 nonce 也能签也能过 —— 重放窗口被人为放大。现在步骤 7 校验 `< MIN_NONCE_LEN` → `maint-ticket-invalid`。
+- **修 P2：`checkTicket` 成功时把整张票据（含 `sig`）回给调用方**。A2 接力时很容易顺手写进 note/result/日志，等于把凭据留痕；现在只回 `{ ok, status, reason, nonce }`。
+- **修 P2：`lib/index.js` 的 remote-agent 响应无上限**。`remoteUi()` 里 `res.json()` 未设限，本机 remote-agent 回超大正文同样能 OOM；改走与看板同一套 `readTextCapped()`（非 JSON 仍按 null，超限报「响应过大」）。
+- **修 P2：能力探测的 stderr 无上限**。`runWorkloadProbe` 只给 stdout 加了 4 MiB、stderr 没有；现在两边都有上限并 kill。
+- **修 P3：票据版本没校验**。签名正确但 `v` 不是当前版本的票据（未来 v2 / 旧票据）现在在验签之后显式拒绝（`maint-ticket-invalid`）；篡改 `v` 仍是 `maint-ticket-badsig`，语义不变。
+- **修 P3：两个 tmp 文件名不带 pid**。`agent-approval.js` 与 `solo-board.mjs` 的 `*.tmp` 在并发写同一 stateDir 时会互相覆盖，改成 `<file>.<pid>.tmp`。
+- **测试**：新增 `test/worker/agent-budget.test.mjs` 7 条（进程内计数、双实例共享 stateDir、refund 不负数、UTC 跨日、**锁被占时 fail-closed 且不写盘**、默认常量）；`maint-ticket.test.mjs` 33 → 35 条（短 nonce、签名正确但 v 不符、ok 结果不含 sig）。
+- 门禁：`check-text` / `plugcheck` / `client-render-smoke` / `npm test`（**280 条**）/ `pack-check` 全绿。
+- 版本同步 2.6.19。## v2.6.18 — 2026-11-18（家目录脱敏补正斜杠/file URL + 数字与 key 名边角 + 手册纠错）
 
 - **修 P1：家目录只匹配反斜杠形态**。`maskText` 以前只替换 `C:\Users\X`；`C:/Users/X`（Node ESM 栈、部分工具输出就是这种）与 `file:///C:/Users/X` 都会原样漏出去，而 `exec-runner` 会把子进程 `stderrTail` 拼进 note、`worker.js` 用 `home: os.homedir()` 打码 —— 有生产路径。现在三种形态都替换，并加边界守卫（home 是 `C:\Users\Al` 时不吃掉 `C:\Users\Alice`）。
 - **修 P2：key 名里的秘密漏打码**。JSON 序列化会把反斜杠/引号转义，外层 `maskText` 看到的是转义后的文本，原始串匹配不上；现在 `maskText` 同时替换 secret 的 JSON 转义形态，测试补了带 `\` 与 `"` 的 key。

@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import {
   MAINT_TICKET_VERSION,
   MAINT_TICKET_REASONS,
+  MIN_NONCE_LEN,
   MAX_USED_NONCES,
   canonicalTicketJson,
   signTicket,
@@ -120,14 +121,18 @@ test('signTicket → verifySignature：签发后验签通过', () => {
   assert.equal(verifySignature(t, kp.publicKey), true);
 });
 
-test('checkTicket：合法票据 → ok', () => {
+test('checkTicket：合法票据 → ok（且只回 nonce，不回票据本体）', () => {
   const kp = keyPair();
   const t = makeTicket(kp);
   const r = checkTicket(t, makeCtx(kp));
   assert.equal(r.ok, true);
   assert.equal(r.status, 'ok');
   assert.equal(r.reason, 'ok');
-  assert.equal(r.ticket, t);
+  assert.equal(r.nonce, t.nonce);
+  // v2.6.19（盘古 P2-5）：签名是凭据，ok 结果里不能再带 ticket/sig
+  assert.equal(r.ticket, undefined);
+  assert.equal('sig' in r, false);
+  assert.equal(JSON.stringify(r).includes('sig'), false);
 });
 
 test('checkTicket：base64url 编码的票据串 → 解码后校验', () => {
@@ -136,8 +141,29 @@ test('checkTicket：base64url 编码的票据串 → 解码后校验', () => {
   const raw = Buffer.from(JSON.stringify(t), 'utf8').toString('base64url');
   const r = checkTicket(raw, makeCtx(kp));
   assert.equal(r.ok, true);
-  assert.equal(r.ticket.nonce, t.nonce);
-  assert.equal(r.ticket.machine, t.machine);
+  assert.equal(r.nonce, t.nonce);
+});
+
+test('checkTicket：nonce 短于 MIN_NONCE_LEN → maint-ticket-invalid（v2.6.19 / P1-4）', () => {
+  const kp = keyPair();
+  for (const short of ['', 'short', 'nonce-15-chars0']) {
+    const t = makeTicket(kp, { nonce: short });
+    // 走签名正确的路径：先签，再校验（短 nonce 本身签得出来，是校验该拦）
+    const signed = signTicket({ ...t, sig: undefined }, kp.privateKey);
+    const r = checkTicket(signed, makeCtx(kp, { payload: DEFAULT_PAYLOAD }));
+    if (short.length < MIN_NONCE_LEN) {
+      assert.equal(r.ok, false, `nonce=${JSON.stringify(short)} 应被拒`);
+      assert.equal(r.reason, MAINT_TICKET_REASONS.INVALID);
+    }
+  }
+});
+
+test('checkTicket：签名正确但 v 不是当前版本 → maint-ticket-invalid（v2.6.19 / P3-9）', () => {
+  const kp = keyPair();
+  const t = makeTicket(kp, { v: 2 });
+  const r = checkTicket(t, makeCtx(kp));
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, MAINT_TICKET_REASONS.INVALID);
 });
 
 test('checkTicket：直接 JSON 串票据 → 解析后校验', () => {
