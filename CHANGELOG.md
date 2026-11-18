@@ -1,4 +1,14 @@
 # 变更日志
+## v2.6.15 — 2026-11-18（14 寸屏头部收容：三组各占一行、窄屏让位）
+
+- **头部从「一串 flex 子元素平铺」改成三组语义容器**：`dsb-brand`（标题 + 版本 pill + 副标题）、`dsb-meta`（待办/进行/完成/打回 四个计数 pill）、`dsb-acts`（更新 pill + 9 个操作按钮，`margin-left:auto` 靠右）。DOM 顺序不变、按钮一个不少（smoke 里数着 9 个），只是把「该整体换行的东西」包成组，窄栏时按组折行，而不是每个按钮各自乱折。
+- **两档窄屏收容**（纯 CSS，没有媒体查询之外的运行时逻辑）：
+  - `≤1240px`：头部 padding 与按钮/pill 内边距收紧，行间距压到 6px——14 寸屏（125–150% 缩放下 CSS 宽度约 850–1150px）常见的第一档；
+  - `≤980px`：副标题「dsh-job-board · N 台副机在线」让位隐藏（信息不丢：`title` 里仍在），操作组整行右对齐到第二行，品牌行独占第一行并可被压缩省略。
+- **`dsb-sub` 用 ellipsis 收尾**：副标题在中等宽度下先省略、不挤版本 pill；版本 pill 用 `tabular-nums` + `nowrap` 保持稳定宽度，避免刷新时抖动。
+- **smoke 覆盖收容前提**（`scripts/client-render-smoke.mjs` 10 → 14 项）：断言标题与版本 pill 同处 `dsb-brand`、四个计数 pill 同处 `dsb-meta`、9 个按钮都在 header 内的 `dsb-acts`、两条媒体查询与 `dsb-sub` 让位规则存在——以后谁把这层结构拆了会当场卡 gate。
+- 版本同步 2.6.15。
+
 ## v2.6.14 — 2026-11-18（agent 派工的路障：补 inject agentLoop/sessions）
 
 - **组合包补丁的 inject 补齐 agent 侧服务**：`cordis.patch.yml` 的插入行从 `['webServer', 'tools']` 改成 `['webServer', 'tools', 'agentLoop', 'sessions']`。`workerMode: 'on'` 且 `agentEnabled: true` 时 `lib/worker/index.js:117-127` 会建 `createDshAgentHost()`，而它要读 `ctx.agentLoop` / `ctx.sessions`（`lib/worker/agent-runner.js` 的 `readService`）；cordis 的规则是「行上没有声明 inject 就不能访问该服务（`cannot get property … without inject`）」，readService 的 try/catch 会把它变成 `null` ⇒ v2.6.13 及以前**副机即使把 `agentEnabled` / `agentPreset` / `agentCwdRoot` / `agentAllowlist` 全配齐，任务仍以 `reason=agent-unavailable` 被拦**（note：「agentLoop.createAgent 不可用 …」），看起来像配置写错，实际是补丁少声明两个服务。多声明的两个只在 agent 分支被访问，host 角色（不跑 worker）下无害，且本行会等这些服务就绪再激活（agentLoop / sessions 都是 DSH 核心服务）。agent 的 ctx 还继承本行的依赖声明，所以 `tools` 也必须留着。

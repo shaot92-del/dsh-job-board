@@ -227,6 +227,23 @@ check(
 const pill = head ? flattenText(findByClass(head, 'dsb-pill dsb-v')).join('') : ''
 check('版本 pill 有 dsb-pill dsb-v 样式钩子', pill.includes(`插件 v${pkg.version}`), JSON.stringify(pill))
 
+// ── 第 1.5 轮：头部三组收容（14 寸屏折叠的 DOM 前提）───────────────────────
+function countByClass(node, cls) {
+  if (!node || typeof node !== 'object') return 0
+  const kids = Array.isArray(node) ? node : node.children || []
+  let n = node.props && node.props.className === cls ? 1 : 0
+  for (const k of kids) n += countByClass(k, cls)
+  return n
+}
+
+const brand = head ? findByClass(head, 'dsb-brand') : null
+const meta = head ? findByClass(head, 'dsb-meta') : null
+const acts = head ? findByClass(head, 'dsb-acts') : null
+check('标题+版本在同一个 dsb-brand 组里', Boolean(brand) && flattenText(brand).some((t) => /^插件 v/.test(t)) && flattenText(brand).includes('多机调度台'), brand ? JSON.stringify(flattenText(brand)) : 'null')
+check('四个计数 pill 在 dsb-meta 组里', Boolean(meta) && flattenText(meta).filter((t) => /^(待办|进行|完成|打回) /.test(t)).length === 4, meta ? JSON.stringify(flattenText(meta)) : 'null')
+check('按钮在 header 内的 dsb-acts 组里（没有丢按钮）', Boolean(acts) && countByClass(acts, 'dsb-btn') === 9, 'dsb-btn 数量=' + countByClass(acts, 'dsb-btn'))
+check('窄屏折叠样式存在（@media ≤980px + dsb-sub 让位）', RAW.includes('@media (max-width:980px)') && RAW.includes('.dsb-head .dsb-sub{display:none}') && RAW.includes('@media (max-width:1240px)'), 'media queries')
+
 // ── 第 2 轮：doctor 三态（运行旧 / 磁盘新 / 远端更新）─────────────────────
 const DOCTOR_ANCHOR = 'const [doctor, setDoctor] = React.useState(null)'
 const fakeDoctor = { version: '2.6.12', installedVersion: '2.6.13', latestVersion: '2.6.14', updateAvailable: true, role: 'owner', ok: true, checks: [] }
