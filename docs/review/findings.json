@@ -1,5 +1,5 @@
 {
-  "version": "2.6.18",
+  "version": "2.6.19",
   "updated": "2026-11-18",
   "sources": [
     {
@@ -121,27 +121,6 @@
       "summary": "默认 auto 属产品选择（自动派工不等审批），未在本轮改动。"
     },
     {
-      "id": "v2616-log-extra-patharmor",
-      "status": "fixed",
-      "severity": "P1",
-      "source": "self",
-      "note": "extra 在 stringify 后打码，反斜杠转义使家目录永不匹配；改为序列化前打码"
-    },
-    {
-      "id": "v2617-token-redirect",
-      "status": "fixed",
-      "severity": "P1",
-      "source": "agent-1",
-      "note": "看板 fetch 无 redirect，x-board-token 跟 302 到异源；改 redirect:\"error\""
-    },
-    {
-      "id": "v2617-response-cap",
-      "status": "fixed",
-      "severity": "P1",
-      "source": "agent-1",
-      "note": "res.text() 无上限，80 MiB 可打满内存；新增 readTextCapped 8 MiB"
-    },
-    {
       "id": "v2618-home-slash",
       "status": "fixed",
       "severity": "P1",
@@ -217,6 +196,62 @@
       "severity": "P2",
       "source": "self",
       "note": "/api/board/ui/* 无应用层鉴权；仅监听 loopback，伪造 Host 被 403"
+    },
+    {
+      "status": "fixed",
+      "note": "agent-budget consume/refund 加 withFileLock，抢锁失败 fail-closed（v2.6.19）",
+      "id": "v2619-budget-lock",
+      "severity": "P1",
+      "source": "pangu"
+    },
+    {
+      "status": "fixed",
+      "note": "checkTicket 校验 nonce >= MIN_NONCE_LEN（v2.6.19）",
+      "id": "v2619-ticket-nonce-len",
+      "severity": "P1",
+      "source": "pangu"
+    },
+    {
+      "status": "fixed",
+      "note": "checkTicket ok 只回 nonce，不回整张含 sig 的票据（v2.6.19）",
+      "id": "v2619-ticket-sig-return",
+      "severity": "P2",
+      "source": "pangu"
+    },
+    {
+      "status": "open",
+      "note": "重放 TOCTOU 在 A2 接力间隙：A2 必须「先 recordNonce 再执行」，实现时校验",
+      "id": "v2619-ticket-toctou",
+      "severity": "P2",
+      "source": "pangu"
+    },
+    {
+      "status": "fixed",
+      "note": "remoteUi 的 res.json() 改走 readTextCapped（v2.6.19）",
+      "id": "v2619-remoteui-json-cap",
+      "severity": "P2",
+      "source": "pangu"
+    },
+    {
+      "status": "fixed",
+      "note": "runWorkloadProbe stderr 加 4 MiB 上限（v2.6.19）",
+      "id": "v2619-probe-stderr-cap",
+      "severity": "P2",
+      "source": "pangu"
+    },
+    {
+      "status": "fixed",
+      "note": "checkTicket 验签后校验票据版本（v2.6.19）",
+      "id": "v2619-ticket-version",
+      "severity": "P3",
+      "source": "pangu"
+    },
+    {
+      "status": "fixed",
+      "note": "agent-approval / solo-board 的 tmp 名带 pid（v2.6.19）",
+      "id": "v2619-tmp-pid",
+      "severity": "P3",
+      "source": "pangu"
     }
   ]
 }

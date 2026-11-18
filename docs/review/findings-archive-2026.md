@@ -20,3 +20,9 @@
 - v269-redact-env [P3] redactConfig 覆盖 envPassthrough/passEnv（OpenPangu-2.1-Pro VULN-006，fixed）
 - v269-uiguard-write-routes [P3] ui-guard 16 条写型动作路由（13 循环+3 定向）GET 拒绝 38/38（OpenPangu-2.1-Pro VULN-007，fixed）
 - v269-trace-rotation [P3] trace 归档名 pid+时间戳，不再 unlink 他进程归档（hy4 P3，fixed）
+
+## v2.6.19 归档（已修，明细不再进 findings.json）
+
+- **v2616-log-extra-patharmor**（P1/agent-2）：extra 在 stringify 后打码，反斜杠转义使家目录永不匹配；改为序列化前打码
+- **v2617-token-redirect**（P1/agent-1）：看板 fetch 无 redirect，x-board-token 跟 302 到异源；改 redirect:"error"
+- **v2617-response-cap**（P1/agent-1）：res.text() 无上限，80 MiB 可打满内存；新增 readTextCapped 8 MiB
