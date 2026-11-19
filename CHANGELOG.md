@@ -1,3 +1,12 @@
+## v2.6.24 — 2026-11-19（agent 取文本：补 data.message.content 真实形状）
+
+- **修**：2.6.23 的诊断把真实形状打出来了 —— `assistant/message` 的文本块在
+  `data.message.content`，而 `textFromEvent()` 只看了 `data.blocks` / `message.content`。
+  现在按候选列表逐层找：`blocks` → `message.content` → `content` → `data.blocks` →
+  `data.content` → `data.message.content` → `data.message.blocks`，取第一个非空 text 块。
+- **测试**：`textFromEvent` 导出以便单测；新增 3 条（真实形状取到 5、只有 reasoning 块返回空、
+  老形状 blocks 仍兼容）。
+- 版本同步 2.6.24。
 ## v2.6.23 — 2026-11-19（agent 取文本兜底 + 更细诊断）
 
 - **修**：`assistant/message` 之外还有 `assistant/chunk`/`assistant/attempt` 等事件，文本块可能挂在

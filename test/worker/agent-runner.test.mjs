@@ -262,7 +262,7 @@ test('createDshAgentHost：服务缺失时 available 给出可读原因', () => 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { checkAgentCwd } from '../../lib/worker/agent-runner.js';
+import { checkAgentCwd, textFromEvent } from '../../lib/worker/agent-runner.js';
 
 test('checkAgentCwd：`..` 段、root 外目录、不存在目录都被拒', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-cwd-'));
@@ -508,4 +508,21 @@ test('run：会话目录越过 agentCwdRoot → blocked/agent-cwd-denied，且�
   assert.equal(out.reason, 'agent-cwd-denied');
   assert.equal(calls.length, 0, '准入失败不能开会话');
   assert.equal(runner.budget.peek().used, 0, '准入失败不能烧额度');
+});
+
+test('textFromEvent：真实形状 data.message.content（GT14 实测）', () => {
+  const ev = {
+    type: 'assistant/message',
+    data: { turn: 1, step: 1, message: { content: [{ type: 'reasoning', text: '想一想' }, { type: 'text', text: '5' }] }, usage: {}, stream: true },
+  };
+  assert.equal(textFromEvent(ev), '5');
+});
+
+test('textFromEvent：只有 reasoning 块时返回空串', () => {
+  const ev = { type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: 'hmm' }] } } };
+  assert.equal(textFromEvent(ev), '');
+});
+
+test('textFromEvent：兼容顶层 blocks 老形状', () => {
+  assert.equal(textFromEvent({ type: 'assistant/message', blocks: [{ type: 'text', text: '老形状' }] }), '老形状');
 });
