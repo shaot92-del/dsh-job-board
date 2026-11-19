@@ -69,6 +69,7 @@ const required = [
   'test/worker/patch.test.mjs',
   'test/worker/agent-budget.test.mjs',
   'test/worker/maintenance-write.test.mjs',
+  'test/worker/config-maint.test.mjs',
 ];
 for (const r of required) {
   if (!files.includes(r)) problems.push(`缺文件：${r}`);

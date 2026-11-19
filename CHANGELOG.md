@@ -1,3 +1,12 @@
+## v2.6.26 — 2026-11-19（写通道真正可用：归一化层补键 + 公钥路由）
+
+- **修 v2.6.20 的真 bug**：\
+ormalizeConfig()\ 从未读取 \maintenanceWriteEnabled\ / \maintenanceAllowRestart\ / \maintenancePkgDir\ / \maintAuthPublicKeys\ / \dshExePath\ / \maintAuthKeyFile\，于是 \
+unWrite()\ 里 \config.maintenanceWriteEnabled !== true\ 永远成立 —— 写动词在任何配置下都返回 \maint-write-disabled\。单测直接构造 config 对象，所以一直没暴露；真机票据派工才把它打出来。现补 \strList()\ 与六个键（公钥支持数组/扁平字符串，脏值丢弃），并加 3 条回归测试。
+- **新增只读路由 \GET /api/board/ui/maint-key\**：返回本机签名公钥 + 指纹 + 密钥文件路径；密钥文件缺省 \~/.dsh/maint/maint-key.json\，可用 \worker.maintAuthKeyFile\ 或 \DSH_MAINT_KEY_FILE\ 覆盖；首次访问惰性生成（ed25519，私钥 0600 落本机，公钥公开无害）。为「装包时一次性信任指纹」铺路（副机不再需要单独跑脚本）。
+- 测试 362 → 365（+3 配置回归）。
+
+版本同步 2.6.26
 ## v2.6.25 — 2026-11-19（agent 回答落到看板 note）
 
 - **改**：agent 任务成功时，note 在 `text=Nch` 之外再带 `answer="…"`（单行化、截 160 字、
