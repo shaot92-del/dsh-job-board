@@ -260,3 +260,21 @@ test('只读动词不受写通道开关影响（回归）', async () => {
   assert.equal(r.status, 'done');
   assert.match(r.note, /stage=maint verb=version/);
 });
+
+test('redactConfig：写通道三项排障信息可见，公钥只报数量', async () => {
+  const { redactConfig } = await import('../../lib/worker/maintenance.js');
+  const red = redactConfig({
+    machine: 'gt14',
+    maintenanceWriteEnabled: true,
+    maintenanceAllowRestart: false,
+    maintenancePkgDir: 'C:\\pkgs',
+    maintAuthPublicKeys: ['AAAA', 'BBBB'],
+    token: 'secret-token',
+  });
+  assert.equal(red.maintenanceWriteEnabled, true);
+  assert.equal(red.maintenanceAllowRestart, false);
+  assert.equal(red.maintenancePkgDir, 'C:\\pkgs');
+  assert.equal(red.maintAuthPublicKeyCount, 2);
+  assert.equal(JSON.stringify(red).includes('secret-token'), false);
+  assert.equal(JSON.stringify(red).includes('AAAA'), false, '公钥不整串进 payload');
+});
