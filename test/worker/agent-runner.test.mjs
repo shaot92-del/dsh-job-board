@@ -207,11 +207,14 @@ test('createDshAgentHost：createAgent 参数、followup 必须带插件 source�
   assert.deepEqual(seen.options.agentOptions, { provider: 'p', model: 'm' });
 
   await host.deliver(handle.agent, '任务书');
-  // 省略 source 会被 DSH 当成人类输入 —— 这是硬约束，必须在测试里钉住
-  assert.deepEqual(seen.followup, {
-    content: [{ type: 'text', text: '任务书' }],
-    source: { kind: 'cordis-host-runner' },
-  });
+  // 省略 source 会被 DSH 当成人类输入 —— 这是硬约束，必须在测试里钉住；
+  // v2.6.21：必须是完整的 UserMessage（role/id），否则 inbox 收下但不进 driver，
+  // 症状是「秒结束 + 无模型请求 + 取不到文本」。
+  assert.equal(seen.followup.role, 'user');
+  assert.equal(typeof seen.followup.id, 'string');
+  assert.ok(seen.followup.id.length >= 8);
+  assert.deepEqual(seen.followup.content, [{ type: 'text', text: '任务书' }]);
+  assert.deepEqual(seen.followup.source, { kind: 'cordis-host-runner' });
 
   await host.waitIdle(handle.agent);
   assert.equal(seen.idle, true);

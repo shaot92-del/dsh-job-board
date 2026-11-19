@@ -1,3 +1,14 @@
+## v2.6.21 — 2026-11-19（agent 派工真机打通：followup 必须是完整 UserMessage）
+
+- **修**：`agentLoop` 的 `followup()` 收的是 DSH 的 UserMessage 实例（`{ id, role:'user', content, source }`，
+  等价 `createUserMessage()` = `deepFreeze(structuredClone({...input, id, role}))`）。此前我们只传
+  `{ content, source }`：inbox 收下了消息、但不进 driver —— 真机症状是**会话 2.5 秒就结束、没有任何模型请求、
+  `text=0ch`、也不报错**（GT14 `bd-d-61924adc`/`bd-e-3be6293a` 两次复现，`budget` 各涨 1、`dur≈2.6s`）。
+- **补**：`agent-runner.test.mjs` 把「投递必须是完整 UserMessage（role/id/content/source）」钉成断言，
+  以后谁把消息体改回裸对象，单测先红。
+- **排障沉淀**：正常一次 agent 调用应当是「秒级建会话 + 数秒到数十秒模型往返 + 有 text」；
+  **2~3 秒完成且 text 为空 = 消息根本没进队列**，不要再往 provider/网络方向查。
+- 版本同步 2.6.21。
 # 变更日志
 ## v2.6.20 — 2026-11-19（维护写通道 A2：三个写动词 + 板子独立票据字段）
 
