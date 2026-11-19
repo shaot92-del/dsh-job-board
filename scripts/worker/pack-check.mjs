@@ -60,9 +60,11 @@ const required = [
   'scripts/worker/fake-board.mjs',
   'scripts/worker-merge-smoke.mjs',
   'scripts/client-render-smoke.mjs',
+  'scripts/maint-ticket.mjs',
   'test/worker/version.test.mjs',
   'test/worker/patch.test.mjs',
   'test/worker/agent-budget.test.mjs',
+  'test/worker/maintenance-write.test.mjs',
 ];
 for (const r of required) {
   if (!files.includes(r)) problems.push(`缺文件：${r}`);

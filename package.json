@@ -71,7 +71,8 @@
     "scripts/worker/",
     "LICENSE.worker",
     "scripts/worker-merge-smoke.mjs",
-    "scripts/client-render-smoke.mjs"
+    "scripts/client-render-smoke.mjs",
+    "scripts/maint-ticket.mjs"
   ],
   "keywords": [
     "dsh",
