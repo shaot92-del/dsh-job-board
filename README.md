@@ -47,8 +47,8 @@ Host 派出、且板上记录与远程任务对得上。
 ```powershell
 $dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd"
 
-# 本地开发版
-& $dsh plugin --profile desktop add 'file:D:\gp_video\dsh-job-board'
+# 本地开发版（改成你自己的仓库路径，别照抄）
+& $dsh plugin --profile desktop add 'file:<你的仓库路径>'
 
 # 从 GitHub（装别人的/你自己的这份）
 & $dsh plugin --profile desktop add 'github:shaot92-del/dsh-job-board'
@@ -97,7 +97,7 @@ patch / 工具 / 路由，热重载会报 duplicate route 或让客户端面板�
 | `board_done` | 交付（可带 `artifact`） |
 | `board_fail` | 打回（`blocked`）/ 失败（`failed`），必须写原因 |
 | `board_say` | 往事件流播报一句 |
-| `board_dispatch` | 选机 + 建单（`dryRun` 只预览）；v1.1 起建的单带 `dispatch:'auto'`，由 Host 自己派。**goal 必须 ≤ 300 字**（板子按 `goal[:300]` 存，超了会把 exec 命令截成半句；v1.1.3 起超限直接拒绝）。v2.6.12 起 `mode: 'maint'` 走只读维护通道（goal 只写 `version`/`status`/`config`/`logs`） |
+| `board_dispatch` | 选机 + 建单（`dryRun` 只预览）；v1.1 起建的单带 `dispatch:'auto'`，由 Host 自己派。**goal 必须 ≤ 300 字**（板子按 `goal[:300]` 存，超了会把 exec 命令截成半句；v1.1.3 起超限直接拒绝）。v2.6.12 起 `mode: 'maint'` 走维护通道：只读 `version`/`status`/`config`/`logs`；v2.6.20 起三个写动词 `upgrade`/`config-set`/`restart` **必须带 `ticket` 参数**（签名一次性授权，见 `scripts/maint-ticket.mjs`） |
 | `board_options` | 列在线机器的模型清单（派工选机 + 选模型用） |
 | `board_retry` | 重派失败/打回的任务（复制原 goal/machine/mode/model/workspace） |
 | `board_attach` | 把远程任务号绑到板子任务，状态转 running |
@@ -204,7 +204,10 @@ board_dispatch({ machine: 'GT14', mode: 'maint', goal: '{"verb":"logs","lines":8
 - 唯一入参是 `logs` 的行数（整数 1..200；`[50]`/`true`/`12.7`/`0x10` 一律拒，越界即拒）；
 - 板子带宽有限（`note` 500 字 / `reasons` 5×120），所以配了 `maintenanceOutDir` 时完整 payload 另外落 `<dir>/<machine>/<taskId>-<verb>.json`（UTF-8 无 BOM），路径写进 `artifact`；不配就只回摘要。
 
-写动作（升级 / 重启 / 改配置）**不在本通道内**：那需要签名一次性授权，属 v2.7。
+写动作（`upgrade` / `config-set` / `restart`）v2.6.20 起已可用，但**必须带签名票据**：
+主控机 `pwsh -File scripts/maint-ticket.mjs sign --machine <机器> --payload <payload.json>` 签发，
+把票据传给 `board_dispatch` 的 `ticket` 参数（面板派工在「类型」选 maint 后填票据框）。
+副机侧要先开写开关并落公钥（`enable-maint-write.cmd`），这是信任锚，首次必须本地做一次。
 
 板上只看得到 5 条 `reasons`，所以取哪 5 条是按动词定的：`config` 取**头部**（`allowlist[...]` 在最前 —— 那才是「为什么被拒」的答案），`logs` 取**尾部**（最新几行）。`artifact` 路径写进板子前会跟着 `note` 一起脱敏（`%USERPROFILE%` 之类的替换），所以从板子上取的路径不一定能直接打开，配了共享盘时以 `maintenanceOutDir` 下的真实路径为准。
 

@@ -76,6 +76,8 @@ const withAgent = (extra = {}) => ({
   agentEnabled: true,
   agentPreset: 'test-preset',
   agentCwdRoot: AGENT_ROOT,
+  // v2.6.27：这些用例测的是 agent 主流程；未配根的 fail-closed 由单独用例覆盖。
+  allowUnscopedCwd: false,
   agentTimeoutMs: 5000,
   // milestone 2 的四层准入：测试显式放开前两层（matchAll + auto 审批），
   // 具体规则由 agent-gate.test.mjs 逐条覆盖；这里只测编排。

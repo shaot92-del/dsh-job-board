@@ -107,3 +107,18 @@ test('默认额度与常量', () => {
   const b = createAgentBudget();
   assert.equal(b.peek().limit, DEFAULT_MAX_PER_DAY);
 });
+
+test('refund：抢锁失败 → fail-closed（不无锁写，避免把 used 写回旧值）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'budget-lock-'));
+  const budget = createAgentBudget({ stateDir: dir, maxPerDay: 5, now: () => Date.parse('2026-01-02T03:00:00Z') });
+  const got = budget.consume();
+  assert.equal(got.ok, true);
+  // 造一把新鲜的锁（staleMs 内不会被判过期）
+  fs.writeFileSync(path.join(dir, 'agent-budget.json.lock'), JSON.stringify({ pid: 1, at: Date.now() }), 'utf8');
+  const r = budget.refund();
+  // 成功形态是 {date,used,limit}（无 error）；fail-closed 形态必须带 error 且不写盘
+  assert.ok(String(r.error || '').length > 0, '抢不到锁就必须返回 error，不能假装退了');
+  const after = budget.peek();
+  assert.equal(after.used, got.used, '退还失败时 used 不能被改动');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

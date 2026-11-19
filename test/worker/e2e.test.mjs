@@ -86,6 +86,8 @@ test('claim → exec → mark：结果/产物/note 全部落回看板；token �
       maxConcurrent: 1,
       allowlist: [tmp],
       execCwd: tmp,
+      // v2.6.27：未配 execCwdRoot 默认 fail-closed；e2e 关心主流程，显式恢复旧行为。
+      allowUnscopedCwd: true,
       approvalMode: 'manual',
       execTimeoutMs: 30000,
       orphanPolicy: 'blocked',
@@ -158,6 +160,8 @@ test('失败任务也要把 exitCode + stderr 尾部 + stage 写回看板', asyn
       maxConcurrent: 1,
       allowlist: [tmp],
       execCwd: tmp,
+      // v2.6.27：未配 execCwdRoot 默认 fail-closed；e2e 关心主流程，显式恢复旧行为。
+      allowUnscopedCwd: true,
       approvalMode: 'manual',
       execTimeoutMs: 30000,
       orphanPolicy: 'blocked',
@@ -217,6 +221,8 @@ test('maint 任务：worker 认领后原地采集，result/artifact/note 落回�
       maxConcurrent: 1,
       allowlist: [tmp],
       execCwd: tmp,
+      // v2.6.27：未配 execCwdRoot 默认 fail-closed；e2e 关心主流程，显式恢复旧行为。
+      allowUnscopedCwd: true,
       approvalMode: 'manual',
       execTimeoutMs: 30000,
       orphanPolicy: 'blocked',

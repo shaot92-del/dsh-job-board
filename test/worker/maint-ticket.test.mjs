@@ -70,7 +70,9 @@ function makeCtx(kp, overrides = {}) {
   return {
     config,
     payload: overrides.payload ?? DEFAULT_PAYLOAD,
-    stateDir: overrides.stateDir ?? '',
+    // v2.6.27（安全审计 P1）：没有 stateDir 就无法持久化 nonce，checkTicket 会按重放拒（fail-closed）。
+    // 所以默认给一个全新临时目录；测「无 stateDir」的用例显式传 stateDir: ''。
+    stateDir: overrides.stateDir === undefined ? tmpDir() : overrides.stateDir,
     now: overrides.now ?? (() => 1500),
   };
 }
@@ -427,12 +429,14 @@ test('recordNonce：stateDir 为空 → 不抛，返回 error', () => {
   assert.ok(rec.error.length > 0);
 });
 
-test('readUsedNonces：文件缺失 / 损坏 → []，不抛', () => {
+test('readUsedNonces：缺失 → []；损坏 → null（fail-closed，v2.6.27）', () => {
   const dir = tmpDir();
   assert.deepEqual(readUsedNonces(dir), []);
-  // 写入损坏内容
+  // 写入损坏内容：读不动不能当"没用过"，否则重放保护会在最需要时关掉
   fs.writeFileSync(path.join(dir, 'maint-used-nonces.json'), 'not json{', 'utf8');
-  assert.deepEqual(readUsedNonces(dir), []);
+  assert.equal(readUsedNonces(dir), null);
+  // 没有 stateDir 同样 null
+  assert.equal(readUsedNonces(''), null);
 });
 
 test('recordNonce：超过 1000 条 → FIFO 淘汰，只留最后 1000', () => {
@@ -449,11 +453,12 @@ test('recordNonce：超过 1000 条 → FIFO 淘汰，只留最后 1000', () => 
   assert.ok(list.includes('nonce-1004'), '最新的一条应保留');
 });
 
-test('recordNonce：幂等 —— 同一 nonce 写两次，集合里只出现一次', () => {
+test('recordNonce：同一 nonce 第二次 → duplicate（调用方据此拒重放），集合仍只有一条', () => {
   const dir = tmpDir();
   assert.equal(recordNonce('nonce-dup', dir).ok, true);
-  assert.equal(recordNonce('nonce-dup', dir).ok, true);
+  const again = recordNonce('nonce-dup', dir);
+  assert.equal(again.ok, false);
+  assert.equal(again.duplicate, true);
   const list = readUsedNonces(dir);
-  const count = list.filter((x) => x === 'nonce-dup').length;
-  assert.equal(count, 1, '同一 nonce 不应重复进集合');
+  assert.equal(list.filter((x) => x === 'nonce-dup').length, 1, '同一 nonce 不应重复进集合');
 });

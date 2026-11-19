@@ -1,3 +1,24 @@
+## v2.6.27 — 2026-11-20（盘古全量审计修复批：3 个 P0 + 安全/正确性 P1）
+
+- **P0 面板维护通道可达**：派工弹窗新增「类型」选择（agent / exec / maint）与票据输入框，
+  `/api/board/ui/create` 接受并透传 `maint_ticket`（以前面板用户永远打不出写动词，
+  `window.__dsbTaskMode` 只有读取点没有写入点）。
+- **P0 额度退还 fail-closed**：`agent-budget.refund()` 抢锁失败不再无锁回写（会把 used 写回旧值）。
+- **P0 upgrade 回滚**：回滚条件原本恒假（pkgDir 刚 mkdir 过），安装失败会留下半装目录；
+  现在有备份就整目录还原，没备份就清掉半装目录。
+- **安全 P1 一批**：exec/agent 的 note 上板前统一走 `maskText`（stderr 尾部 / 回答原文 /
+  hostError 以前原样进看板）；`sh_run` 与 exec 的环境变量过滤补 `access_key`/`*_KEY`；
+  `recordNonce` 加跨进程锁且读写失败不再当「没用过」（fail-closed 按重放拒）；
+  私钥文件权限不改历史 0600 就修回来；solo 板出站文本全量 redact；
+  `execCwdRoot`/`agentCwdRoot` 未配时默认拒（`allowUnscopedCwd: true` 显式恢复旧行为）。
+- **正确性 P1/P2**：beat 409 holder 冲突立即中止（原来要等 90s 双执行窗口）；`resume()`
+  能真的重启主循环；Node 24 下超时不再被误判成"请求失败"；`bool(NaN)` 不再返 true；
+  tar 目录条目也计入条目上限；restart 动词补上 `spawnImpl`（此前恒 `maint-spawn-failed`）。
+- 文档与提示：README 去掉本机开发路径、写动词与票据流程说明；失败提示补 8 类闸门 reason；
+  playbook 基线更新到 2.6.27。测试 368 条全绿（新增 refund fail-closed、note 脱敏、
+  cwd fail-closed、面板 maint 入口 4 条渲染断言）。
+
+版本同步 2.6.27
 ## v2.6.26 — 2026-11-19（写通道真正可用：归一化层补键 + 公钥路由）
 
 - **修 v2.6.20 的真 bug**：\

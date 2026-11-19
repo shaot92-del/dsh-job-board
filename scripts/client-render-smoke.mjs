@@ -242,6 +242,13 @@ const acts = head ? findByClass(head, 'dsb-acts') : null
 check('标题+版本在同一个 dsb-brand 组里', Boolean(brand) && flattenText(brand).some((t) => /^插件 v/.test(t)) && flattenText(brand).includes('多机调度台'), brand ? JSON.stringify(flattenText(brand)) : 'null')
 check('四个计数 pill 在 dsb-meta 组里', Boolean(meta) && flattenText(meta).filter((t) => /^(待办|进行|完成|打回) /.test(t)).length === 4, meta ? JSON.stringify(flattenText(meta)) : 'null')
 check('按钮在 header 内的 dsb-acts 组里（没有丢按钮）', Boolean(acts) && countByClass(acts, 'dsb-btn') === 9, 'dsb-btn 数量=' + countByClass(acts, 'dsb-btn'))
+// v2.6.27（盘古审计 P0）：维护写通道必须在面板上可达 ——
+// mode 选择器、票据输入框、以及 create 请求体里的 maint_ticket 三者缺一不可。
+check('派工弹窗有类型选择器（agent/exec/maint）', RAW.includes("'类型'") && RAW.includes("'maint · 只读诊断 / 签名写动作'") && RAW.includes("h('option', { value: 'maint' }"), 'taskMode select')
+check('maint 模式有票据输入框', RAW.includes("placeholder: 'ticket= 后面那串") && RAW.includes('setTicket(e.target.value)'), 'ticket textarea')
+check('建单请求会带 maint_ticket', RAW.includes("maint_ticket: taskMode === 'maint'"), 'doDispatch maint_ticket')
+check('写动词缺票时前端拦下并提示', RAW.includes('写动词需要票据'), 'guard')
+
 check('窄屏折叠样式存在（@media ≤980px + dsb-sub 让位）', RAW.includes('@media (max-width:980px)') && RAW.includes('.dsb-head .dsb-sub{display:none}') && RAW.includes('@media (max-width:1240px)'), 'media queries')
 
 // ── 第 2 轮：doctor 三态（运行旧 / 磁盘新 / 远端更新）─────────────────────

@@ -25,7 +25,8 @@ test('往返：普通文件 + 子目录原样还原', async () => {
   ]);
   const out = path.join(dir, 'out');
   const r = await extractTarGz(tgz, out);
-  assert.equal(r.entries, 2);
+  // v2.6.27（安全审计 P2）：目录条目也计入 entries 上限 ⇒ 这里 3 条（1 目录 + 2 文件）
+  assert.equal(r.entries, 3);
   assert.equal(fs.readFileSync(path.join(out, 'package/package.json'), 'utf8').includes('@wfcj/dsh-job-board'), true);
   assert.equal(fs.readFileSync(path.join(out, 'package/lib/a.js'), 'utf8'), 'export const a = 1;\n');
 });

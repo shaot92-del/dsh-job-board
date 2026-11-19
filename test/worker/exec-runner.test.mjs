@@ -74,6 +74,9 @@ const baseConfig = {
   execTimeoutMs: 5000,
   // v2.6.6: exec 不再默认回退到 home；测试显式给一个合法 cwd。
   execCwd: os.homedir(),
+  // v2.6.27：未配 execCwdRoot 默认 fail-closed；这些用例测的是 exec 主流程，
+  // 显式打开旧行为（fail-closed 本身由 resolveCwd 的新用例覆盖）。
+  allowUnscopedCwd: true,
 };
 
 wt('checkScriptAccess：白名单命中的脚本放行', () => {
@@ -381,8 +384,26 @@ test('resolveCwd：配了 root 就 fail-closed（根无效/候选越界都 block
   }
 });
 
-test('resolveCwd：未配 root 保留旧的家目录回退（并标 reason 供调用方告警）', () => {
-  const r = resolveCwd([], fs, '');
+test('resolveCwd：未配 root 且未开 allowUnscopedCwd ⇒ fail-closed', () => {
+  const r = resolveCwd([os.homedir()], fs, '');
+  assert.equal(r.cwd, '');
+  assert.equal(r.reason, 'cwd-root-unset');
+});
+
+test('resolveCwd：未配 root 但显式 allowUnscopedCwd=true ⇒ 旧的家目录回退', () => {
+  const r = resolveCwd([], fs, '', { allowUnscoped: true });
   assert.equal(r.reason, 'cwd-home-default');
   assert.ok(r.cwd);
+});
+
+wt('note 上板前必须脱敏：stderr 里复述 token / 家目录不能原样落回看板（v2.6.27 安全 P1）', async () => {
+  const token = 'board-token-SECRET-abcdef123456';
+  const home = os.homedir();
+  const child = fakeChild({ stderr: `failed for ${token} under ${home}\\proj\n`, code: 2 });
+  const runner = createExecRunner({ config: { ...baseConfig, token }, spawnImpl: spawnReturning(child) });
+  const out = await runner.run({ scriptPath: insideScript }, { taskId: 't-mask' });
+  assert.equal(out.status, 'failed');
+  assert.equal(out.note.includes(token), false, 'token 不能出现在 note');
+  assert.equal(out.note.includes(home), false, '家目录不能原样出现在 note');
+  assert.ok(out.note.includes('%USERPROFILE%') || out.note.includes('***'), '脱敏要留下痕迹');
 });
