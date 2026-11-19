@@ -1,3 +1,11 @@
+## v2.6.23 — 2026-11-19（agent 取文本兜底 + 更细诊断）
+
+- **修**：`assistant/message` 之外还有 `assistant/chunk`/`assistant/attempt` 等事件，文本块可能挂在
+  `data.message.content` / `data.blocks` / `content` 上。`finalText()` 现在先按 `assistant/message` 找，
+  找不到就**倒序扫所有非 user 事件**捞 text 块（避免把投进去的任务书当成回答）。
+- **诊断**：空文本时写两行日志 —— 事件类型分布（最多 6 类）+ 最后一条 assistant 事件的
+  `blockTypes`/`keys`，一眼能看出「是不是只有 reasoning 块 / 是不是 tool-call」。
+- 版本同步 2.6.23。
 ## v2.6.22 — 2026-11-19（agent 排障：错误事件归位 + 空文本诊断）
 
 - **修**：`agent/error` 事件可能只带 `agent.id`（与 `sessionId` 不同）。旧逻辑只认 `worker-` 前缀的 id，
