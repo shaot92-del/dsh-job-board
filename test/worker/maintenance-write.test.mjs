@@ -25,6 +25,7 @@ import {
   payloadSha256,
   signTicket,
 } from '../../lib/worker/maint-ticket.js';
+import { CLOCK_SKEW_MS, keygen, signGoal } from '../../scripts/maint-ticket.mjs';
 
 function tmpDir(tag) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `jb-maint-${tag}-`));
@@ -277,4 +278,38 @@ test('redactConfig：写通道三项排障信息可见，公钥只报数量', as
   assert.equal(red.maintAuthPublicKeyCount, 2);
   assert.equal(JSON.stringify(red).includes('secret-token'), false);
   assert.equal(JSON.stringify(red).includes('AAAA'), false, '公钥不整串进 payload');
+});
+
+// ── 端到端：CLI 签发 → 副机 runner 消费 ────────────────────────────────────
+
+test('端到端：CLI 签发的票据能被 runner 消费（副机时钟慢 30 秒也算有效）', async () => {
+  const dir = tmpDir('e2e');
+  const keyFile = path.join(dir, 'maint-key.json');
+  const { publicKeyB64 } = keygen({ out: keyFile });
+
+  const payloadText = JSON.stringify({ verb: 'config-set', set: { agentEnabled: true, agentPreset: 'standard' } });
+  const issuedAt = Date.now();
+  const { goalText } = signGoal({ keyFile, payloadText, machine: 'gt14', verb: 'config-set', ttlSec: 300, now: issuedAt });
+
+  // 副机时钟比主控慢 30 秒：notBefore 若不往前放，这里就会假性 expired
+  const slaveNow = () => issuedAt - 30_000;
+  const runner = createMaintenanceRunner({
+    config: {
+      machine: 'gt14',
+      maintenanceEnabled: true,
+      maintenanceWriteEnabled: true,
+      maintAuthPublicKeys: [publicKeyB64],
+      stateDir: dir,
+    },
+    log: noopLog,
+    version: '2.7.0-test',
+    now: slaveNow,
+    verbs: { supported: () => true, run: async () => ({ ok: true, reason: 'config-written', note: 'ok' }) },
+  });
+
+  const spec = parseMaintenanceGoal(goalText).spec;
+  const r = await runner.run(spec, { taskId: 'e2e' });
+  assert.equal(r.status, 'done', r.note);
+  assert.equal(r.reason, 'config-written');
+  assert.ok(CLOCK_SKEW_MS >= 30_000);
 });

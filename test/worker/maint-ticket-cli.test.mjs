@@ -8,6 +8,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  CLOCK_SKEW_MS,
   keygen,
   loadPublicKeyB64,
   signGoal,
@@ -119,14 +120,18 @@ test('verifyGoal：时间窗之外 → expired', () => {
   assert.equal(verifyGoal({ goalText, keyFile, machine: 'gt14', now }).ok, true);
 });
 
-test('signGoal：ttl 夹在 30..3600 秒', () => {
+test('signGoal：ttl 夹在 30..3600 秒；notBefore 往前放时钟偏差', () => {
   const dir = tmpDir();
   const keyFile = makeKey(dir);
   const now = Date.now();
   const short = signGoal({ keyFile, payloadText: PAYLOAD, machine: 'gt14', verb: 'config-set', ttlSec: 1, now });
-  assert.equal(short.fields.notAfter - short.fields.notBefore, 30_000);
+  // 有效期从**签发这一刻**算（notAfter - now = ttl），notBefore 提前只放宽「生效」，
+  // 所以 notAfter - notBefore 会多出 CLOCK_SKEW_MS，这是有意为之（副机时钟慢几秒不该假性过期）。
+  assert.equal(short.fields.notAfter - now, 30_000);
+  assert.equal(short.fields.notBefore, now - CLOCK_SKEW_MS);
   const long = signGoal({ keyFile, payloadText: PAYLOAD, machine: 'gt14', verb: 'config-set', ttlSec: 99_999, now });
-  assert.equal(long.fields.notAfter - long.fields.notBefore, 3_600_000);
+  assert.equal(long.fields.notAfter - now, 3_600_000);
+  assert.equal(long.fields.notBefore, now - CLOCK_SKEW_MS);
 });
 
 test('signGoal：nonce 每次不同、长度达最小要求', () => {

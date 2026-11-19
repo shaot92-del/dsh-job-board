@@ -74,8 +74,16 @@ export function loadPublicKeyB64(keyFile) {
   return parsed.publicKeyB64;
 }
 
+/** 允许的时钟偏差：签发时把 notBefore 往前放这么多毫秒（只放宽生效，不放宽过期）。 */
+export const CLOCK_SKEW_MS = 60_000;
+
 /**
  * 签一张票据并把整份任务书返回来。
+ *
+ * `notBefore` 往前放 60 秒：主控与副机是两台机器，时钟差个几秒是常态；
+ * 如果按「签发这一刻」当 notBefore，副机时钟稍慢就会把刚签的票判成 expired
+ * （而且提示语会是「过期」，看起来像 TTL 配错了，极难排查）。往前的这 60 秒
+ * 只放宽「还没到生效时间」，不延长 notAfter —— 有效期不被放大。
  * @param {{keyFile:string,payloadText:string,machine:string,verb:string,taskId?:string,ttlSec?:number,now?:number}} opts
  */
 export function signGoal(opts) {
@@ -88,7 +96,7 @@ export function signGoal(opts) {
     machine: String(opts.machine || '').trim(),
     verb: String(opts.verb || '').trim(),
     payloadHash: payloadSha256(opts.payloadText),
-    notBefore: now,
+    notBefore: now - CLOCK_SKEW_MS,
     notAfter: now + ttl * 1000,
     nonce: crypto.randomBytes(12).toString('base64url'),
   };
