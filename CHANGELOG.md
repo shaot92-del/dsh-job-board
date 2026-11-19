@@ -1,4 +1,14 @@
 # 变更日志
+## v2.6.20 — 2026-11-19（维护写通道 A2：三个写动词 + 板子独立票据字段）
+
+- **写动词落地**：`lib/worker/maint-verbs.js` 实现 `upgrade` / `config-set` / `restart` 三个动词的「检查 + 执行」层；`maintenance.js` 的 `runWrite` 负责闸门顺序（写开关 → 实现接线 → 票据九步校验 → **先落 nonce 再执行** → 摘要回板），票据/sig/nonce 不进 note、result 或落盘 payload。
+- **票据走板子独立字段**：板子 `goal` 有 300 字上限，而一张 base64url 票据 430~450 字，塞进 goal 必然被截断成坏票。`tools/board_server.py` 新增 `maint_ticket` 字段（只允许 `mode=maint`、base64url 16~900 字符，**刻意不走 `_txt()` 脱敏**，否则长 base64 会被换成 `<redacted>` 把签名废掉）；插件 `board_dispatch` 新增 `ticket` 参数，副机 `task-spec` 把 `maint_ticket` 拼回「payload + 末行 ticket=」，三处同一套拼法。
+- **升级包解包自带实现**：Node 没有内置 `node:tar`，契约又禁止依赖与 spawn，因此新增 `lib/worker/tar.js`（ustar 子集）。安全边界：拒绝绝对路径 / `..` / NUL、只收普通文件与目录（符号链接、硬链接、设备节点直接失败）、校验和、条目数与总字节上限；配 6 条回归测试（伪造符号链接与损坏头都要被拒）。
+- **集成修正**：`createMaintVerbs` 的 `profileDir` / `pkgDir` 同时接受显式参数与配置字段（只认 opts 会让调用方按契约从 config 取时退化成相对路径 —— 实测会把仓库自己的 `cordis.patch.yml` 改掉）；`upgrade` 在 `maintenancePkgDir` 不存在时明确报 `maint-pkg-missing`，不再拖到读包文件才 ENOENT。
+- **重派保护**：`board_retry` 遇到维护写动词（upgrade/config-set/restart）直接挡下并指向「重新签发票据」，不再等副机报 `maint-ticket-invalid`；只读动词不受影响。
+- **测试**：新增 `test/worker/maint-verbs.test.mjs`（38 条，含「CLI 签发 → runner 消费 → 真写 config-set」端到端）、`test/worker/tar.test.mjs`（6 条）、`test/worker/task-spec.test.mjs` 增 4 条（票据拼回、尾空白还原、缺票据报错、只读回归）。全套 **358 条全绿**，pack-check 95 文件 / 1,423,583 B。
+
+版本同步 2.6.20
 ## v2.6.19 — 2026-11-18（盘古审计四条：预算计数跨进程丢失、票据 nonce/版本校验、响应上限补两处、tmp 名带 pid）
 
 - **修 P1：agent 每日预算的计数会丢**。`lib/worker/agent-budget.js` 的 `consume()` 是 read → 判 → write 三步，没有跨进程互斥；同机多实例（主控 + 副机 worker 同 stateDir、或两个 worker 进程）并发时会同时读到 `used=18`、各写 `19`，实际应到 `20` —— 连投任务能在额度打满后继续超发。现在整段用 `state-file.mjs` 的 `withFileLock` 包住，**抢不到锁 fail-closed**（本次不放行、不写盘，`error` 说明 busy/stale-lock-*）；`refund()` 同样包锁，失败退回无锁 apply 并 warn。注入 `fsImpl` 的测试路径不加锁。
