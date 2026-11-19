@@ -1,3 +1,13 @@
+## v2.6.22 — 2026-11-19（agent 排障：错误事件归位 + 空文本诊断）
+
+- **修**：`agent/error` 事件可能只带 `agent.id`（与 `sessionId` 不同）。旧逻辑只认 `worker-` 前缀的 id，
+  这类错误会被整条丢弃 —— 症状正是「任务 done、`text=0ch`、查不到原因」。现在 `start()` 会把
+  `agent.id` / `session.id` 登记成到 `sessionId` 的映射，错误按映射回填。
+- **诊断**：`finalText()` 取不到文本时写一条 `agent 无文本：session=yes/no events=N [类型×次数]` 到插件日志
+  （维护通道 `logs` 可见），不再只能靠猜。
+- **诊断**：被丢弃的 `agent/error` 也记一条 warn（60 秒节流），能看出是不是「别的会话在报错」。
+- 单测：新增「错误事件只带 agent.id 也要归到本会话」用例。359 全绿。
+- 版本同步 2.6.22。
 ## v2.6.21 — 2026-11-19（agent 派工真机打通：followup 必须是完整 UserMessage）
 
 - **修**：`agentLoop` 的 `followup()` 收的是 DSH 的 UserMessage 实例（`{ id, role:'user', content, source }`，

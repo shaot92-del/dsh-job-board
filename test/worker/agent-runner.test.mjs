@@ -227,8 +227,26 @@ test('createDshAgentHost：createAgent 参数、followup 必须带插件 source�
   assert.equal(host.popError('worker-s1-abc123'), '');
 });
 
-test('createDshAgentHost：服务缺失时 available 给出可读原因', () => {
-  const noLoop = createDshAgentHost({ ctx: { sessions: { get() {} } } });
+test('createDshAgentHost：错误事件只带 agent.id 时也要能归到本会话（v2.6.22）', async () => {
+  const seen = {};
+  const agent = { id: 'agent-9f2c', async followup() {}, async whenIdle() {} };
+  const ctx = {
+    agentLoop: { async createAgent() { return { agent }; } },
+    sessions: { get: () => null },
+    on(event, handler) { seen.handler = handler; return () => {}; },
+  };
+  const host = createDshAgentHost({ ctx, config: {} });
+  await host.start({ sessionId: 'worker-x-1' });
+  // 真实 DSH 的错误事件可能只带 agent.id（与 sessionId 不同）
+  seen.handler({ agent: { id: 'agent-9f2c' }, error: { message: 'provider exploded' } });
+  assert.equal(host.popError('worker-x-1'), 'provider exploded');
+  // 同一事件按 agent.id 也能取到（两处都登记）
+  // 非本会话的错误仍然不进表
+  seen.handler({ agent: { id: 'agent-other' }, error: { message: 'someone else' } });
+  assert.equal(host.popError('agent-other'), '');
+});
+
+test('createDshAgentHost：服务缺失时 available 给出可读原因', () => {  const noLoop = createDshAgentHost({ ctx: { sessions: { get() {} } } });
   assert.equal(noLoop.available().ok, false);
   assert.match(noLoop.available().reason, /agentLoop/);
 
