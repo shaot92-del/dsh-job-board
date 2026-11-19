@@ -401,6 +401,17 @@ def do_create(body: dict) -> tuple[int, dict]:
     task_mode = (body.get("mode") or "").strip()[:10]
     workspace = (body.get("workspace") or "").strip()[:300]
     model = str(body.get("model") or "").strip()[:160]
+    # v2.6.20：维护写票据走**独立字段**。goal 有 300 字硬上限，而一张 JSON 票据
+    # base64url 后 430~450 字，塞进 goal 必然被截断（截断后的票据是坏的，签名对不上）。
+    # 这里刻意**不走 `_txt()`**：它的 redact 规则把长 base64 串当秘密，一旦票据里
+    # 恰好出现 "sk-" 之类子串就会被换成 <redacted>，签名直接废掉。票据本身是
+    # 签名自校验的一次性凭据（不是长期令牌），不需要在写入边界脱敏。
+    maint_ticket = str(body.get("maint_ticket") or "").strip()
+    if maint_ticket:
+        if task_mode != "maint":
+            return 400, {"error": "maint_ticket 只允许用于 mode=maint 的任务"}
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{16,900}", maint_ticket):
+            return 400, {"error": "maint_ticket 必须是 base64url 串（16~900 字符）"}
     if not task_id:
         return 400, {"error": "task_id 必填"}
     if not goal:
@@ -424,6 +435,7 @@ def do_create(body: dict) -> tuple[int, dict]:
             "mode": task_mode,
             "workspace": workspace,
             "model": model,
+            "maint_ticket": maint_ticket,
             "created_at": now(),
             "claimed_at": 0,
             "lease_until": 0,
@@ -1060,6 +1072,8 @@ def do_seed(body: dict) -> tuple[int, dict]:
                     "goal": (it.get("goal") or "")[:300] if isinstance(it, dict) else "",
                     "owner": (it.get("machine") or "")[:20] if isinstance(it, dict) else "",
                     "model": str(it.get("model") or "").strip()[:160] if isinstance(it, dict) else "",
+                    # v2.6.20：seed 也能带票据（与 do_create 同字段、同语义）。
+                    "maint_ticket": str(it.get("maint_ticket") or "").strip()[:900] if isinstance(it, dict) else "",
                     "created_at": seed_base + added,
                     "claimed_at": 0,
                     "lease_until": 0,

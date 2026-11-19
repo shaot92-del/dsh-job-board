@@ -104,3 +104,38 @@ test('looksLikeScriptPath', () => {
   assert.equal(looksLikeScriptPath('b.ps1'), false);
   assert.equal(looksLikeScriptPath('C:\\a\\b.ps1\nsomething'), false);
 });
+
+// ── v2.6.20：维护写票据走独立字段（板子 goal 300 字上限塞不下票据） ──
+const MAINT_TICKET = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCdEfGhIjKlMnOp';
+
+test('parseTaskSpec：maint 写动词把 maint_ticket 拼成末行票据', () => {
+  const payload = JSON.stringify({ verb: 'config-set', set: { agentApproval: 'auto' } });
+  const r = parseTaskSpec({ mode: 'maint', goal: payload, maint_ticket: MAINT_TICKET });
+  assert.equal(r.kind, 'maintenance');
+  assert.equal(r.error, '');
+  assert.equal(r.spec.verb, 'config-set');
+  assert.equal(r.spec.ticket, MAINT_TICKET);
+  // payload 原文必须逐字节还原（签名哈希按它算），不能被 trim 或改写
+  assert.equal(r.spec.payloadText, payload);
+});
+
+test('parseTaskSpec：goal 尾部带空白也能还原成同一份 payload 原文', () => {
+  const payload = '{"verb":"restart","delayMs":5000}';
+  const r = parseTaskSpec({ mode: 'maint', goal: payload + '   \r\n', maint_ticket: MAINT_TICKET });
+  assert.equal(r.kind, 'maintenance');
+  assert.equal(r.spec.payloadText, payload);
+});
+
+test('parseTaskSpec：写动词缺 maint_ticket 时明确报票据缺失', () => {
+  const r = parseTaskSpec({ mode: 'maint', goal: JSON.stringify({ verb: 'upgrade', packagePath: 'x.tgz' }) });
+  assert.equal(r.kind, 'invalid');
+  assert.equal(r.reason, 'maint-spec-invalid');
+  assert.match(r.error, /票据/);
+});
+
+test('parseTaskSpec：只读动词行为不受 maint_ticket 影响（回归）', () => {
+  const plain = parseTaskSpec({ mode: 'maint', goal: 'config' });
+  assert.equal(plain.kind, 'maintenance');
+  assert.equal(plain.spec.verb, 'config');
+  assert.equal(plain.spec.ticket, undefined);
+});
