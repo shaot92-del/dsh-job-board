@@ -37,11 +37,40 @@ function check(name, cond, detail) {
   console.log(`${cond ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 
-/** 最小 React 假实现（client.js 只用 createElement / useState / useEffect）。 */
+/** 严格模式：仿 React 的合法性校验，把「对象当节点类型(#130)」「对象当 child(#31)」变成可断言的异常。 */
+let strictValidate = true
+const ELEMENT_TAG = Symbol.for('react.element')
+
+/**
+ * 最小 React 假实现（client.js 只用 createElement / useState / useEffect）。
+ * v2.7.1 起默认**严格**：type 只接受 string / function / symbol，child 不接受普通对象 ——
+ * 这正是 2.7.0 白屏（`h(h('div'),… )` 把元素对象当 type）在线上炸掉的同一条规则。
+ */
 function makeReact(states) {
   const React = {
     createElement(type, props, ...children) {
+      if (strictValidate) {
+        const t = typeof type
+        if (type !== null && type !== undefined && t !== 'string' && t !== 'function' && t !== 'symbol') {
+          throw new Error(
+            'Minified React error #130: expected a string (for built-in components) or a class/function ' +
+              '(for composite components) but got: ' + t + '（client bundle 把对象当成了节点类型）',
+          )
+        }
+        for (const c of children.flat(8)) {
+          if (c && typeof c === 'object' && !Array.isArray(c) && c.$$typeof === undefined) {
+            let keys = []
+            try {
+              keys = Object.keys(c).slice(0, 8)
+            } catch {
+              keys = []
+            }
+            throw new Error('Minified React error #31: Objects are not valid as a React child（keys=' + keys.join(',') + '）')
+          }
+        }
+      }
       return {
+        $$typeof: ELEMENT_TAG,
         type,
         props: props || {},
         children: children.flat(4).filter((c) => c !== null && c !== undefined && c !== false && c !== true),
@@ -295,6 +324,73 @@ if (patched !== RAW) {
   check('有新版 ⇒ 显示「↑ v2.6.14」', pillText.includes('↑ v2.6.14'), JSON.stringify(pillText))
   check('提示「重启 DSH 后生效」', String((skewPillNode && skewPillNode.props && skewPillNode.props.title) || '').includes('重启 DSH 后生效'), String((skewPillNode && skewPillNode.props && skewPillNode.props.title) || ''))
   check('doctor 三态下不再重复渲染版本横幅（自检全绿）', !skewTexts.some((t) => t.startsWith('自检：')))
+}
+
+// ── 第 3 轮：派工弹窗（v2.7.1 回归 —— 2.7.0 在这里 #130 白屏）────────────────
+// 场景：ask=true + summary.nodeModels 非空（GT14/PC2 真实形态）+ defaultModel 非空。
+// 2.7.0 的 `return h( h('div',…), …, 'div', {…} )` 会在这里被严格假 React 判 #130。
+const ASK_ANCHOR = 'const [ask, setAsk] = React.useState(false)'
+const DATA_ANCHOR = 'const [data, setData] = React.useState(null)'
+const fakeSummary = {
+  ok: true,
+  counts: { queued: 1, running: 0, done: 3, bad: 0, stale: 0 },
+  machines: [
+    { id: 'host', name: 'host', online: true, caps: { models: [] } },
+    { id: 'GT14', name: 'GT14', online: true, caps: { models: [] } },
+    { id: 'PC2', name: 'PC2', online: true, caps: { models: [] } },
+  ],
+  nodeModels: {
+    gt14: {
+      models: [
+        { provider: 'deepseek-account', model: 'deepseek-flash', name: 'DeepSeek Flash', location: 'cloud' },
+        { provider: 'local-llama', model: 'qwen35-9b', name: 'Qwen3.5 9B', location: 'local' },
+      ],
+      defaultModel: null,
+    },
+    pc2: {
+      models: [{ provider: 'deepseek-account', model: 'deepseek-flash', name: 'DeepSeek Flash', location: 'cloud' }],
+      defaultModel: null,
+    },
+  },
+  defaultModel: 'deepseek-account/deepseek-flash',
+  tasks: [],
+  nodeMap: {},
+}
+let askPatched = RAW.replace(ASK_ANCHOR, 'const [ask, setAsk] = React.useState(true)')
+askPatched = askPatched.replace(DATA_ANCHOR, 'const [data, setData] = React.useState(' + JSON.stringify(fakeSummary) + ')')
+check('派工弹窗测试锚点存在（ask/data 初始 state 可注入）', askPatched !== RAW, ASK_ANCHOR + ' / ' + DATA_ANCHOR)
+
+if (askPatched !== RAW) {
+  let dlg = null
+  let dlgErr = ''
+  try {
+    dlg = renderOnce(askPatched)
+  } catch (e) {
+    dlgErr = String((e && e.message) || e)
+  }
+  check('派工弹窗渲染不抛错（2.7.0 此处 #130）', dlg !== null && dlgErr === '', dlgErr.slice(0, 200))
+  if (dlg) {
+    const dlgTexts = flattenText(dlg.tree)
+    check('派工弹窗含「类型」「模型」两行', dlgTexts.includes('类型') && dlgTexts.includes('模型'), JSON.stringify(dlgTexts.filter((t) => t === '类型' || t === '模型')))
+    check('模型下拉渲出清单里的模型（本地/云都有）', dlgTexts.some((t) => /Qwen3\.5 9B/.test(t)) && dlgTexts.some((t) => /DeepSeek Flash/.test(t)), JSON.stringify(dlgTexts.filter((t) => /Qwen|DeepSeek/.test(t)).slice(0, 6)))
+    check('有团队默认模型时提示可见', dlgTexts.some((t) => /跟随副机默认（团队默认 deepseek-account\/deepseek-flash）/.test(t)), JSON.stringify(dlgTexts.filter((t) => /跟随副机默认/.test(t))))
+  }
+}
+
+// 负向用例：把历史缺陷形态（h(h('div',null), 'x')）喂给同一个严格假 React，必须报 #130。
+// 这条保证「门禁真的能抓到 2.7.0 那类错误」，而不是只保证当前代码碰巧不崩。
+{
+  let caught = ''
+  const states = []
+  const bad = makeSandbox(makeReact(states))
+  bad.__bad = null
+  vm.createContext(bad)
+  try {
+    vm.runInContext("const h = (t, ...a) => React.createElement(t, ...a); __bad = h(h('div', null), 'x')", bad, { filename: 'bad-nested-h.js' })
+  } catch (e) {
+    caught = String((e && e.message) || e)
+  }
+  check('严格假 React 能抓到「元素对象当 type」（#130 同型）', /#130/.test(caught), caught.slice(0, 160))
 }
 
 const failed = results.filter((r) => !r.cond)
