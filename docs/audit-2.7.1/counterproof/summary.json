@@ -1,0 +1,10 @@
+{
+  "version": "2.7.1",
+  "executed": 0,
+  "unexecuted": 0,
+  "unknown": 3,
+  "notApplicable": 0,
+  "unexecutedIds": [],
+  "verdict": "BLOCKED",
+  "reason": "骨架：请填完 paths.json 后重新计算（unknown>0 或证据缺失一律 BLOCKED）"
+}

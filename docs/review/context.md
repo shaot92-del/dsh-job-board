@@ -7,3 +7,4 @@
 - 恢复：`dispatchJournal` + holder + `INSTANCE_HOLDER`；未知结果按 goal + 时间窗对账；多候选不自动绑定。
 - 远端传输：当前 `dsh-remote-agent`（hub 19387）；规划中的 `dsh-job-worker` 只走板子 HTTP，先在局域网仓库开发，exec-only 稳定后并入本包，不单独发 npm。
 - 发布门：`AGENTS.md`；常驻审计协议：`docs/review/auditor-protocol.md`。
+- UI 渲染专项门：浏览器 bundle、React/JSX/createElement、slot、UI 状态分支或接口渲染字段变更，强制执行 `docs/review/ui-render-review-standard.md`；证据不足为 BLOCKED。

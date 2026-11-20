@@ -28,7 +28,9 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
-const CLIENT = path.join(root, 'lib', 'client.js')
+// v2.7.1：支持 SMOKE_BUNDLE=<path> 指向任意 client bundle，用来做「历史崩溃版必须 FAIL」的对照。
+// 例：SMOKE_BUNDLE=case/lib-client-2.7.0-crash.bak node scripts/client-render-smoke.mjs  → 期望 exit 1 + #130
+const CLIENT = process.env.SMOKE_BUNDLE ? path.resolve(process.env.SMOKE_BUNDLE) : path.join(root, 'lib', 'client.js')
 const RAW = fs.readFileSync(CLIENT, 'utf8')
 
 const results = []

@@ -1,0 +1,3 @@
+lib/client.js
+lib/worker/version.js
+scripts/client-render-smoke.mjs

@@ -1,0 +1,40 @@
+{
+  "version": "2.7.1",
+  "base": "v2.7.0",
+  "note": "由 audit-collect 生成的骨架：必须按 changed-paths.diff + coverage 逐条填 status，未填不得判 PASS。",
+  "files": [
+    {
+      "file": "lib/client.js",
+      "paths": [
+        {
+          "id": "",
+          "description": "",
+          "status": "UNKNOWN",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "file": "lib/worker/version.js",
+      "paths": [
+        {
+          "id": "",
+          "description": "",
+          "status": "UNKNOWN",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "file": "scripts/client-render-smoke.mjs",
+      "paths": [
+        {
+          "id": "",
+          "description": "",
+          "status": "UNKNOWN",
+          "evidence": ""
+        }
+      ]
+    }
+  ]
+}

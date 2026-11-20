@@ -1,3 +1,23 @@
+## v2.7.3 — 2026-11-21（安装不再敢覆盖运行中的目录：原子切换 + 校验 + 安装清单）
+
+### 修的是什么
+GT14 装 2.7.2 后 DSH 起不来（用户描述「插件冲突」）。复盘结论：**不是插件代码问题，是安装过程能装出一棵混合树**。
+
+- 旧安装方式：`robocopy /E` 把新包直接覆盖到 `node_modules/@wfcj/dsh-job-board`，而 DSH 往往正在运行；只要有一个文件没覆盖成功（占用 / 杀软 / 中断），就会留下「新 `lib/index.js` + 旧 `lib/dispatch-filter.js`」。
+- 2.7.2 恰好新增了一条跨文件具名导入：`lib/index.js` 里 `import { canDispatchRemote, ... } from './dispatch-filter.js'`，而 2.7.1 的 `dispatch-filter.js` 没有这个导出 ⇒ ESM 在**链接阶段**就抛
+  `SyntaxError: The requested module './dispatch-filter.js' does not provide an export named 'canDispatchRemote'`，表现就是 DSH 起不来。
+- 复核方式：`npm pack` 两版对比，2.7.1 与 2.7.2 差 7 个文件（含两个服务端文件），2.7.1 自身只有 `client.js` / 版本号 / CHANGELOG / 冒烟脚本变化 —— 客户端文件与宿主启动无关，所以「2.7.1 代码把 DSH 弄坏」不成立。
+
+### 改了什么
+- **安装改为原子切换**（`scripts/deploy/install-agent-worker.ps1`）：解包到 TEMP → 校验（版本 / 文件数 / 关键文件存在 / `node --check`）→ 复制到同目录 `.stage-<时间戳>` → 写 `install-manifest.json`（每个文件的字节数与 sha256）→ 旧目录改名 `.bak-<时间戳>` → 暂存目录换名就位 → **装完复核**（版本、文件数、关键文件），任何一步失败自动回滚。
+- **运行中检测**：DSH 在跑时默认拒绝覆盖安装并给出提示；`-StopDsh` 由脚本代停（装完需重启），`-AllowRunning` 是显式冒险开关。
+- **升级脚本**（`scripts/deploy/upgrade-worker.ps1`）装包时带 `-StopDsh`，并在装完核对磁盘版本，不符即报错（此时安装脚本已回滚）。
+- **运行时自检**（`lib/install-manifest.js` + `lib/index.js`）：启动时校验清单，发现「清单版本与 `package.json` 不一致 / 关键文件大小不符 / 关键文件缺失」就 `console.warn` 一条可操作告警（只告警不阻断），把「装了一半」从「DSH 莫名其妙起不来」变成日志里能看懂的一句话。
+- 部署脚本入库：`scripts/deploy/` 收录 `install-agent-worker.ps1`、`upgrade-worker.ps1`、`rollback-gt14.ps1/.cmd`、`fix-gt14-after-boot.ps1/.cmd`（此前只在共享盘上，无版本历史）。
+
+### 怎么验证
+- `node --test test/worker/install-manifest.test.mjs`：8 条（清单归一、坏 JSON、无清单、版本不一致、关键文件大小不符、关键文件缺失、package.json 坏掉）。
+- 手工：对同目录跑两次安装（第二次应识别「已安装同版本」）／故意改一个关键文件大小后再启动，日志应出现 `安装完整性告警`。
 ## v2.7.2 — 2026-11-21（派工「选具体模型」不再被远程桥打回 + 远程桥不再塞 model）
 
 ### 修的是什么

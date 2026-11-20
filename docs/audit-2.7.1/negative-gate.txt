@@ -1,0 +1,23 @@
+# 负向门禁留档（2026-11-20 23:59:57）
+
+## A. 崩溃版 bundle（2.7.0）
+```
+ok    磁盘版本不同 ⇒ 显示「→ 磁盘 v2.6.13」  — "插件 v2.6.12→ 磁盘 v2.6.13↑ v2.6.14"
+ok    有新版 ⇒ 显示「↑ v2.6.14」  — "插件 v2.6.12→ 磁盘 v2.6.13↑ v2.6.14"
+ok    提示「重启 DSH 后生效」  — 插件 v2.6.12　·　磁盘已安装 v2.6.13（重启 DSH 后生效）　·　有新版本 v2.6.14　·　角色 owner　·　点击重新自检
+ok    doctor 三态下不再重复渲染版本横幅（自检全绿）
+ok    派工弹窗测试锚点存在（ask/data 初始 state 可注入）  — const [ask, setAsk] = React.useState(false) / const [data, setData] = React.useState(null)
+FAIL  派工弹窗渲染不抛错（2.7.0 此处 #130）  — Minified React error #130: expected a string (for built-in components) or a class/function (for composite components) but got: object（client bundle 把对象当成了节点类型）
+ok    严格假 React 能抓到「元素对象当 type」（#130 同型）  — Minified React error #130: expected a string (for built-in components) or a class/function (for composite components) but got: object（client bundle 把对象当成了节点类型）
+FAIL  client-render-smoke：3/26 项不通过
+exit=1
+```
+
+## B. 修复版 bundle（2.7.1）
+```
+ok    模型下拉渲出清单里的模型（本地/云都有）  — ["DeepSeek Flash","Qwen3.5 9B"]
+ok    有团队默认模型时提示可见  — ["跟随副机默认（团队默认 deepseek-account/deepseek-flash）"]
+ok    严格假 React 能抓到「元素对象当 type」（#130 同型）  — Minified React error #130: expected a string (for built-in components) or a class/function (for composite components) but got: object（client bundle 把对象当成了节点类型）
+PASS  client-render-smoke：29/29 项（插件 v2.7.1 常显于面板标题区）
+exit=0
+```
