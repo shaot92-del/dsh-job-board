@@ -128,7 +128,8 @@ patch / 工具 / 路由，热重载会报 duplicate route 或让客户端面板�
 - id: team
   config:
     boardUrl: 'http://127.0.0.1:8965'
-    machine: 'host'          # 副机改成 gt14 / mb14 / pc2
+    machine: 'host'          # v2.6.28（U-2）：不在已知前缀表（GT14/MB14/PC2/DESKTOP-/DESKTOP2）的主机名会原样小写上报，
+                             # 副机请显式配 machine，否则副机 machine 与板上不一致会永远 idle。
     token: ''                # 板子开了 GP_BOARD_TOKEN 时填同一个值
     petImage: ''             # 留空=用随包立绘 assets/pet.png
     allowedRoots: []         # sh_* 只允许访问这些目录（realpath 比较）；空白名单默认拒绝，需 allowAllRoots: true 显式放行。
@@ -169,6 +170,7 @@ patch / 工具 / 路由，热重载会报 duplicate route 或让客户端面板�
       execCwd: 'C:/work'
       allowlist: []          # 空 = 不接任何 exec 任务（fail-closed）
       agentEnabled: false    # 默认只跑 exec；agent 需显式打开并配 preset/cwdRoot
+      # v2.6.28（U-1）：以下两键也可写在 worker 子块（包内 cordis.patch.yml 模板已含这两行）
       maintenanceEnabled: true      # v2.6.12 只读维护通道（见下节）；只读，默认开
       maintenanceOutDir: ''         # 完整 payload 落盘目录，建议填共享盘（如 Z:/_maintenance）
 ```

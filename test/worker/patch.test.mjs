@@ -45,3 +45,9 @@ test('patch：默认是「只看板、不执行」的安全组合', () => {
   assert.match(raw, /agentEnabled:\s*false/, ' 默认 agentEnabled 应为 false');
   assert.match(raw, /approvalMode:\s*['"]?manual['"]?/, ' 默认 approvalMode 应为 manual');
 });
+// v2.6.28（U-1）：包内 worker: 子块必须含 maintenanceEnabled / maintenanceOutDir。
+// README 把这两键写成可用键，包内模板缺任一个 ⇒ 用户照包内写会丢键（维护通道行为漂移）。
+test('patch：worker 子块含 maintenanceEnabled / maintenanceOutDir', () => {
+  assert.ok(/^\s*maintenanceEnabled:\s*true$/m.test(raw), 'worker 子块应有 maintenanceEnabled: true');
+  assert.ok(/^\s*maintenanceOutDir:\s*''$/m.test(raw), "worker 子块应有 maintenanceOutDir: ''");
+});

@@ -6,6 +6,7 @@ import http from 'node:http';
 import { test, after } from 'node:test';
 
 import { createHttpTransport, BoardError } from '../../lib/worker/transport/index.js';
+import { joinUrl } from '../../lib/worker/transport/http.js';
 import { createBoardClient } from '../../lib/worker/board-client.js';
 import { VERSION } from '../../lib/worker/version.js';
 
@@ -98,6 +99,47 @@ test('非 JSON 响应：ok:false, error 含「非 JSON 响应」', async () => {
   const r = await t.snapshot();
   assert.equal(r.ok, false);
   assert.match(r.error, /非 JSON 响应/);
+  await fb.close();
+});
+
+// v2.6.28（安全审计 C-20）：joinUrl 用 new URL 规范化，正确处理 baseUrl 带路径前缀、
+// 尾部斜杠、查询串。旧实现用字符串拼接，前缀被吃或双斜杠。
+test('joinUrl：baseUrl 带路径前缀（v2.6.28 C-20）', () => {
+  assert.equal(joinUrl('http://host/prefix', '/api/board'), 'http://host/prefix/api/board');
+});
+
+test('joinUrl：baseUrl 带尾部斜杠（v2.6.28 C-20）', () => {
+  assert.equal(joinUrl('http://host/prefix/', '/api/board'), 'http://host/prefix/api/board');
+});
+
+test('joinUrl：保留查询串（v2.6.28 C-20）', () => {
+  assert.equal(joinUrl('http://host/prefix', '/api/board?x=1'), 'http://host/prefix/api/board?x=1');
+});
+
+// v2.6.28（安全审计 C-21）：mark 的 result 透传无尺寸/键校验——只保留 ok/expected/actual/reasons，
+// JSON 序列化后超 4 KiB 截断并标注 truncated: true。
+test('mark：result 未知字段被丢（v2.6.28 C-21）', async () => {
+  const fb = await startFakeBoard((req, res) => jsonRes(res, 200, {}));
+  const t = createHttpTransport({ baseUrl: fb.url });
+  await t.mark({ taskId: 't1', machine: 'm1', status: 'done', result: { ok: true, extra: 'drop-me', nested: { a: 1 } } });
+  const body = JSON.parse(fb.last.req.body);
+  assert.deepEqual(Object.keys(body.result).sort(), ['ok']);
+  assert.equal(body.result.ok, true);
+  await fb.close();
+});
+
+test('mark：result 超长被截断且带标记（v2.6.28 C-21）', async () => {
+  const fb = await startFakeBoard((req, res) => jsonRes(res, 200, {}));
+  const t = createHttpTransport({ baseUrl: fb.url });
+  const hugeReasons = Array.from({ length: 5 }, (_, i) => 'r' + i + '-'.repeat(1000));
+  await t.mark({ taskId: 't1', machine: 'm1', status: 'done', result: { ok: false, reasons: hugeReasons } });
+  const body = JSON.parse(fb.last.req.body);
+  assert.equal(body.result.truncated, true, '超长 result 应带 truncated 标记');
+  const resultJson = JSON.stringify(body.result);
+  assert.ok(
+    Buffer.byteLength(resultJson, 'utf8') <= 4096,
+    `result JSON 应 ≤ 4096 bytes，实际 ${Buffer.byteLength(resultJson, 'utf8')}`,
+  );
   await fb.close();
 });
 

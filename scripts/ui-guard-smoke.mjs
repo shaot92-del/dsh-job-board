@@ -162,7 +162,9 @@ r = await call('/api/board/ui/caps-probe', { method: 'POST', headers: { ...base,
 check('caps-probe 缺自定义头拒绝', r.status === 403, 'status=' + r.status)
 // v2.5.3：压测是重动作，必须只认 POST，且同样过 Host/自定义头闸门。
 r = await call('/api/board/ui/stress-test', { headers: { ...base, 'x-dsh-team-ui': '1' } })
-check('stress-test 拒绝 GET', r.status === 405, 'status=' + r.status)
+// v2.6.28（S-15）：stress-test 已进 UI_WRITE_PATHS，GET 被 uiGuard 方法闸以 403 拒绝
+// （比 handler 的 405 更早拦截，是纵深防御；403 与 405 都算「拒绝 GET」）。
+check('stress-test 拒绝 GET', r.status === 403 || r.status === 405, 'status=' + r.status)
 r = await call('/api/board/ui/stress-test', { method: 'POST', headers: { ...base, host: 'evil.example', origin: 'http://evil.example', 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: '{"mode":"quick"}' })
 check('stress-test 外部 Host 拒绝', r.status === 403, 'status=' + r.status + ' body=' + r.body.slice(0, 80))
 r = await call('/api/board/ui/stress-test', { method: 'POST', headers: { ...base, 'x-dsh-team-ui': '1', 'content-type': 'application/json' }, body: '{"mode":"bogus"}' })

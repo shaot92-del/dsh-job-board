@@ -441,3 +441,51 @@ wt('run：exit 后 drain 优先于 timeout（timeoutMs < EXIT_DRAIN_MS 不误记
   assert.equal(out.timedOut, false, 'exit 后不应记 timeout');
   assert.equal(out.status, 'done');
 });
+// v2.6.28（安全审计 C-14）：resolveCwd 用 `rel.startsWith('..')` 误拒 `..foo` 目录
+// （目录名以 .. 开头不是越界）。改按路径段判断：`rel === '..'` 或 `rel.startsWith('..' + path.sep)`。
+test('resolveCwd：..foo 目录不被误拒（v2.6.28 C-14）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cwd-dotfoo-'));
+  try {
+    const dotfoo = path.join(root, '..foo');
+    fs.mkdirSync(dotfoo, { recursive: true });
+    const r = resolveCwd([dotfoo], fs, root);
+    assert.equal(r.reason, '', `..foo 目录应在 root 内不被误拒（reason=${r.reason}）`);
+    assert.ok(r.cwd, '应返回有效 cwd');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('resolveCwd：../x 仍被拒（v2.6.28 C-14）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cwd-dotdot-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cwd-outside-'));
+  try {
+    const outsideChild = path.join(outside, 'child');
+    fs.mkdirSync(outsideChild, { recursive: true });
+    const r = resolveCwd([outsideChild], fs, root);
+    assert.equal(r.reason, 'cwd-not-in-root', `../x 仍被拒（reason=${r.reason}）`);
+    assert.equal(r.cwd, '');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+// v2.6.28（安全审计 C-15）：warnedNoCwdRoot 原为模块级 let，多个 runner 实例共享，
+// 第二个实例不再告警。移入 createExecRunner 闭包后每个实例独立告警一次。
+test('createExecRunner：两个实例各自告警一次（v2.6.28 C-15）', async () => {
+  const writes = [];
+  const origWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk) => { writes.push(String(chunk)); return true; };
+  try {
+    const cfg = { ...baseConfig, execCwdRoot: '' };
+    const r1 = createExecRunner({ config: cfg, pwshPath: 'C:\\fake\\pwsh.exe', spawnImpl: spawnReturning(fakeChild()) });
+    await r1.run({ scriptPath: insideScript });
+    const r2 = createExecRunner({ config: cfg, pwshPath: 'C:\\fake\\pwsh.exe', spawnImpl: spawnReturning(fakeChild()) });
+    await r2.run({ scriptPath: insideScript });
+  } finally {
+    process.stderr.write = origWrite;
+  }
+  const warnings = writes.filter((w) => w.includes('execCwdRoot 未配置'));
+  assert.equal(warnings.length, 2, `两个实例各自告警一次，实际 ${warnings.length} 次`);
+});

@@ -1,3 +1,12 @@
+## v2.6.29 — 2026-11-20（A2 批 17 条：UI 写路由闸、有界映射、可中断退避、URL 规范化）
+
+- **A2a（9 条·用户/配置面）**：`U-1` 包内 `cordis.patch.yml` 的 `worker:` 子块补 `maintenanceEnabled` / `maintenanceOutDir`（与 README 对齐，照模板写不再丢键）；`U-2` `detectMachine` 补 `DESKTOP2` 前缀并把未知主机名统一小写返回（**这是副机永远 idle 的根因之一**：板子按小写归一，大写主机名对不上）；`U-5` 找 team 块的正则容忍可选引号与行尾注释（`- id: 'team'` / `- id: team # 注释` 不再报「未找到」）；`U-6` 签发票据时校验 `verb ∈ upgrade/config-set/restart`（错 verb 不再等副机才 `maint-verb-unknown`）；`U-7` keygen 私钥写盘 `mode 0o600` + chmod 兜底；`U-9` `sign --payload` 读文件/JSON 解析失败给友好提示并 `return 2`（不抛栈迹）；`U-10` `maskText` 打码阈值 6 → 1（4 位测试 token 不再原样泄露）；`S-15` `UI_WRITE_PATHS` 从 3 条补到 16 条（写型路由的 GET 被 uiGuard 以 `method` 提前 403，`ui-guard-smoke` 同步改 `403 || 405`）；`S-17` instanceId 随机后缀 `randomBytes(2) → (4)`。
+- **A2b（8 条·正确性边界）**：`C-3` `agentAllowlist` 的校验与归一化统一口径（缺 id 允许，归一化补 `allow-<序号>`）；`C-5` `agentToSession` 改有界 Map（256 条，LRU 淘汰，长跑不再泄漏）；`C-11` `dryRun` 严格判 boolean（`0`/`'false'` 返回 `maint-config-invalid`，不再静默当 dry-run；缺省仍 fail-safe 不写盘）；`C-14` `resolveCwd` 越界判定改按路径段（`..foo` 目录不再被误拒）；`C-15` 无根告警标志从模块级 `let` 移进实例闭包（多实例各告警一次）；`C-16` `markWithRetry` 退避改可中断 sleep（每 100ms 查 stopped），`stop()` 先 abort 再 flush 待回写（3 秒兜底）；`C-20` `joinUrl` 改用 `new URL` 规范化（支持 baseUrl 带路径前缀/尾斜杠/查询串）；`C-21` `mark` 的 `result` 裁剪为 `ok/expected/actual/reasons` + 4 KiB 上限并标 `truncated`。
+- **复核补丁（主控）**：`joinUrl` 空 `baseUrl` 保持旧行为（返回以 `/` 开头的 path，不抛 `Invalid URL`——未配 boardUrl 时由调用方给「未配置」错误）；新测试文件 CRLF 归一化为 LF。
+- **测试**：新增 `test/worker/ui-write-paths.test.mjs`(2)；11 个既有测试文件补 34 条用例；`npm test` **424/424**。
+- 本批同样由 IDE agent（码道 CodeArts Agent / OpenPangu-2.1-Pro）在一次性副本实现、主控逐条复核合并（两批共 17 条，含 2 处参数/换行修正）。
+- 门禁：check-text PASSED（122 文件）、plugcheck `tools=18 routes=25`、client-render-smoke 18/18、pack-check 99 文件 1,458,126 B。
+- 版本同步 2.6.29。
 ## v2.6.28 — 2026-11-20（A1 批 18 条：盘古审计 P2/P3 高值项落地）
 
 - **命令与网络面（10 条）**：`S-1` 提示词闸门的 base64 检测改用归一化文本（零宽分隔不再漏检）；`S-2` `normalizePrompt` 补行首 `.\` 折叠（`.\dsh\profiles` 不再绕过 dsh-home 规则）；`S-4` `sh_list` 改 `lstatSync`（不跟随符号链接读白名单外文件）；`S-6` 拒绝消息不再拼根目录全路径（只报条数）；`S-7` 内联脚本 64 KiB 上限（`inline-too-large`）；`S-8` agent host 错误先脱敏再进 reason；`S-10` `maskText` 先替 secret 再替家目录（secret 含家目录子串时不再漏）；`S-13` restart 的 `dshExePath` 走 PowerShell 单引号加倍转义（**复核后改成转义而非黑名单**——黑名单会误伤中文用户名路径）；`S-16` `readTextCapped` 的无 `getReader` 回退也走流式限长；`S-18` 板子对 `mode=maint` 的 goal 不做 `_txt` 脱敏（写 payload 含 token 类子串时 hash 不再被改坏）。

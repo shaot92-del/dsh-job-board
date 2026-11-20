@@ -520,3 +520,42 @@ test('claim 非 409/400/404 错误 → tick 返回 backoffMs（与 snapshot 失�
   assert.ok(res.backoffMs > 0, `claim 500 应返回 backoffMs，got ${res.backoffMs}`);
   await worker.stop({ waitMs: 100 });
 });
+// v2.6.28（S-17）：instanceId 随机后缀只有 16 bit（randomBytes(2)）——同机同秒启动的实例
+// 有碰撞概率。改 randomBytes(4)（8 位 hex）。断言尾段长度 = 8 且两次生成不同。
+test('instanceId 尾段长度 = 8（randomBytes(4)）且两次生成不同', () => {
+  const boards = makeBoard({});
+  const w1 = makeWorker(boards, async () => doneOutcome());
+  const w2 = makeWorker(boards, async () => doneOutcome());
+  const id1 = w1.instanceId;
+  const id2 = w2.instanceId;
+  // instanceId 形如 <workerId>/<pid>-<rand>，尾段 = 最后一个 '-' 之后的 hex
+  const tail1 = id1.slice(id1.lastIndexOf('-') + 1);
+  const tail2 = id2.slice(id2.lastIndexOf('-') + 1);
+  assert.equal(tail1.length, 8, `尾段应 8 位 hex，实际 ${tail1}（id=${id1}）`);
+  assert.equal(tail2.length, 8, `尾段应 8 位 hex，实际 ${tail2}（id=${id2}）`);
+  assert.match(tail1, /^[0-9a-f]{8}$/, '尾段应是 8 位 hex');
+  assert.match(tail2, /^[0-9a-f]{8}$/, '尾段应是 8 位 hex');
+  assert.notEqual(tail1, tail2, '两次生成的随机尾段应不同');
+});
+// v2.6.28（安全审计 C-16）：markWithRetry 的退避 sleep 原为不可中断，stop() 时仍要等
+// 完整退避（400ms 起步）。改为可中断（每 100ms 查 stopped）+ stop() flush 待回写后，
+// stop 后 markWithRetry 在 <300ms 内返回。
+test('stop 后 markWithRetry 在 <300ms 内返回（v2.6.28 C-16）', async () => {
+  const boards = makeBoard({ t1: task('t1') });
+  let markCalls = 0;
+  // 前 2 次 mark 返回 503（retryable）：第 1 次是 markRunning（不重试，只记日志），
+  // 第 2 次是 markWithRetry 首次（触发重试退避 sleep）。第 3 次成功。
+  boards.mark = async (body) => {
+    markCalls += 1;
+    if (markCalls <= 2) return { ok: false, status: 503, error: 'busy', network: true };
+    return { ok: true, status: 200, data: { ok: true } };
+  };
+  const worker = makeWorker(boards, async () => doneOutcome());
+  await worker.tick(); // 认领 t1 → 启动 job → executeTask 返回 done → finishTask → markWithRetry
+  // 等 markWithRetry 进入退避 sleep 阶段（首次 mark 503 后开始 sleep 400ms）
+  await new Promise((r) => setTimeout(r, 50));
+  const started = Date.now();
+  await worker.stop({ waitMs: 1000 });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 300, `stop 应在 <300ms 内返回（markWithRetry sleep 被中断），实际 ${elapsed}ms`);
+});

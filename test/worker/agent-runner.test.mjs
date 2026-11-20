@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createAgentRunner, createDshAgentHost, makeSessionId, parseModelRef, MAX_SESSION_ID } from '../../lib/worker/agent-runner.js';
+import { createBoundedMap } from '../../lib/worker/agent-runner.js';
 
 /** 假 host：把 idle 挂起，由测试决定何时 resolve / cancel。 */
 function makeFakeHost(opts = {}) {
@@ -542,4 +543,16 @@ test('available：host.available() 抛错时 err.message 经 noteMask 脱敏', (
   assert.equal(r.reason.startsWith('host-error'), true);
   // err.message 里的家目录必须被打码
   assert.equal(r.reason.includes(home), false, '家目录不能出现在 reason 里');
+});
+// v2.6.28（安全审计 C-5）：agentToSession 原为无界 Map，长跑进程内存泄漏。
+// 改为有界 Map（createBoundedMap，保留最近 256 条，超出按插入序淘汰）。
+test('createBoundedMap：插 300 条后 size === 256，且最新一条仍在（v2.6.28 C-5）', () => {
+  const m = createBoundedMap(256);
+  for (let i = 0; i < 300; i += 1) m.set(`k${i}`, `v${i}`);
+  assert.equal(m.size, 256, '300 条插入后应保留 256 条');
+  assert.equal(m.get('k299'), 'v299', '最新一条仍在');
+  assert.equal(m.get('k0'), undefined, '最早一条已被淘汰');
+  // 300 - 256 = 44 条被淘汰：k0..k43；k44 是最老的保留项
+  assert.equal(m.get('k43'), undefined, '第 43 条已被淘汰');
+  assert.equal(m.get('k44'), 'v44', '第 44 条是最老的保留项');
 });

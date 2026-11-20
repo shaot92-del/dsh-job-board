@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normalizeConfig } from '../../lib/worker/config.js';
+import { normalizeConfig, detectMachine } from '../../lib/worker/config.js';
 
 // v2.6.26 回归：写通道四个键必须能从 worker 子块读出。
 // 2.6.20–2.6.25 归一化层漏了这些键，导致真机上永远 maint-write-disabled（本地单测直接构造
@@ -66,4 +66,26 @@ test('normalizeConfig: passEnv 从扁平键读出', () => {
 test('normalizeConfig: passEnv 缺省为空数组', () => {
   const { config } = normalizeConfig({ machine: 'gt14' });
   assert.deepEqual(config.passEnv, []);
+});
+// v2.6.28（U-2）：detectMachine 前缀表太窄——只认 GT14/MB14/PC2/DESKTOP-，其它主机名
+// 原样返回 ⇒ 副机 machine 与板上不一致（板上按小写归一），永远 idle。
+// 补 DESKTOP2 前缀 + 不在表里时统一小写。
+test('detectMachine：DESKTOP- 前缀命中 host', () => {
+  assert.equal(detectMachine({ hostname: 'DESKTOP-ABC' }), 'host');
+});
+
+test('detectMachine：DESKTOP2 前缀命中 host', () => {
+  assert.equal(detectMachine({ hostname: 'DESKTOP2-X' }), 'host');
+});
+
+test('detectMachine：不在前缀表的主机名原样小写', () => {
+  assert.equal(detectMachine({ hostname: 'SOMEPC' }), 'somepc');
+  assert.equal(detectMachine({ hostname: 'MyCustomHost' }), 'mycustomhost');
+});
+
+test('detectMachine：DSH_BOARD_MACHINE env 强制覆盖', () => {
+  assert.equal(
+    detectMachine({ hostname: 'DESKTOP-ABC', env: { DSH_BOARD_MACHINE: 'gt14' } }),
+    'gt14',
+  );
 });

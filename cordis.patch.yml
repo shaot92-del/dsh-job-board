@@ -47,3 +47,5 @@
           allowInline: false
           execTimeoutMs: 600000
           agentEnabled: false
+          maintenanceEnabled: true
+          maintenanceOutDir: ''

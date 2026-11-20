@@ -56,7 +56,10 @@ export function keygen({ out }) {
   const body = { version: MAINT_TICKET_VERSION, privateKeyB64, publicKeyB64 };
   if (out) {
     fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
-    fs.writeFileSync(out, `${JSON.stringify(body, null, 2)}\n`, 'utf8');
+    // v2.6.28（U-7）：私钥文件权限跟随 umask，可能 0644。写时给 0o600，写后再
+    // chmodSync 兜底（Windows 上 chmod 是 no-op，忽略错误）。
+    fs.writeFileSync(out, `${JSON.stringify(body, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    try { fs.chmodSync(out, 0o600); } catch { /* Windows 上 chmod 是 no-op，忽略 */ }
   }
   return body;
 }
@@ -101,7 +104,12 @@ export function signGoal(opts) {
     nonce: crypto.randomBytes(12).toString('base64url'),
   };
   if (!fields.machine) throw new Error('缺 --machine');
-  if (!fields.verb) throw new Error('缺 --verb');
+  // v2.6.28（U-6）：签发时校验 verb 白名单——空/错也能签出票，到副机才
+  // maint-verb-unknown，白跑一趟。signGoal 本身加 throw（main 层另有 return 2 的友好错误）。
+  const SIGN_VERBS = ['upgrade', 'config-set', 'restart'];
+  if (!fields.verb || !SIGN_VERBS.includes(fields.verb)) {
+    throw new Error(`verb 必须是 upgrade/config-set/restart，收到 ${JSON.stringify(fields.verb)}`);
+  }
   const ticket = signTicket(fields, loadPrivateKey(opts.keyFile));
   const b64 = Buffer.from(JSON.stringify(ticket), 'utf8').toString('base64url');
   return { fields, ticket, goalText: `${opts.payloadText}\nticket=${b64}` };
@@ -148,14 +156,35 @@ export function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (cmd === 'sign') {
-    const payloadText = args.payload
-      ? fs.readFileSync(args.payload, 'utf8').replace(/\r\n/g, '\n').trim()
-      : String(args.text || '').trim();
+    // v2.6.28（U-9）：--payload 读文件 / JSON.parse 失败时抛栈迹。try/catch 包住，
+    // 输出「payload 文件读不到 / 不是合法 JSON」+ return 2。
+    let payloadText;
+    try {
+      payloadText = args.payload
+        ? fs.readFileSync(args.payload, 'utf8').replace(/\r\n/g, '\n').trim()
+        : String(args.text || '').trim();
+    } catch (e) {
+      process.stderr.write(`payload 文件读不到：${args.payload}\n`);
+      return 2;
+    }
     if (!payloadText) {
       process.stderr.write('缺 --payload <文件> 或 --text <单行 JSON>\n');
       return 2;
     }
-    const payload = JSON.parse(payloadText);
+    let payload;
+    try {
+      payload = JSON.parse(payloadText);
+    } catch (e) {
+      process.stderr.write('payload 不是合法 JSON\n');
+      return 2;
+    }
+    // v2.6.28（U-6）：签发时校验 payload.verb ∈ 白名单，否则 return 2（signGoal 本身也 throw）。
+    const SIGN_VERBS = ['upgrade', 'config-set', 'restart'];
+    const verb = String((payload && payload.verb) || '').trim();
+    if (!verb || !SIGN_VERBS.includes(verb)) {
+      process.stderr.write(`payload.verb 必须是 upgrade/config-set/restart，收到 ${JSON.stringify(verb)}\n`);
+      return 2;
+    }
     const { goalText, fields } = signGoal({
       keyFile: args.key,
       payloadText,

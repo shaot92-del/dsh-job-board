@@ -16,6 +16,7 @@ import {
   parseWriteGoal,
   createMaintVerbs,
 } from '../../lib/worker/maint-verbs.js';
+import { normalizeAgentAllowlist } from '../../lib/worker/agent-gate.js';
 
 // ── 测试夹具 ────────────────────────────────────────────────────────────
 
@@ -284,9 +285,9 @@ test('config-set：类型错（allowAllRoots 非布尔） → maint-config-inval
   assert.equal(r.reason, MAINT_VERB_REASONS.CONFIG_INVALID);
 });
 
-test('config-set：类型错（agentAllowlist 项缺 id） → maint-config-invalid', async () => {
+test('config-set：类型错（agentAllowlist 项非对象） → maint-config-invalid', async () => {
   const v = makeConfigVerbs(samplePatch(), {});
-  const r = await v.run('config-set', { set: { agentAllowlist: [{ titlePrefix: 'x' }] } }, { taskId: 't1' });
+  const r = await v.run('config-set', { set: { agentAllowlist: ['review'] } }, { taskId: 't1' });
   assert.equal(r.reason, MAINT_VERB_REASONS.CONFIG_INVALID);
 });
 
@@ -387,6 +388,107 @@ test('config-set：无 worker: 子块时自动插入', async () => {
   const newText = fs.readFileSync(patchFile, 'utf8');
   assert.match(newText, /worker:/, '自动插入 worker: 子块');
   assert.match(newText, /        agentEnabled: true/);
+});
+
+// v2.6.28（U-5）：找 team 块的正则只认 `- id: team`，遇到单引号 / 行尾注释就报
+// 「未找到 team 块」⇒ config-set 写不进去。正则改成容忍可选引号与行尾注释。
+test('config-set：team id 是单引号形态也能定位并写入', async () => {
+  const profileDir = tmpDir();
+  const patchFile = path.join(profileDir, 'cordis.patch.yml');
+  const patch = [
+    "- insert:",
+    "    - id: 'team'",
+    "      config:",
+    "        boardUrl: ''",
+    "      worker:",
+    "        pollMs: 2000",
+  ].join('\n');
+  fs.writeFileSync(patchFile, patch, 'utf8');
+  const v = makeVerbs({ profileDir }, { now: () => 1700000000000 });
+  const r = await v.run('config-set', { set: { workerMode: 'on' }, dryRun: false }, { taskId: 't1' });
+  assert.equal(r.ok, true, `单引号形态应定位到 team 块：${r.note}`);
+  const newText = fs.readFileSync(patchFile, 'utf8');
+  assert.match(newText, /workerMode: 'on'/, 'workerMode 已写入');
+});
+
+test('config-set：team id 带行尾注释也能定位并写入', async () => {
+  const profileDir = tmpDir();
+  const patchFile = path.join(profileDir, 'cordis.patch.yml');
+  const patch = [
+    "- insert:",
+    "    - id: team # 团队作业板（注释不应挡住定位）",
+    "      config:",
+    "        boardUrl: ''",
+    "      worker:",
+    "        pollMs: 2000",
+  ].join('\n');
+  fs.writeFileSync(patchFile, patch, 'utf8');
+  const v = makeVerbs({ profileDir }, { now: () => 1700000000000 });
+  const r = await v.run('config-set', { set: { workerMode: 'on' }, dryRun: false }, { taskId: 't1' });
+  assert.equal(r.ok, true, `行尾注释形态应定位到 team 块：${r.note}`);
+  const newText = fs.readFileSync(patchFile, 'utf8');
+  assert.match(newText, /workerMode: 'on'/, 'workerMode 已写入');
+});
+
+// v2.6.28（安全审计 C-3）：validateConfigValue 与归一化对 agentAllowlist 要求不一致——
+// 归一化层允许缺 id（自动补 allow-<序号>），validateConfigValue 却要求每项有 id。
+// 统一口径后：validateConfigValue 不再要求 id，缺 id 由归一化层自动补。
+test('config-set：写入缺 id 的 allowlist 后读回来带自动 id（v2.6.28 C-3）', async () => {
+  const profileDir = tmpDir();
+  const patchFile = path.join(profileDir, 'cordis.patch.yml');
+  fs.writeFileSync(patchFile, samplePatch(), 'utf8');
+  const v = makeVerbs({ profileDir }, { now: () => 1700000000000 });
+  // 缺 id 的 allowlist 条目：validateConfigValue 现在允许（与归一化一致）
+  const r = await v.run('config-set', { set: { agentAllowlist: [{ titlePrefix: 'x' }] }, dryRun: false }, { taskId: 't1' });
+  assert.equal(r.ok, true, `缺 id 的 allowlist 应被接受：${r.note}`);
+  // 读回 YAML，提取 agentAllowlist 值，经归一化后应有自动 id
+  const newText = fs.readFileSync(patchFile, 'utf8');
+  const m = newText.match(/^        agentAllowlist: (.+)$/m);
+  assert.ok(m, 'agentAllowlist 已写入 worker: 子块');
+  const parsed = JSON.parse(m[1]);
+  const { entries } = normalizeAgentAllowlist(parsed);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].id, 'allow-1');
+  assert.equal(entries[0].titlePrefix, 'x');
+});
+
+// v2.6.28（安全审计 C-11）：dryRun 严格判定——0 / 'false' / '' 不再被当 true，而是 invalid。
+test('config-set：dryRun=0 → maint-config-invalid（v2.6.28 C-11）', async () => {
+  const v = makeConfigVerbs(samplePatch(), {});
+  const r = await v.run('config-set', { set: { workerMode: 'on' }, dryRun: 0 }, { taskId: 't1' });
+  assert.equal(r.reason, MAINT_VERB_REASONS.CONFIG_INVALID);
+  assert.match(r.note, /dryRun/);
+});
+
+test('config-set：dryRun="false" → maint-config-invalid（v2.6.28 C-11）', async () => {
+  const v = makeConfigVerbs(samplePatch(), {});
+  const r = await v.run('config-set', { set: { workerMode: 'on' }, dryRun: 'false' }, { taskId: 't1' });
+  assert.equal(r.reason, MAINT_VERB_REASONS.CONFIG_INVALID);
+  assert.match(r.note, /dryRun/);
+});
+
+test('config-set：dryRun=false → 真写盘（v2.6.28 C-11）', async () => {
+  const profileDir = tmpDir();
+  const patchFile = path.join(profileDir, 'cordis.patch.yml');
+  fs.writeFileSync(patchFile, samplePatch(), 'utf8');
+  const v = makeVerbs({ profileDir }, { now: () => 1700000000000 });
+  const r = await v.run('config-set', { set: { workerMode: 'on' }, dryRun: false }, { taskId: 't1' });
+  assert.equal(r.ok, true);
+  assert.equal(r.dryRun, undefined);
+  const newText = fs.readFileSync(patchFile, 'utf8');
+  assert.match(newText, /workerMode: 'on'/, 'dryRun=false 应真写盘');
+});
+
+test('config-set：dryRun=true → dryRun 不写盘（v2.6.28 C-11）', async () => {
+  const profileDir = tmpDir();
+  const patchFile = path.join(profileDir, 'cordis.patch.yml');
+  const original = samplePatch();
+  fs.writeFileSync(patchFile, original, 'utf8');
+  const v = makeVerbs({ profileDir }, { now: () => 1700000000000 });
+  const r = await v.run('config-set', { set: { workerMode: 'on' }, dryRun: true }, { taskId: 't1' });
+  assert.equal(r.ok, true);
+  assert.equal(r.dryRun, true);
+  assert.equal(fs.readFileSync(patchFile, 'utf8'), original, 'dryRun=true 不写盘');
 });
 
 // ── 4. restart ──────────────────────────────────────────────────────────

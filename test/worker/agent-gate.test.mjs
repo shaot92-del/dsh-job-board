@@ -376,3 +376,14 @@ test('normalizePrompt：行首 `.\\` 被折叠移除', () => {
   // 行首 `.\` 被折叠掉后，文本应以 `dsh\profiles` 开头（无前导 `.\` 也无前导 `\`）
   assert.equal(normalized.startsWith('dsh\\profiles'), true, `行首 .\\ 应被折叠掉，got: ${JSON.stringify(normalized)}`);
 });
+// v2.6.28（安全审计 C-3）：归一化时缺 id 的条目自动补 allow-<序号>（保留原前缀字段）。
+// 与 maint-verbs.js 的 validateConfigValue 统一口径——validateConfigValue 不再要求 id。
+test('normalizeAgentAllowlist：缺 id 的条目自动补 allow-<序号>（v2.6.28 C-3）', () => {
+  const out = normalizeAgentAllowlist([
+    { titlePrefix: '复审', modelPrefix: 'gt14/' },
+  ]);
+  assert.equal(out.entries.length, 1);
+  assert.equal(out.entries[0].id, 'allow-1');
+  assert.equal(out.entries[0].titlePrefix, '复审');
+  assert.equal(out.entries[0].modelPrefix, 'gt14/');
+});

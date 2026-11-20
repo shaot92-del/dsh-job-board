@@ -70,6 +70,7 @@ const required = [
   'test/worker/agent-budget.test.mjs',
   'test/worker/maintenance-write.test.mjs',
   'test/worker/config-maint.test.mjs',
+  'test/worker/ui-write-paths.test.mjs',
   'test/worker/shell.test.mjs',
   'test/worker/state-file.test.mjs',
 ];

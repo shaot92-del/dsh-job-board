@@ -8,11 +8,11 @@ import { test } from 'node:test';
 
 import { createLogger, LEVELS, maskText } from '../../lib/worker/log.js';
 
-test('maskText：配置里的 secret 一律打码，短于 6 字符的不打（避免误伤普通词）', () => {
+test('maskText：配置里的 secret 一律打码（阈值降到 1 字符）', () => {
   const secrets = ['tok_abcdef123456', 'abc'];
   assert.equal(maskText('use tok_abcdef123456 here', { secrets }), 'use *** here');
-  // 太短的「secret」通常是配置笔误，打码会把正常单词切碎
-  assert.equal(maskText('abc def', { secrets }), 'abc def');
+  // v2.6.28（U-10）：阈值从 6 降到 1——3 字符的 secret 也要打码（短 token 原样泄露是漏洞）
+  assert.equal(maskText('abc def', { secrets }), '*** def');
 });
 
 test('maskText：同一个 secret 出现多次全部打码', () => {
@@ -146,9 +146,11 @@ test('maskText：家目录只做前缀不能过度匹配（Al 不该吃掉 Alice
   assert.equal(maskText('C:\\Users\\Alice', { home: 'C:\\Users\\Al' }), 'C:\\Users\\Alice');
 });
 
-test('maskText：secret 长度边界 5 不打码、6 打码', () => {
-  assert.equal(maskText('xabcdeabcde', { secrets: ['abcde'] }), 'xabcdeabcde');
-  assert.equal(maskText('v=abcdef!', { secrets: ['abcdef'] }), 'v=***!');
+test('maskText：secret 长度边界 1 字符打码、空串跳过', () => {
+  // v2.6.28（U-10）：阈值降到 1——1 字符 secret 也要打码
+  assert.equal(maskText('va=ab', { secrets: ['a'] }), 'v***=***b');
+  // 2 字符 secret 打码
+  assert.equal(maskText('v=ab!', { secrets: ['ab'] }), 'v=***!');
 });
 
 test('maskText：重叠 secret 从长到短替换，不留后缀残渣', () => {
@@ -205,4 +207,15 @@ test('maskText：secret 含家目录子串时仍被打码（secret 先于 home �
   assert.equal(out.includes('***'), true, 'secret 应被打码为 ***');
   // home 是 secret 的前缀，secret 被替换后 home 子串也一并消失
   assert.equal(out.includes(home), false, 'home 子串也不应原样出现');
+});
+// ── v2.6.28（U-10）────────────────────────────────────────────
+// maskText 只打码 ≥6 字符的 secret——短 token（如 4 位测试 key）原样泄露。
+// 阈值降到 1 字符；空串特判跳过（避免把整段文本打成 ***）。
+test('maskText：4 字符 secret 被打码（阈值降到 1）', () => {
+  assert.equal(maskText('key=abcd', { secrets: ['abcd'] }), 'key=***');
+});
+
+test('maskText：空 secret 不影响输出', () => {
+  assert.equal(maskText('hello world', { secrets: [''] }), 'hello world');
+  assert.equal(maskText('hello world', { secrets: ['   ', ''] }), 'hello world');
 });
