@@ -1,6 +1,6 @@
 {
-  "version": "2.6.19",
-  "updated": "2026-11-18",
+  "version": "2.7.0",
+  "updated": "2026-11-20",
   "sources": [
     {
       "id": "glm-sec",
@@ -164,24 +164,30 @@
     },
     {
       "id": "v2617-agent-tool-scope",
-      "status": "open",
+      "status": "fixed",
       "severity": "P1",
       "source": "agent-1",
-      "note": "agent 会话持 sh_run 与 board_*，不是沙箱；任务文本注入=命令执行"
+      "note": "v2.7.0 P-2：worker agent 会话只读（WORKER_SESSION_DENY 10 项，含 sh_write/board_* 写类/worker_control）；读类保留。测试 test/worker/worker-session-deny.test.mjs",
+      "fixedIn": "6f8e505",
+      "updated": "2026-11-20"
     },
     {
       "id": "v2617-exec-cwd-root",
-      "status": "open",
+      "status": "mitigated",
       "severity": "P1",
       "source": "agent-1",
-      "note": "execCwdRoot 缺省空时 cwd 由任务任意指定"
+      "note": "v2.6.27 起 cwd 根 fail-closed（cwd-root-unset / agent-cwd-unset），恢复旧行为需显式 allowUnscopedCwd:true；README「v2.7.0 行为变更」第 1 条给迁移说明",
+      "fixedIn": "2.6.27/2.7.0",
+      "updated": "2026-11-20"
     },
     {
       "id": "v2617-auto-dispatch",
-      "status": "open",
+      "status": "fixed",
       "severity": "P2",
       "source": "agent-1",
-      "note": "autoDispatch 与 dispatchApproval 缺省无人确认（产品选择）"
+      "note": "v2.7.0 P-1：autoDispatch 默认 false，需显式 true 才启动 Host 调度器；plugcheck #6 显式开启",
+      "fixedIn": "4c62a30",
+      "updated": "2026-11-20"
     },
     {
       "id": "v2618-approval-fingerprint",
@@ -192,10 +198,12 @@
     },
     {
       "id": "v2618-ui-local-authz",
-      "status": "open",
+      "status": "documented",
       "severity": "P2",
       "source": "self",
-      "note": "/api/board/ui/* 无应用层鉴权；仅监听 loopback，伪造 Host 被 403"
+      "note": "接受边界：DSH 只监听 127.0.0.1（LAN 访问被 uiGuard 的 host 检查 403）；本机任意进程可调 /api/board/ui/* 属既有单 token 边界，见 v266-single-token。复验：Get-NetTCPConnection -State Listen + 伪造 Host 头打 /api/board/ui/mark 应 403",
+      "fixedIn": "2.7.0",
+      "updated": "2026-11-20"
     },
     {
       "status": "fixed",
@@ -219,11 +227,13 @@
       "source": "pangu"
     },
     {
-      "status": "open",
-      "note": "重放 TOCTOU 在 A2 接力间隙：A2 必须「先 recordNonce 再执行」，实现时校验",
+      "status": "mitigated",
+      "note": "runWrite 里先 recordNonce（跨进程锁 + fail-closed）再执行；执行失败不回滚 nonce（宁可少执行一次）。见 test/worker/maintenance-write.test.mjs「执行时 nonce 已落盘」",
       "id": "v2619-ticket-toctou",
       "severity": "P2",
-      "source": "pangu"
+      "source": "pangu",
+      "fixedIn": "2.6.20/2.7.0",
+      "updated": "2026-11-20"
     },
     {
       "status": "fixed",

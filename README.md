@@ -175,6 +175,16 @@ patch / 工具 / 路由，热重载会报 duplicate route 或让客户端面板�
       maintenanceOutDir: ''         # 完整 payload 落盘目录，建议填共享盘（如 Z:/_maintenance）
 ```
 
+**v2.7.0 起的行为变更（从旧版升级请先读这段）**
+
+1. **`execCwdRoot` / `agentCwdRoot` 不配 = 任务被拒**（`cwd-root-unset` / `agent-cwd-unset`）。
+   v2.6.27 起 cwd 根是 fail-closed：之前「不配就退回用户主目录」的行为已经删掉——那条路径等于让任务书自己指定工作目录。
+   迁移做法（推荐）：把允许的工作根目录写进 `worker.execCwdRoot`（如 `'C:/work'`）与 `worker.agentCwdRoot`（如 `'C:/Users/<你>/Documents'`）。
+   确需恢复旧行为：显式写 `worker.allowUnscopedCwd: true`（会在 `worker_status` 里一直挂着警告，不建议长期开）。
+2. **Host 调度器默认关**：`autoDispatch` 默认已是 `false`。需要「自动抢队列并派给 remote-agent」的机器必须显式写 `autoDispatch: true`；否则只保留人工认领 / 面板派工。
+3. **worker 拉起的 agent 会话是只读的**：`board_*` 写类（dispatch/claim/beat/done/fail/retry/attach/say）+ `sh_write` + `worker_control` 全部对该会话隐藏，只留 `worker_status`、`board_status/list/options/caps/metrics`、`sh_read/sh_list`。agent 任务需要写文件时请改用 exec 模式（白名单脚本）。
+4. **审批指纹改为 128 bit 并绑定 model/provider**：升级后旧的 64 bit 审批记录仍可命中一次（按前缀比对），命中后自动升级重写；换了模型或 provider 需要重新审批。
+
 - 认领只用看板 HTTP：`/api/claim` → `/api/beat` → `/api/mark`；holder 形如 `<machine>/<pid>-<rand>`，归属只认 holder，不认 note。
 - 从旧版升级：旧 `dsh-job-worker` 的插件行是**它自己包内 patch 插入的**，删 profile 里的行没用（下次启动还会回来）。必须二选一：
   1. `dsh plugin remove dsh-job-worker`（或从 `dsh.profile.bundles` 移除该包）；
