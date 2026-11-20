@@ -73,6 +73,7 @@ const required = [
   'test/worker/config-maint.test.mjs',
   'test/worker/ui-write-paths.test.mjs',
   'test/worker/worker-session-deny.test.mjs',
+  'test/worker/doctor-hub-nodes.test.mjs',
   'test/worker/shell.test.mjs',
   'test/worker/state-file.test.mjs',
 ];

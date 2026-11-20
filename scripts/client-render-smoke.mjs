@@ -263,6 +263,21 @@ check(
 
 check('窄屏折叠样式存在（@media ≤980px + dsb-sub 让位）', RAW.includes('@media (max-width:980px)') && RAW.includes('.dsb-head .dsb-sub{display:none}') && RAW.includes('@media (max-width:1240px)'), 'media queries')
 
+// v2.7.0（W4）：窄屏收敛两条 —— 只断言媒体查询结构，不做视觉校验。
+// 包体里 CSS 是一个字符串数组，每条规则一行，所以按行取出对应媒体查询再查关键字。
+const mq1100 = (RAW.match(/@media \(max-width:1100px\)\{[^\n]*/) || [''])[0]
+const mq900 = (RAW.match(/@media \(max-width:900px\)\{[^\n]*/) || [''])[0]
+check(
+  '窄屏 ≤1100px：机器卡改单列纵向堆叠（flex-direction:column + 容器 100%）',
+  mq1100.includes('flex-direction:column') && mq1100.includes('width:100%') && RAW.includes("className: 'dsb-mach-grid'"),
+  mq1100.slice(0, 160),
+)
+check(
+  '窄屏 ≤900px：隐藏次要列（dsb-col-id 走 display:none，不压字号）',
+  mq900.includes('.dsb-col-id{display:none}') && RAW.includes("className: 'dsb-id dsb-col-id'") && !/font-size/.test(mq900),
+  mq900.slice(0, 160),
+)
+
 // ── 第 2 轮：doctor 三态（运行旧 / 磁盘新 / 远端更新）─────────────────────
 const DOCTOR_ANCHOR = 'const [doctor, setDoctor] = React.useState(null)'
 const fakeDoctor = { version: '2.6.12', installedVersion: '2.6.13', latestVersion: '2.6.14', updateAvailable: true, role: 'owner', ok: true, checks: [] }

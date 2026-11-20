@@ -1,3 +1,17 @@
+## v2.7.0 — 2026-11-20（安全默认收口 + 维护写通道可用 + 面板余量；本版有 4 条行为变更）
+
+> 从 v2.6.x 升上来的机器请先读 README「v2.7.0 起的行为变更」。本版不改协议，但改默认值。
+
+- **P-1 出厂不再自动派工**：`autoDispatch` 默认 `false`。Host 调度器只在显式 `autoDispatch: true` 时启动；面板派工、人工认领、维护通道不受影响。
+- **P-2 worker agent 会话收紧为只读**：`WORKER_SESSION_DENY` 10 项（`worker_control` + `board_dispatch/claim/beat/done/fail/retry/attach/say` + `sh_write`）。agent 任务需要写文件时改走 exec 白名单。读类（`worker_status`、`board_status/list/options/caps/metrics`、`sh_read/sh_list`）保留。
+- **P-3 审批指纹 64 → 128 bit 并绑定 model/provider**：`promptFingerprint(goal, model, provider)`；旧 16 位记录按「只绑 goal」的旧算法前缀兼容，命中后在 `check()` 里就地升级重写；换模型/provider 需要重新审批。
+- **P-4 cwd 根必配**：`execCwdRoot` / `agentCwdRoot` 未配置时任务被拒（`cwd-root-unset` / `agent-cwd-unset`）；恢复旧行为需显式 `worker.allowUnscopedCwd: true`（会持续挂警告）。
+- **维护写通道可用性（U-3/U-4/U-8）**：面板 maint 派工新增 `POST /api/board/ui/config-diff` 预览（不建单 / 不写盘 / 不消耗 nonce，读本机 profile）；机器卡新增 worker 状态卡与 drain/resume（`/api/board/ui/worker-status`、`worker-control`，`agentRestrictBroken` 时 403 `agent-restrict-broken`）；新增 `scripts/remove-old-package.ps1` 清理旧 unscoped 包残留。
+- **面板余量（W4）**：≤1100px 机器卡改单列纵向堆叠、容器 100%（`!important` 压 React 内联尺寸）；≤900px 隐藏任务行序号列（`dsb-col-id`），不压字号、不做横向滚动兜底。
+- **doctor 三条新检查**：`hub-nodes` 探测延到 webServer 就绪（`ctx.on('ready')` / `server.on('listening')`，`getOrigin` 不可用降级为 `info` 并 3s 重试一次）；`config-restart-pending`（patch mtime 晚于进程启动 ⇒ warn）；`gate-open-presets` / `gate-match-all`（两条放宽项 warn，只提示不改行为）。
+- **C 批加固（S-9/S-11/S-14/S-5/C-17）**：见上三条 P 项与 S-11（`HARD_MAX_PROMPT_CHARS = 256 KiB`，归一化前拒）、S-14（tar 逐段拦中段盘符与 UNC 变体）、C-17（`formatNumber()` 统一数字格式，`'020'` / `1e999` 直接 invalid）。
+- **审计收口**：`docs/review/findings.json` 的 `open` 清零（fixed / mitigated / documented 三类，mitigated 与 documented 各附复验命令）。
+- **测试与打包**：门禁 445 测试全绿、pack-check 102 文件 1,478,313 B；`prep-upgrade-270.ps1/.cmd` 待生成。
 ## v2.6.29 — 2026-11-20（A2 批 17 条：UI 写路由闸、有界映射、可中断退避、URL 规范化）
 
 - **A2a（9 条·用户/配置面）**：`U-1` 包内 `cordis.patch.yml` 的 `worker:` 子块补 `maintenanceEnabled` / `maintenanceOutDir`（与 README 对齐，照模板写不再丢键）；`U-2` `detectMachine` 补 `DESKTOP2` 前缀并把未知主机名统一小写返回（**这是副机永远 idle 的根因之一**：板子按小写归一，大写主机名对不上）；`U-5` 找 team 块的正则容忍可选引号与行尾注释（`- id: 'team'` / `- id: team # 注释` 不再报「未找到」）；`U-6` 签发票据时校验 `verb ∈ upgrade/config-set/restart`（错 verb 不再等副机才 `maint-verb-unknown`）；`U-7` keygen 私钥写盘 `mode 0o600` + chmod 兜底；`U-9` `sign --payload` 读文件/JSON 解析失败给友好提示并 `return 2`（不抛栈迹）；`U-10` `maskText` 打码阈值 6 → 1（4 位测试 token 不再原样泄露）；`S-15` `UI_WRITE_PATHS` 从 3 条补到 16 条（写型路由的 GET 被 uiGuard 以 `method` 提前 403，`ui-guard-smoke` 同步改 `403 || 405`）；`S-17` instanceId 随机后缀 `randomBytes(2) → (4)`。
