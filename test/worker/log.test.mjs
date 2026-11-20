@@ -101,7 +101,7 @@ test('LEVELS 常量顺序：debug→info→warn→error（level 过滤依赖它�
 });
 
 test('createLogger：extra 里的路径要打码（v2.6.16 修复：序列化前打码，反斜杠转义不再漏）', () => {
-  const log = createLogger({ home: 'C:\\Users\\Alice' });
+  const log = createLogger({ home: 'C:\\Users\\Alice', secrets: ['C:\\Users\\Alice\\key-123456'] });
   log.info('x', { cwd: 'C:\\Users\\Alice\\proj', nested: { p: 'C:\\Users\\Alice\\a.txt' } });
   const [entry] = log.recent();
   assert.ok(!entry.extra.includes('Alice'), entry.extra);
@@ -193,4 +193,11 @@ test('createLogger：普通对象（toString 是默认的）仍按 JSON 输出',
   const log = createLogger();
   log.info('plain', { a: 1 });
   assert.equal(log.recent()[0].extra, '{"a":1}');
+});
+test('maskText：secret 里含家目录子串时也要整体打码（v2.6.28 S-10）', () => {
+  const log = createLogger({ home: 'C:\\Users\\Alice', secrets: ['C:\\Users\\Alice\\key-123456'] });
+  log.info('token C:\\Users\\Alice\\key-123456');
+  const text = log.recent(1)[0].text;
+  assert.ok(!text.includes('key-123456'), 'secret 整串必须消失');
+  assert.ok(!text.includes('C:\\Users\\Alice'), '家目录也必须打码');
 });

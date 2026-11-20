@@ -528,3 +528,17 @@ test('textFromEvent：只有 reasoning 块时返回空串', () => {
 test('textFromEvent：兼容顶层 blocks 老形状', () => {
   assert.equal(textFromEvent({ type: 'assistant/message', blocks: [{ type: 'text', text: '老形状' }] }), '老形状');
 });
+
+test('available：host.available() 抛错时错误串要脱敏（v2.6.28 S-8）', () => {
+  const home = os.homedir();
+  const host = {
+    available() {
+      throw new Error(`boom ${home}\\secret-token-123`);
+    },
+  };
+  const runner = createAgentRunner({ host, config: withAgent({ token: 'secret-token-123' }) });
+  const r = runner.available();
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /^host-error:/);
+  assert.ok(!r.reason.includes('secret-token-123'), 'token 不能出现在 reason 里');
+});

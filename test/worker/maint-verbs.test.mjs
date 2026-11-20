@@ -466,9 +466,10 @@ test('restart：成功时传给 spawnImpl 的脚本含校验 + Stop + Start', as
   assert.equal(spawned.opts.stdio, 'ignore');
   // script 含校验（Test-Path dshExe）+ Stop-Process + Start-Process
   const script = spawned.args[4];
-  assert.match(script, /Test-Path '.*dsh\.exe'/, '脚本含 dshExe 校验');
+  // v2.6.28（S-13）：改用 -LiteralPath / -FilePath，路径按 PowerShell 单引号规则转义
+  assert.match(script, /Test-Path -LiteralPath '.*dsh\.exe'/, '脚本含 dshExe 校验');
   assert.match(script, /Stop-Process -Id \d+ -Force/, '脚本含 Stop-Process');
-  assert.match(script, /Start-Process '.*dsh\.exe'/, '脚本含 Start-Process');
+  assert.match(script, /Start-Process -FilePath '.*dsh\.exe'/, '脚本含 Start-Process');
   assert.match(script, /Start-Sleep -Milliseconds 5000/, '脚本含 delay');
   // 注：本测试 config 无 stateDir → 不写 log；log 写入见下条测试
 });
@@ -579,4 +580,22 @@ test('端到端：签发票据 → runner 消费 → maint-verbs 真写 config-s
   // nonce 已落盘（重放防线），且票据本身没进 note / payload
   assert.ok(fs.existsSync(path.join(dir, 'maint-used-nonces.json')));
   assert.doesNotMatch(String(r.note || ''), /ticket=/);
+});
+test('restart：dshExePath 含单引号时按 PowerShell 规则转义（v2.6.28 S-13）', async () => {
+  const dshExe = tmpDir() + "\\it's dsh.exe";
+  fs.writeFileSync(dshExe, 'x');
+  let spawned = null;
+  const v = makeVerbs({
+    maintenanceAllowRestart: true,
+    dshExePath: dshExe,
+    pwshPath: 'C:\\pwsh.exe',
+  }, {
+    spawnImpl: (cmd, args, opts) => { spawned = { cmd, args, opts }; },
+  });
+  const r = await v.run('restart', { delayMs: 3000 }, { taskId: 't-quote' });
+  assert.equal(r.ok, true);
+  const script = spawned.args[4];
+  // 单引号必须成对转义，不能出现孤立的 ' 把引号闭合
+  assert.ok(script.includes("it''s dsh.exe"), '单引号已转义成两个单引号');
+  assert.doesNotMatch(script, /it's dsh\.exe/, '不得出现未转义形态');
 });

@@ -407,3 +407,15 @@ wt('note 上板前必须脱敏：stderr 里复述 token / 家目录不能原样�
   assert.equal(out.note.includes(home), false, '家目录不能原样出现在 note');
   assert.ok(out.note.includes('%USERPROFILE%') || out.note.includes('***'), '脱敏要留下痕迹');
 });
+
+wt('内联脚本超长：64 KB 上限直接 blocked（v2.6.28 S-7）', async () => {
+  const runner = createExecRunner({
+    config: { ...baseConfig, allowInline: true },
+    spawnImpl: spawnReturning(fakeChild()),
+  });
+  const big = 'x'.repeat(64 * 1024 + 1);
+  const r = await runner.run({ inline: big }, { taskId: 't-big' });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.reason, 'inline-too-large');
+  assert.match(r.note, /inline-too-large/);
+});
