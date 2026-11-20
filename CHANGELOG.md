@@ -1,3 +1,30 @@
+## v2.7.2 — 2026-11-21（派工「选具体模型」不再被远程桥打回 + 远程桥不再塞 model）
+
+### 修的是什么
+v2.7.1 恢复「派工选模型」后，选具体模型派到副机仍会失败，实测两种失败：
+
+- `machine="GT14"` → Host 把它交给 remote-agent（远程桥）→ `failed：远程 failed：headless 后端不支持指定模型（dsh headless 固定使用副机默认模型）`
+- `machine="gt14"` → 副机自己的 worker 认领 → `blocked：agent-not-allowlisted`（配置问题，见下）
+
+远程桥的 headless 后端固定用副机默认模型，**任何显式 model 都会被它拒绝**；而「派到副机时选具体模型」正是本插件的卖点。以前的派工循环不做区分，谁来认领就派给谁，于是选了模型的任务有一半概率被推到必败的远程桥。
+
+### 改了什么
+- 新增 `lib/dispatch-filter.js` 的 `canDispatchRemote(task)`：带 model 的 agent 任务**不进远程桥**，留给副机自己的 in-process worker（worker 支持 model）；exec 忽略 model 照旧放行；maint 永不走远程桥。
+- `lib/index.js` 派工循环在 `pickNode()` 之前用它挡一道，并按任务只记一次 trace（`dispatch skip …：带 model 的 agent 任务留给副机 worker`），不刷日志。
+- 远程派工请求**不再携带 model**（连 Host 的 `cfg.defaultModel` 也不塞）——headless 只认副机默认模型，塞了必被拒。
+- 新增 3 条单元测试（`test/worker/dispatch-filter.test.mjs`）：带 model/空白 model、AGENT 大小写、exec 与 maint 的边界。
+
+### 升级后仍需在副机做的一步（配置，不是代码）
+`agentAllowlist` 必须至少有一条能匹配的条目（远程桥与 worker 都认这个配置）。最小可用写法：
+
+```yaml
+worker:
+  agentAllowlist:
+    - id: any
+      matchAll: true
+```
+
+写完要重启副机 DSH 才生效（配置在插件启动时归一化）。
 ## v2.7.1 — 2026-11-20（修派工弹窗白屏 React #130 + 恢复派工选模型 + 渲染兜底；服务端零改动）
 
 ### 修复：派工弹窗白屏（React #130，v2.1.0 起就带着的括号错位）

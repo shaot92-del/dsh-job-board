@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isMaintMode, normalizeTaskMode, shouldAutoDispatch } from '../../lib/dispatch-filter.js';
+import { canDispatchRemote, isMaintMode, normalizeTaskMode, shouldAutoDispatch } from '../../lib/dispatch-filter.js';
 
 const base = { dispatch: 'auto', status: 'queued', mode: '', remote: undefined };
 
@@ -55,4 +55,23 @@ test('shouldAutoDispatch：maint 任务永不被 Host 派给 remote-agent', () =
   // 对照：同一条件换成 agent/exec 就该派 —— 否则上面的 false 可能来自别的条件
   assert.equal(shouldAutoDispatch({ ...base, mode: 'agent' }), true);
   assert.equal(shouldAutoDispatch({ ...base, mode: 'exec' }), true);
+});
+
+test('canDispatchRemote：带 model 的 agent 任务不进远程桥（headless 不支持指定模型）', () => {
+  assert.equal(canDispatchRemote({ mode: 'agent', model: 'lan-llama/deepseek-v4-pro-qwen3.5-9b' }), false);
+  assert.equal(canDispatchRemote({ mode: 'agent', model: '  local-llama/ds4-9b  ' }), false);
+  assert.equal(canDispatchRemote({ mode: 'AGENT', model: 'deepseek-account/deepseek-flash' }), false);
+});
+
+test('canDispatchRemote：没写模型 / 空白模型照常走远程桥', () => {
+  assert.equal(canDispatchRemote({ mode: 'agent' }), true);
+  assert.equal(canDispatchRemote({ mode: 'agent', model: '' }), true);
+  assert.equal(canDispatchRemote({ mode: 'agent', model: '   ' }), true);
+});
+
+test('canDispatchRemote：exec 忽略 model，maint 永不走远程桥', () => {
+  assert.equal(canDispatchRemote({ mode: 'exec', model: 'lan-llama/x' }), true);
+  assert.equal(canDispatchRemote({ mode: 'maintenance', model: '' }), false);
+  assert.equal(canDispatchRemote({ mode: 'maintenanc' }), false);
+  assert.equal(canDispatchRemote(null), false);
 });
