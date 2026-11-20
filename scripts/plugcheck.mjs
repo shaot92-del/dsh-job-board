@@ -160,6 +160,9 @@ const dispose = apply(ctx, {
   allowedRoots: [root],
   // v2.1.0：派工前的"机器 + 模型"确认会拦下未选全的调用，测试里关掉。
   dispatchAsk: false,
+  // v2.7.0（P-1）：autoDispatch 默认改成 false（出厂不再自动抢队列）。
+  // 这里的 #6 调度器断言要验的是「开起来之后怎么派」，所以显式打开它。
+  autoDispatch: true,
   shellTimeoutMs: 5000,
   maxOutputBytes: 1000,
 })
