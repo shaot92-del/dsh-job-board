@@ -1,7 +1,7 @@
 # 运维手册（operator playbook）
 
 > 面向「要用它、要排障、要回滚」的人。讲的是这台插件在真实机器上的行为，不是设计意图。
-> 版本基线：v2.6.27（文档可能滞后于代码，以代码里的 reason 常量为准）。
+> 版本基线：v2.7.0（文档可能滞后于代码，以代码里的 reason 常量为准）。
 
 ## 1. 三个角色，一条链路
 
@@ -95,6 +95,48 @@ Get-NetTCPConnection -State Listen |
 | `agent-start-failed` / `agent-error` / `agent-run-failed` | 起会话失败 / 运行报错 / 异常退出 | 看 `agent/error` 事件与副机日志 |
 
 **maint（只读维护通道）**：`stage=maint verb=version|status|config|logs`。它不 spawn、不跑任意命令；`config` 按白名单重建（token / nodeToken 这类键**根本不出现**在输出里，不是打「已配置」占位）。
+
+### 3.4 维护写通道（v2.7.0，默认关闭）
+
+写动词 `upgrade` / `config-set` / `restart` 与只读通道是两个开关：只读默认开，写动作要显式打开并落公钥（信任锚）。
+
+**第一步：主控生成密钥对（只做一次）**
+
+```powershell
+pwsh -File scripts/maint-ticket.mjs keygen --out "$HOME\.dsh\maint\maint-key.json"
+# 输出里 publicKey 就是要发到副机的那串；私钥留在主控，不要拷走
+```
+
+**第二步：副机打开写开关 + 落公钥**
+
+```powershell
+# 在副机上跑（退出 DSH 后跑，或加 -Force 自担热重载风险）
+pwsh -File scripts/enable-maint-write.ps1 -PublicKey '<主控 publicKey>' `
+  -OutDir 'C:\maint-out' -PkgDir 'C:\maint-pkgs'
+# 只看会改什么：加 -DryRun；允许远程重启：再加 -AllowRestart
+```
+
+它只补缺失/不匹配的键，重复跑是幂等的；写前备份 `cordis.patch.yml.bak-maint-<时间戳>`，写后复核键是否落在 `worker:` 子块内，失败自动回滚。**写完重启副机 DSH**。
+
+**第三步：签发票据并派工**
+
+```powershell
+# 1) 写 payload（必须是单行 JSON，ticket 行由 sign 追加）
+'{"verb":"config-set","set":{"agentBudgetMaxPerDay":21},"dryRun":true}' | Set-Content $env:TEMP\payload.json -Encoding utf8
+# 2) 签票（ttl 30..3600 秒；-machine 必须与目标副机的 machine 名一致）
+pwsh -File scripts/maint-ticket.mjs sign --key "$HOME\.dsh\maint\maint-key.json" `
+  --payload $env:TEMP\payload.json --machine gt14 --ttl 600 --out $env:TEMP\goal.txt
+# 3) 派工（票据走独立字段，不塞进 goal —— goal 有 300 字上限）
+```
+
+面板里也可以：派工弹窗选 `maint` + 贴票据 + 点「预览改动」。
+
+**已知边界（v2.7.0）**
+
+- **预览只反映本机配置**：多机场景下 `config-diff` 读的是 Host 的 `cordis.patch.yml`，而实际 `config-set` 写的是**目标副机**的配置；面板对远程目标会直接给出这条提示、不展示可能误导的 diff。要精确预览请在副机本机看。
+- 票据一次性：`recordNonce` 落盘后同票重放返回 `maint-ticket-replayed`；`board_retry` 对写动词直接拒绝（需重新签票）。
+- 写动作结果摘要落在副机的 `maintenanceOutDir`，note 里只带 `reason`，不含票据与签名。
+
 
 ## 4. 常见故障
 

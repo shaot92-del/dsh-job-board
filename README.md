@@ -219,7 +219,8 @@ board_dispatch({ machine: 'GT14', mode: 'maint', goal: '{"verb":"logs","lines":8
 写动作（`upgrade` / `config-set` / `restart`）v2.6.20 起已可用，但**必须带签名票据**：
 主控机 `pwsh -File scripts/maint-ticket.mjs sign --machine <机器> --payload <payload.json>` 签发，
 把票据传给 `board_dispatch` 的 `ticket` 参数（面板派工在「类型」选 maint 后填票据框）。
-副机侧要先开写开关并落公钥（`enable-maint-write.cmd`），这是信任锚，首次必须本地做一次。
+副机侧要先开写开关并落公钥，这是信任锚，首次必须本地做一次：
+`pwsh -File scripts/enable-maint-write.ps1 -PublicKey '<主控 publicKey>'`（脚本在仓库 `scripts/` 下，写前备份、写完复核、幂等；详见 `docs/operator-playbook.md` 第 3.4 节）。
 
 板上只看得到 5 条 `reasons`，所以取哪 5 条是按动词定的：`config` 取**头部**（`allowlist[...]` 在最前 —— 那才是「为什么被拒」的答案），`logs` 取**尾部**（最新几行）。`artifact` 路径写进板子前会跟着 `note` 一起脱敏（`%USERPROFILE%` 之类的替换），所以从板子上取的路径不一定能直接打开，配了共享盘时以 `maintenanceOutDir` 下的真实路径为准。
 

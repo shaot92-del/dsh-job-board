@@ -12,6 +12,11 @@
 - **C 批加固（S-9/S-11/S-14/S-5/C-17）**：见上三条 P 项与 S-11（`HARD_MAX_PROMPT_CHARS = 256 KiB`，归一化前拒）、S-14（tar 逐段拦中段盘符与 UNC 变体）、C-17（`formatNumber()` 统一数字格式，`'020'` / `1e999` 直接 invalid）。
 - **审计收口**：`docs/review/findings.json` 的 `open` 清零（fixed / mitigated / documented 三类，mitigated 与 documented 各附复验命令）。
 - **测试与打包**：门禁 445 测试全绿、pack-check 102 文件 1,478,313 B；`prep-upgrade-270.ps1/.cmd` 待生成。
+- **发版前复审修正（盘古 P0/P1/P2）**：
+  - P0：补 `scripts/enable-maint-write.ps1` + `.cmd`。README 与面板错误提示引用的信任锚脚本此前不存在，外部用户无法开启维护写通道；脚本自动找 profile、只补缺失/不匹配的 `worker:` 子键（`maintenanceWriteEnabled` / `maintenanceOutDir` / `maintenancePkgDir` / `maintAuthPublicKeys` / 可选 `maintenanceAllowRestart`），写前备份、写后复核、失败回滚、幂等；DSH 在跑时默认拒绝写。
+  - P1：`config-diff` 预览在多机场景读的是 Host 的 `cordis.patch.yml`，实际写的是目标副机；现按目标机器判定，远程目标返回 `remote:true` + `note`，面板展示说明而不是可能误导的 diff。
+  - P2：`docs/operator-playbook.md` 基线升到 v2.7.0，新增「3.4 维护写通道」（keygen → 副机 enable-maint-write → 签票 → 派工 + 已知边界）；README 与面板提示改指真实脚本路径。
+  - 门禁：445 测试全绿、pack-check 104 文件 1,484,191 B。
 ## v2.6.29 — 2026-11-20（A2 批 17 条：UI 写路由闸、有界映射、可中断退避、URL 规范化）
 
 - **A2a（9 条·用户/配置面）**：`U-1` 包内 `cordis.patch.yml` 的 `worker:` 子块补 `maintenanceEnabled` / `maintenanceOutDir`（与 README 对齐，照模板写不再丢键）；`U-2` `detectMachine` 补 `DESKTOP2` 前缀并把未知主机名统一小写返回（**这是副机永远 idle 的根因之一**：板子按小写归一，大写主机名对不上）；`U-5` 找 team 块的正则容忍可选引号与行尾注释（`- id: 'team'` / `- id: team # 注释` 不再报「未找到」）；`U-6` 签发票据时校验 `verb ∈ upgrade/config-set/restart`（错 verb 不再等副机才 `maint-verb-unknown`）；`U-7` keygen 私钥写盘 `mode 0o600` + chmod 兜底；`U-9` `sign --payload` 读文件/JSON 解析失败给友好提示并 `return 2`（不抛栈迹）；`U-10` `maskText` 打码阈值 6 → 1（4 位测试 token 不再原样泄露）；`S-15` `UI_WRITE_PATHS` 从 3 条补到 16 条（写型路由的 GET 被 uiGuard 以 `method` 提前 403，`ui-guard-smoke` 同步改 `403 || 405`）；`S-17` instanceId 随机后缀 `randomBytes(2) → (4)`。
