@@ -63,6 +63,7 @@ const required = [
   'scripts/maint-ticket.mjs',
   'scripts/enable-maint-write.ps1',
   'scripts/enable-maint-write.cmd',
+  'test/worker/enable-maint-write-script.test.mjs',
   'scripts/remove-old-package.ps1',
   'lib/worker/maint-verbs.js',
   'lib/worker/tar.js',

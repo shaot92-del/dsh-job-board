@@ -91,6 +91,14 @@ if ($workerIdx -lt 0) {
 $workerIndent = ($lines[$workerIdx] -replace '^(\s*).*$', '$1').Length
 $childIndent = $workerIndent + 2
 
+# 内联空 map（worker: {}）必须展开成 worker: 空块，否则子键挂不到 worker 上，
+# 标准 YAML 解析会失败（DSH 起不来）。v2.7.0 二次复审 P1。
+$inlineEmptyMap = $lines[$workerIdx] -match '^\s*worker:\s*\{\}\s*$'
+if ($inlineEmptyMap) {
+  $lines[$workerIdx] = ($lines[$workerIdx] -replace '\{\}\s*$', '').TrimEnd()
+  Say "worker: {} 为内联空 map，已展开为 worker: 空块再插入子键"
+}
+
 # worker 子块结束行
 $end = $lines.Count
 for ($i = $workerIdx + 1; $i -lt $lines.Count; $i++) {
@@ -159,6 +167,7 @@ $check = @(Get-Content $patch)
 $wIdx = -1
 for ($i = 0; $i -lt $check.Count; $i++) { if ($check[$i] -match '^\s*worker:\s*(\{\})?\s*$' -and $i -gt $teamIdx) { $wIdx = $i; break } }
 $problems = @()
+if ($wIdx -ge 0 -and $check[$wIdx] -match '\{\}') { $problems += "worker: {} 仍是内联空 map，子键挂不到 worker 上" }
 foreach ($k in $wanted.Keys) {
   $hit = $false
   for ($i = $wIdx + 1; $i -lt $check.Count; $i++) {
