@@ -1,3 +1,11 @@
+## v2.6.28 — 2026-11-20（A1 批 18 条：盘古审计 P2/P3 高值项落地）
+
+- **命令与网络面（10 条）**：`S-1` 提示词闸门的 base64 检测改用归一化文本（零宽分隔不再漏检）；`S-2` `normalizePrompt` 补行首 `.\` 折叠（`.\dsh\profiles` 不再绕过 dsh-home 规则）；`S-4` `sh_list` 改 `lstatSync`（不跟随符号链接读白名单外文件）；`S-6` 拒绝消息不再拼根目录全路径（只报条数）；`S-7` 内联脚本 64 KiB 上限（`inline-too-large`）；`S-8` agent host 错误先脱敏再进 reason；`S-10` `maskText` 先替 secret 再替家目录（secret 含家目录子串时不再漏）；`S-13` restart 的 `dshExePath` 走 PowerShell 单引号加倍转义（**复核后改成转义而非黑名单**——黑名单会误伤中文用户名路径）；`S-16` `readTextCapped` 的无 `getReader` 回退也走流式限长；`S-18` 板子对 `mode=maint` 的 goal 不做 `_txt` 脱敏（写 payload 含 token 类子串时 hash 不再被改坏）。
+- **正确性（8 条）**：`C-1` 绝对路径判定统一到 `config.isAbsolutePath`；`C-2` claim 遇到非 409/400/404 时累加失败并返回 `backoffMs`；`C-8` 文件锁 stale 判定加 pid 探活（`EPERM` 按存活处理），进程挂起不再被误抢；`C-9` 锁失败返回值加 `kind` 区分 `lock-error`/`fn-error`/`lock-timeout`；`C-10` 子进程已退出时 timer 回调直接返回（不再记超时）；`C-12` **复核后保留** `maintAuthKeyFile`——它是 `ensureMaintKeyPair()` 的读取点，不是死键，并加测试钉住；`C-13` `passEnv` 补归一化并接进 `buildChildEnv`；`C-18` 审批前校验任务 `mode=agent` 且仍在 `queued`。
+- **测试**：新增 `test/worker/shell.test.mjs`(61) 与 `test/worker/state-file.test.mjs`(73)，另有 10 个既有测试文件补用例；`npm test` **390/390**。
+- 本批由 IDE agent（码道 CodeArts Agent / OpenPangu-2.1-Pro）在一次性副本实现、主控逐条复核合并：改了 2 处判断（C-12 保留、S-13 改转义）、补了 3 条断言。
+- 门禁：check-text PASSED（121 文件）、plugcheck `tools=18 routes=25`、client-render-smoke 18/18、pack-check 98 文件 1,447,956 B。
+- 版本同步 2.6.28。
 ## v2.6.27 — 2026-11-20（盘古全量审计修复批：3 个 P0 + 安全/正确性 P1）
 
 - **P0 面板维护通道可达**：派工弹窗新增「类型」选择（agent / exec / maint）与票据输入框，

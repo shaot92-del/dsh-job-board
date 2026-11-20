@@ -38,3 +38,32 @@ test('normalizeConfig: 公钥也接受扁平单字符串，脏值被丢弃', () 
   const bad = normalizeConfig({ machine: 'gt14', maintAuthPublicKeys: ['不是base64!!', 'ok+base64='] }).config;
   assert.deepEqual(bad.maintAuthPublicKeys, ['ok+base64=']);
 });
+// v2.6.28（复核 C-12）：maintAuthKeyFile **不是死键**——lib/index.js 的 ensureMaintKeyPair()
+// 读 cfg.maintAuthKeyFile 决定密钥落盘位置；删掉会让配置覆盖静默失效。这里钉住该键存在。
+test('normalizeConfig: maintAuthKeyFile 保留（ensureMaintKeyPair 依赖它）', () => {
+  const { config } = normalizeConfig({ machine: 'gt14', maintAuthKeyFile: 'C:\\path\\to\\key.json' });
+  assert.equal(config.maintAuthKeyFile, 'C:\\path\\to\\key.json', 'maintAuthKeyFile 必须保留');
+});
+
+// v2.6.28（安全审计 C-13）：passEnv 未进 normalizeConfig，buildChildEnv 恒收 []。
+// 补归一化——passEnv 应从 worker 子块或扁平键读出。
+test('normalizeConfig: passEnv 从 worker 子块读出', () => {
+  const { config } = normalizeConfig({
+    machine: 'gt14',
+    worker: { passEnv: ['HTTP_PROXY', 'MY_VAR'] },
+  });
+  assert.deepEqual(config.passEnv, ['HTTP_PROXY', 'MY_VAR']);
+});
+
+test('normalizeConfig: passEnv 从扁平键读出', () => {
+  const { config } = normalizeConfig({
+    machine: 'gt14',
+    passEnv: ['CUSTOM_TOKEN', 'ANOTHER_VAR'],
+  });
+  assert.deepEqual(config.passEnv, ['CUSTOM_TOKEN', 'ANOTHER_VAR']);
+});
+
+test('normalizeConfig: passEnv 缺省为空数组', () => {
+  const { config } = normalizeConfig({ machine: 'gt14' });
+  assert.deepEqual(config.passEnv, []);
+});

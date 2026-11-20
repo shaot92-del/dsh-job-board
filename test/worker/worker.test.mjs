@@ -508,3 +508,15 @@ test('终态 beat 409：停止心跳并 abort 本地执行，不累计失败', a
   const beats = boards.calls.filter((c) => c.kind === 'beat').length;
   assert.ok(beats <= 2, '终态后不应继续心跳 beats=' + beats);
 });
+// v2.6.28（安全审计 C-2）：claimOne 非 409/400/404 错误只断循环不 backoff——
+// 看板持续 500 时 worker 以 2s interval 打 claim，不退避。
+test('claim 非 409/400/404 错误 → tick 返回 backoffMs（与 snapshot 失败同路径）', async () => {
+  const boards = makeBoard({ t1: task('t1') }, { claimError500: true });
+  // 让 claim 返回 500
+  boards.claim = async (body) => { boards.calls.push({ kind: 'claim', ...body }); return { ok: false, status: 500, error: 'server error', network: true }; };
+  const worker = makeWorker(boards, async () => doneOutcome(), { backoffMs: 200, maxBackoffMs: 1000 });
+  const res = await worker.tick();
+  assert.equal(res.claimed.length, 0);
+  assert.ok(res.backoffMs > 0, `claim 500 应返回 backoffMs，got ${res.backoffMs}`);
+  await worker.stop({ waitMs: 100 });
+});

@@ -101,7 +101,7 @@ test('LEVELS 常量顺序：debug→info→warn→error（level 过滤依赖它�
 });
 
 test('createLogger：extra 里的路径要打码（v2.6.16 修复：序列化前打码，反斜杠转义不再漏）', () => {
-  const log = createLogger({ home: 'C:\\Users\\Alice', secrets: ['C:\\Users\\Alice\\key-123456'] });
+  const log = createLogger({ home: 'C:\\Users\\Alice' });
   log.info('x', { cwd: 'C:\\Users\\Alice\\proj', nested: { p: 'C:\\Users\\Alice\\a.txt' } });
   const [entry] = log.recent();
   assert.ok(!entry.extra.includes('Alice'), entry.extra);
@@ -194,10 +194,15 @@ test('createLogger：普通对象（toString 是默认的）仍按 JSON 输出',
   log.info('plain', { a: 1 });
   assert.equal(log.recent()[0].extra, '{"a":1}');
 });
-test('maskText：secret 里含家目录子串时也要整体打码（v2.6.28 S-10）', () => {
-  const log = createLogger({ home: 'C:\\Users\\Alice', secrets: ['C:\\Users\\Alice\\key-123456'] });
-  log.info('token C:\\Users\\Alice\\key-123456');
-  const text = log.recent(1)[0].text;
-  assert.ok(!text.includes('key-123456'), 'secret 整串必须消失');
-  assert.ok(!text.includes('C:\\Users\\Alice'), '家目录也必须打码');
+// v2.6.28（安全审计 S-10）：secret 替换必须先于 home 替换。旧顺序先做 home
+// 替换，secret 含家目录子串时该子串已变 %USERPROFILE%，split(secret) 匹配不上，
+// 该 secret 原样漏出。先 secret 后 home 保证两种形态都能打码。
+test('maskText：secret 含家目录子串时仍被打码（secret 先于 home 替换）', () => {
+  const home = 'C:\\Users\\Alice';
+  const secret = 'C:\\Users\\Alice\\token';
+  const out = maskText(`use ${secret} here`, { secrets: [secret], home });
+  assert.equal(out.includes(secret), false, 'secret 原样漏出');
+  assert.equal(out.includes('***'), true, 'secret 应被打码为 ***');
+  // home 是 secret 的前缀，secret 被替换后 home 子串也一并消失
+  assert.equal(out.includes(home), false, 'home 子串也不应原样出现');
 });

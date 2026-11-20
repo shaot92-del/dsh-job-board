@@ -355,3 +355,24 @@ test('checkAgentPrompt：URL-safe base64（-/_）也算长载荷', () => {
   assert.equal(r.ok, false);
   assert.equal(r.rule, 'base64-blob');
 });
+// v2.6.28（安全审计 S-1）：base64Blob 用归一化文本判——零宽分隔的 base64 原文
+// 不命中长 run 规则，normalizePrompt 会去零宽但 base64Blob 没用它就漏检。
+test('checkAgentPrompt：零宽分隔的 base64 大块必须被归一化后检出', () => {
+  // 用 maxChars=10000 避免原文长度超默认 4000 触发 too-long（零宽使原文翻倍）
+  const gate = normalizeAgentPromptGate({ maxChars: 10000 }).gate;
+  // 2049 个 base64 字符，每两个之间插一个零宽空格 U+200B
+  const b64 = 'A'.repeat(2049);
+  const zeroWidthSeparated = b64.split('').join('\u200b');
+  const r = checkAgentPrompt(`x=${zeroWidthSeparated}`, gate);
+  assert.equal(r.ok, false, '零宽分隔的 base64 必须被检出');
+  assert.equal(r.rule, 'base64-blob');
+});
+
+// v2.6.28（安全审计 S-2）：normalizePrompt 补行首 `.\` 折叠——旧正则只匹配
+// `\(\.\)` 与 `\(\.)$`，行首 `.\dsh\profiles`（无前导 `\`）不被折叠。
+// 折叠后 `.\` 被移除，文本变为 `dsh\profiles\board-tokens`。
+test('normalizePrompt：行首 `.\\` 被折叠移除', () => {
+  const normalized = normalizePrompt('.\\dsh\\profiles\\board-tokens');
+  // 行首 `.\` 被折叠掉后，文本应以 `dsh\profiles` 开头（无前导 `.\` 也无前导 `\`）
+  assert.equal(normalized.startsWith('dsh\\profiles'), true, `行首 .\\ 应被折叠掉，got: ${JSON.stringify(normalized)}`);
+});

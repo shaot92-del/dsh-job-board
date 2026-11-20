@@ -408,14 +408,36 @@ wt('note 上板前必须脱敏：stderr 里复述 token / 家目录不能原样�
   assert.ok(out.note.includes('%USERPROFILE%') || out.note.includes('***'), '脱敏要留下痕迹');
 });
 
-wt('内联脚本超长：64 KB 上限直接 blocked（v2.6.28 S-7）', async () => {
-  const runner = createExecRunner({
-    config: { ...baseConfig, allowInline: true },
-    spawnImpl: spawnReturning(fakeChild()),
-  });
-  const big = 'x'.repeat(64 * 1024 + 1);
-  const r = await runner.run({ inline: big }, { taskId: 't-big' });
-  assert.equal(r.status, 'blocked');
-  assert.equal(r.reason, 'inline-too-large');
-  assert.match(r.note, /inline-too-large/);
+// v2.6.28（安全审计 S-7）：内联脚本 spec.inline 无长度上限，可写满磁盘。
+wt('run：内联脚本超过 64KB 上限 → blocked/inline-too-large', async () => {
+  const runner = createExecRunner({ config: { ...baseConfig, allowInline: true }, spawnImpl: spawnReturning(fakeChild()) });
+  const hugeInline = 'x'.repeat(64 * 1024 + 1);
+  const out = await runner.run({ inline: hugeInline });
+  assert.equal(out.status, 'blocked');
+  assert.equal(out.reason, 'inline-too-large');
+  assert.match(out.note, /reason=inline-too-large/);
+});
+
+// v2.6.28（安全审计 C-1）：isAbsolutePath 统一用 config.js 的 helper——
+// `//server/share` 在 config 侧判绝对路径、旧闸门侧判 not-absolute，两套判定不一致。
+test('checkScriptAccess：//server/share 判绝对路径（与 config.isAbsolutePath 同源）', () => {
+  const r = checkScriptAccess('//server/share/foo.ps1', { allowlist: [allowedDir] });
+  // 新实现：isAbsolutePath 认 // → 不是 not-absolute；UNC 检查只认 \\ → // 不拦；
+  // statSync 失败 → missing。关键是 reason 不再是 not-absolute。
+  assert.notEqual(r.reason, 'not-absolute', `//server/share 不应被判 not-absolute（reason=${r.reason}）`);
+});
+
+// v2.6.28（安全审计 C-10）：exit 后 250ms drain 窗口内若 timeoutMs 更小，
+// 已退出进程被记 timeout。drain 优先于 timeout。
+wt('run：exit 后 drain 优先于 timeout（timeoutMs < EXIT_DRAIN_MS 不误记 timeout）', async () => {
+  // 子进程立即 exit（autoClose=false，手动 emit exit），不 emit close
+  const child = fakeChild({ autoClose: false, closeOnKill: false });
+  const runner = createExecRunner({ config: baseConfig, spawnImpl: spawnReturning(child) });
+  // timeoutMs=10 < EXIT_DRAIN_MS=250：旧实现 timer 先 fire 记 timeout
+  const p = runner.run({ scriptPath: insideScript, timeoutMs: 10 });
+  // 立即 emit exit（模拟子进程在 timeoutMs 之前退出）
+  setImmediate(() => child.emit('exit', 0, null));
+  const out = await p;
+  assert.equal(out.timedOut, false, 'exit 后不应记 timeout');
+  assert.equal(out.status, 'done');
 });

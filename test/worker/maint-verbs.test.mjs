@@ -466,7 +466,6 @@ test('restart：成功时传给 spawnImpl 的脚本含校验 + Stop + Start', as
   assert.equal(spawned.opts.stdio, 'ignore');
   // script 含校验（Test-Path dshExe）+ Stop-Process + Start-Process
   const script = spawned.args[4];
-  // v2.6.28（S-13）：改用 -LiteralPath / -FilePath，路径按 PowerShell 单引号规则转义
   assert.match(script, /Test-Path -LiteralPath '.*dsh\.exe'/, '脚本含 dshExe 校验');
   assert.match(script, /Stop-Process -Id \d+ -Force/, '脚本含 Stop-Process');
   assert.match(script, /Start-Process -FilePath '.*dsh\.exe'/, '脚本含 Start-Process');
@@ -531,6 +530,35 @@ test('WRITE_VERBS 是冻结常量', () => {
   assert.throws(() => WRITE_VERBS.push('exec'), TypeError);
 });
 
+// v2.6.28（安全审计 S-13）：dshExePath 直接插进 PowerShell 单引号串，路径里一个 ' 就能闭合引号。
+// 用「单引号加倍」转义（而不是黑名单），既封住注入、又不误伤中文/Unicode 用户名路径。
+test('restart：dshExePath 含单引号 → 单引号加倍转义后仍可执行（注入被封）', async () => {
+  const dir = tmpDir();
+  const exe = dir + "\\dsh'q.exe";
+  fs.writeFileSync(exe, 'x');
+  let spawned = null;
+  const v = makeVerbs({
+    maintenanceAllowRestart: true,
+    dshExePath: exe,
+    pwshPath: 'C:\\pwsh.exe',
+  }, { spawnImpl: (cmd, args) => { spawned = { cmd, args }; } });
+  const r = await v.run('restart', {}, { taskId: 't1' });
+  assert.equal(r.ok, true);
+  const script = spawned.args[4];
+  assert.ok(script.includes("dsh''q.exe"), '单引号被加倍转义');
+  assert.ok(!script.includes("'dsh'q.exe'"), '未出现可闭合的原始单引号串');
+  assert.match(script, /Test-Path -LiteralPath/);
+});
+
+test('restart：dshExePath 含分号 → 不存在的路径仍拦住', async () => {
+  const v = makeVerbs({
+    maintenanceAllowRestart: true,
+    dshExePath: 'C:\\dsh.exe; rm -rf /',
+  });
+  const r = await v.run('restart', {}, { taskId: 't1' });
+  assert.equal(r.reason, MAINT_VERB_REASONS.RESTART_PATH);
+});
+
 // ── 端到端：票据签发 → 真实 runner（含 nonce 落盘）→ 真实 maint-verbs 写盘 ──
 test('端到端：签发票据 → runner 消费 → maint-verbs 真写 config-set', async () => {
   const { keygen, signGoal } = await import('../../scripts/maint-ticket.mjs');
@@ -580,22 +608,4 @@ test('端到端：签发票据 → runner 消费 → maint-verbs 真写 config-s
   // nonce 已落盘（重放防线），且票据本身没进 note / payload
   assert.ok(fs.existsSync(path.join(dir, 'maint-used-nonces.json')));
   assert.doesNotMatch(String(r.note || ''), /ticket=/);
-});
-test('restart：dshExePath 含单引号时按 PowerShell 规则转义（v2.6.28 S-13）', async () => {
-  const dshExe = tmpDir() + "\\it's dsh.exe";
-  fs.writeFileSync(dshExe, 'x');
-  let spawned = null;
-  const v = makeVerbs({
-    maintenanceAllowRestart: true,
-    dshExePath: dshExe,
-    pwshPath: 'C:\\pwsh.exe',
-  }, {
-    spawnImpl: (cmd, args, opts) => { spawned = { cmd, args, opts }; },
-  });
-  const r = await v.run('restart', { delayMs: 3000 }, { taskId: 't-quote' });
-  assert.equal(r.ok, true);
-  const script = spawned.args[4];
-  // 单引号必须成对转义，不能出现孤立的 ' 把引号闭合
-  assert.ok(script.includes("it''s dsh.exe"), '单引号已转义成两个单引号');
-  assert.doesNotMatch(script, /it's dsh\.exe/, '不得出现未转义形态');
 });

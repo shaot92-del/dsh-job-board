@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import { apply } from '../../lib/worker/index.js';
 
 function makeCtx() {
@@ -167,4 +168,59 @@ test('apply：有 actx.effect 时 lift 挂到会话 ctx，不进全局 disposers
   handlers['agent/created']({ agent: { id: 'worker-eff', ctx: agent.actx } });
   assert.equal(effects.length, 1, '应当用 actx.effect 托管 lift');
   assert.equal(typeof effects[0](), 'function');
+});
+// v2.6.28（安全审计 C-18）：approve 动作不校验任务是否 agent 模式/已终态。
+// 补两条校验：mode 必须是 agent，status 必须是 queued。
+test('apply：worker_control approve 非 agent 模式任务 → 拒绝', async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ tasks: { t1: { id: 't1', mode: 'exec', status: 'queued', goal: 'do something' } } }));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  try {
+    const { ctx, defs } = makeCtx();
+    apply(ctx, {
+      machine: 'PC2',
+      workerMode: 'off',
+      boardUrl: `http://127.0.0.1:${port}`,
+      agentEnabled: true,
+      agentPreset: 'default',
+      agentCwdRoot: os.homedir(),
+      stateDir: path.join(os.tmpdir(), 'dsh-c18-test'),
+    });
+    const wc = defs['worker_control'];
+    const r = await wc.execute({ action: 'approve', taskId: 't1' });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /不是 agent 模式/);
+  } finally {
+    server.close();
+  }
+});
+
+test('apply：worker_control approve 非 queued 状态任务 → 拒绝', async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ tasks: { t1: { id: 't1', mode: 'agent', status: 'done', goal: 'do something' } } }));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  try {
+    const { ctx, defs } = makeCtx();
+    apply(ctx, {
+      machine: 'PC2',
+      workerMode: 'off',
+      boardUrl: `http://127.0.0.1:${port}`,
+      agentEnabled: true,
+      agentPreset: 'default',
+      agentCwdRoot: os.homedir(),
+      stateDir: path.join(os.tmpdir(), 'dsh-c18-test2'),
+    });
+    const wc = defs['worker_control'];
+    const r = await wc.execute({ action: 'approve', taskId: 't1' });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /已不是 queued 状态/);
+  } finally {
+    server.close();
+  }
 });

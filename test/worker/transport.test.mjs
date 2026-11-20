@@ -101,6 +101,38 @@ test('非 JSON 响应：ok:false, error 含「非 JSON 响应」', async () => {
   await fb.close();
 });
 
+// v2.6.28（安全审计 S-16）：readTextCapped 的 res.text() fallback 先读全量再判大小。
+// 这里用注入的 fetchImpl 返回无 getReader 的 body 但有 asyncIterator 的响应，
+// 验证 fallback 走流式分块读并判上限，不把整个正文读进内存。
+test('响应过大（fallback 无 getReader、有 asyncIterator、流式超限）→ ok:false, error 含「响应过大」', async () => {
+  const chunk = 'x'.repeat(256 * 1024);
+  const totalBytes = 9 * 1024 * 1024;
+  let produced = 0;
+  const asyncIterableBody = {
+    [Symbol.asyncIterator]() {
+      return {
+        next() {
+          if (produced >= totalBytes) return Promise.resolve({ done: true });
+          const take = Math.min(chunk.length, totalBytes - produced);
+          produced += take;
+          return Promise.resolve({ done: false, value: chunk.slice(0, take) });
+        },
+      };
+    },
+  };
+  const fakeFetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    body: asyncIterableBody,
+    text: async () => { throw new Error('text() should not be called when asyncIterator is available'); },
+  });
+  const t = createHttpTransport({ baseUrl: 'http://127.0.0.1:1', fetchImpl: fakeFetch });
+  const r = await t.snapshot();
+  assert.equal(r.ok, false);
+  assert.match(r.error, /响应过大/);
+});
+
 test('204 空正文：snapshot 判失败，不再当「板子正常」（v2.6.13）', async () => {
   const fb = await startFakeBoard((req, res) => {
     res.writeHead(204, { connection: 'close' });

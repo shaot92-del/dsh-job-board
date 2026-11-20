@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
 import { createAgentRunner, createDshAgentHost, makeSessionId, parseModelRef, MAX_SESSION_ID } from '../../lib/worker/agent-runner.js';
 
 /** 假 host：把 idle 挂起，由测试决定何时 resolve / cancel。 */
@@ -528,17 +529,17 @@ test('textFromEvent：只有 reasoning 块时返回空串', () => {
 test('textFromEvent：兼容顶层 blocks 老形状', () => {
   assert.equal(textFromEvent({ type: 'assistant/message', blocks: [{ type: 'text', text: '老形状' }] }), '老形状');
 });
-
-test('available：host.available() 抛错时错误串要脱敏（v2.6.28 S-8）', () => {
+// v2.6.28（安全审计 S-8）：host.available() 的 err.message 原样进 reason 再进 note
+// 未脱敏——DSH 内部路径/凭证可能经此上板。
+test('available：host.available() 抛错时 err.message 经 noteMask 脱敏', () => {
   const home = os.homedir();
-  const host = {
-    available() {
-      throw new Error(`boom ${home}\\secret-token-123`);
-    },
-  };
-  const runner = createAgentRunner({ host, config: withAgent({ token: 'secret-token-123' }) });
+  const { host } = makeFakeHost({});
+  // 让 host.available 抛错，err.message 含家目录路径
+  host.available = () => { throw new Error(`path ${home}\\secret not found`); };
+  const runner = createAgentRunner({ host, config: withAgent() });
   const r = runner.available();
   assert.equal(r.ok, false);
-  assert.match(r.reason, /^host-error:/);
-  assert.ok(!r.reason.includes('secret-token-123'), 'token 不能出现在 reason 里');
+  assert.equal(r.reason.startsWith('host-error'), true);
+  // err.message 里的家目录必须被打码
+  assert.equal(r.reason.includes(home), false, '家目录不能出现在 reason 里');
 });

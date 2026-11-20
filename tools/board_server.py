@@ -393,12 +393,18 @@ def do_claim(body: dict) -> tuple[int, dict]:
 def do_create(body: dict) -> tuple[int, dict]:
     """建一条板子任务（主控对话自动派工时用）。"""
     task_id = (body.get("task_id") or "").strip()
-    goal = _txt((body.get("goal") or "").strip(), 300)
+    # v2.6.28（安全审计 S-18）：do_create 对 goal 走 _txt redact ⇒ 写 payload 含 token
+    # 类子串被改坏、hash 不符。maint 的 payload 用不 redact 的独立字段存储/校验。
+    # goal 在 mode=maint 时是写 payload（JSON），与 maint_ticket 同处理——不走 redact。
+    task_mode = (body.get("mode") or "").strip()[:10]
+    if task_mode == "maint":
+        goal = (body.get("goal") or "").strip()[:300]
+    else:
+        goal = _txt((body.get("goal") or "").strip(), 300)
     machine = (body.get("machine") or "").strip()
     title = (body.get("title") or "").strip()[:120]
     note = _txt((body.get("note") or "").strip(), 500)
     dispatch = (body.get("dispatch") or "").strip()[:20]
-    task_mode = (body.get("mode") or "").strip()[:10]
     workspace = (body.get("workspace") or "").strip()[:300]
     model = str(body.get("model") or "").strip()[:160]
     # v2.6.20：维护写票据走**独立字段**。goal 有 300 字硬上限，而一张 JSON 票据
