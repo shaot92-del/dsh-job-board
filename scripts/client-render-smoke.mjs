@@ -248,6 +248,18 @@ check('派工弹窗有类型选择器（agent/exec/maint）', RAW.includes("'类
 check('maint 模式有票据输入框', RAW.includes("placeholder: 'ticket= 后面那串") && RAW.includes('setTicket(e.target.value)'), 'ticket textarea')
 check('建单请求会带 maint_ticket', RAW.includes("maint_ticket: taskMode === 'maint'"), 'doDispatch maint_ticket')
 check('写动词缺票时前端拦下并提示', RAW.includes('写动词需要票据'), 'guard')
+// v2.6.29（U-4）：worker 状态小卡 + drain/resume —— 三条结构断言。
+check('worker 卡存在（数据源 /worker-status）', RAW.includes('dsb-worker-card') && RAW.includes("API + '/worker-status'"), 'worker card')
+check(
+  'worker 卡有 drain / resume 两个按钮',
+  RAW.includes('dsb-worker-drain') && RAW.includes('dsb-worker-resume') && RAW.includes("workerControl('drain')") && RAW.includes("workerControl('resume')"),
+  'drain/resume buttons',
+)
+check(
+  'enabled=false 时整卡不渲染（workerOn 守卫）',
+  RAW.includes('const workerOn = !!(workerStat && workerStat.ok !== false && workerStat.enabled)') && /workerOn\s*\?\s*h\(/.test(RAW),
+  'workerOn guard',
+)
 
 check('窄屏折叠样式存在（@media ≤980px + dsb-sub 让位）', RAW.includes('@media (max-width:980px)') && RAW.includes('.dsb-head .dsb-sub{display:none}') && RAW.includes('@media (max-width:1240px)'), 'media queries')
 

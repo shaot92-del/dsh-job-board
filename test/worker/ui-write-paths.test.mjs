@@ -38,6 +38,8 @@ const WRITE_PATHS = [
   '/api/board/ui/caps-apply',
   '/api/board/ui/stress-test',
   '/api/board/ui/stress-cancel',
+  '/api/board/ui/config-diff',
+  '/api/board/ui/worker-control',
 ];
 
 test('UI_WRITE_PATHS：清单里每个路径 GET 返回 403 且 why=method（既有语义）', async () => {

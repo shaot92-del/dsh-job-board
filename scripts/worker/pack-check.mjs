@@ -61,6 +61,7 @@ const required = [
   'scripts/worker-merge-smoke.mjs',
   'scripts/client-render-smoke.mjs',
   'scripts/maint-ticket.mjs',
+  'scripts/remove-old-package.ps1',
   'lib/worker/maint-verbs.js',
   'lib/worker/tar.js',
   'test/worker/maint-verbs.test.mjs',

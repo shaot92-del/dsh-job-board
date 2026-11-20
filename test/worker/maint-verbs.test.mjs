@@ -309,6 +309,42 @@ test('config-set：默认 dryRun 不写盘，返回将改内容', async () => {
   assert.equal(backup.length, 0, 'dryRun 不产备份');
 });
 
+// v2.6.29（U-3）：dryRun 预览要给出结构化 changesList（只列实际会变的键）。
+test('config-set：dryRun 返回 changesList（key/from/to，只列实际变化）', async () => {
+  const profileDir = tmpDir();
+  fs.writeFileSync(path.join(profileDir, 'cordis.patch.yml'), samplePatch(), 'utf8');
+  const v = makeVerbs({ profileDir });
+  // workerMode 已在 patch 里（'off'）；shellTimeoutMs 也已在（120000）——后者不该出现在清单里。
+  const r = await v.run('config-set', { set: { workerMode: 'on', shellTimeoutMs: 120000 } }, { taskId: 't1' });
+  assert.equal(r.ok, true);
+  assert.equal(r.dryRun, true);
+  assert.deepEqual(r.changesList, [{ key: 'workerMode', from: 'off', to: 'on' }]);
+  assert.match(r.changes, /workerMode='on'/);
+});
+
+test('config-set：dryRun 无变化 → changesList 为空数组', async () => {
+  const profileDir = tmpDir();
+  fs.writeFileSync(path.join(profileDir, 'cordis.patch.yml'), samplePatch(), 'utf8');
+  const v = makeVerbs({ profileDir });
+  const r = await v.run('config-set', { set: { workerMode: 'off' } }, { taskId: 't1' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.changesList, []);
+  assert.match(r.note, /无变化/);
+});
+
+test('config-set：dryRun 新增键 → from=null，to 为新值', async () => {
+  const profileDir = tmpDir();
+  fs.writeFileSync(path.join(profileDir, 'cordis.patch.yml'), samplePatch(), 'utf8');
+  const v = makeVerbs({ profileDir });
+  // allowAllRoots 不在 samplePatch 里；agentEnabled 在 worker: 子块里（false）。
+  const r = await v.run('config-set', { set: { allowAllRoots: true, agentEnabled: true } }, { taskId: 't1' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.changesList, [
+    { key: 'allowAllRoots', from: null, to: true },
+    { key: 'agentEnabled', from: false, to: true },
+  ]);
+});
+
 test('config-set：显式 apply（dryRun:false）写盘 + 备份 + 只动 team 行', async () => {
   const profileDir = tmpDir();
   const patchFile = path.join(profileDir, 'cordis.patch.yml');
