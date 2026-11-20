@@ -15,6 +15,7 @@ import {
   MAINT_VERB_REASONS,
   parseWriteGoal,
   createMaintVerbs,
+  formatNumber,
 } from '../../lib/worker/maint-verbs.js';
 import { normalizeAgentAllowlist } from '../../lib/worker/agent-gate.js';
 
@@ -424,6 +425,39 @@ test('config-set：无 worker: 子块时自动插入', async () => {
   const newText = fs.readFileSync(patchFile, 'utf8');
   assert.match(newText, /worker:/, '自动插入 worker: 子块');
   assert.match(newText, /        agentEnabled: true/);
+});
+
+// v2.7.0（安全审计 C-17）：数字型配置值统一格式。
+test('C-17：formatNumber 整数不带前导零、小数保留原值', () => {
+  // '020' 在 JS 里就是数字 20（前导零不会被保留），写进 YAML 必须是 20。
+  assert.equal(formatNumber(Number('020')), '20');
+  assert.equal(formatNumber(20), '20');
+  assert.equal(formatNumber(0), '0');
+  assert.equal(formatNumber(20.0), '20');
+  assert.equal(formatNumber(20.5), '20.5');
+});
+
+test('C-17：formatNumber 拒绝 NaN / Infinity / 非数字', () => {
+  assert.equal(formatNumber(NaN), null);
+  assert.equal(formatNumber(Infinity), null);
+  assert.equal(formatNumber(-Infinity), null);
+  assert.equal(formatNumber('20'), null);
+  assert.equal(formatNumber(1e999), null);
+});
+
+test('C-17：超界数字（Infinity）→ maint-config-invalid，不写 Infinity', async () => {
+  const v = makeConfigVerbs(samplePatch(), {});
+  // JSON 里 1e999 解析成 Infinity（Number.isFinite=false）
+  const r = await v.run('config-set', { set: { shellTimeoutMs: 1e999 } }, { taskId: 't1' });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, MAINT_VERB_REASONS.CONFIG_INVALID);
+  assert.match(r.note, /shellTimeoutMs 值类型不合法/);
+});
+
+test('C-17：字符串数字 → maint-config-invalid（数字键不再接受字符串）', async () => {
+  const v = makeConfigVerbs(samplePatch(), {});
+  const r = await v.run('config-set', { set: { agentBudgetMaxPerDay: '020' } }, { taskId: 't1' });
+  assert.equal(r.reason, MAINT_VERB_REASONS.CONFIG_INVALID);
 });
 
 // v2.6.28（U-5）：找 team 块的正则只认 `- id: team`，遇到单引号 / 行尾注释就报

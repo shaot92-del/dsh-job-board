@@ -4,7 +4,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createAgentApprovals, promptFingerprint } from '../../lib/worker/agent-approval.js';
+import crypto from 'node:crypto';
+import {
+  createAgentApprovals,
+  promptFingerprint,
+  normalizeGoalForFingerprint,
+  FP_HEX_LEN,
+} from '../../lib/worker/agent-approval.js';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-approval-'));
@@ -105,4 +111,44 @@ test('revoke：tombstone 状态下二次撤销要如实说「还没写进磁盘�
 test('指纹：首尾空白与内部连续空白等价', () => {
   assert.equal(promptFingerprint('写一份报告\n'), promptFingerprint('写一份报告'));
   assert.equal(promptFingerprint('  写  一份  报告  '), promptFingerprint('写 一份 报告'));
+});
+
+// v2.7.0（安全审计 S-9）：指纹 16 → 32 hex（128 bit），并且绑 model/provider。
+test('S-9：指纹是 32 hex（128 bit），同一输入稳定', () => {
+  const a = promptFingerprint('写周报', 'deepseek-v4', 'deepseek');
+  const b = promptFingerprint('写周报', 'deepseek-v4', 'deepseek');
+  assert.equal(a, b);
+  assert.equal(a.length, FP_HEX_LEN);
+  assert.equal(FP_HEX_LEN, 32);
+  assert.match(a, /^[0-9a-f]{32}$/);
+  // 空 model/provider 也参与拼接：与「只绑 goal」的旧口径不同。
+  assert.notEqual(promptFingerprint('写周报'), promptFingerprint('写周报', 'm', 'p'));
+});
+
+test('S-9：旧 16 位记录按前缀命中并升级重写为 128 bit', () => {
+  const dir = tmpDir();
+  const goal = '写周报';
+  const at = 1700000000000;
+  const legacy = crypto.createHash('sha256').update(normalizeGoalForFingerprint(goal), 'utf8').digest('hex').slice(0, 16);
+  fs.writeFileSync(
+    path.join(dir, 'agent-approvals.json'),
+    `${JSON.stringify({ t1: { at, fp: legacy } })}\n`,
+    'utf8',
+  );
+  const approvals = createAgentApprovals({ stateDir: dir, log: quietLog(), now: () => at });
+  const r = approvals.check('t1', goal, 'deepseek-v4', 'deepseek');
+  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.reason, 'approved');
+  // 文件里的记录已升级
+  const raw = JSON.parse(fs.readFileSync(path.join(dir, 'agent-approvals.json'), 'utf8'));
+  assert.equal(raw.t1.fp.length, FP_HEX_LEN);
+  assert.equal(raw.t1.fp, promptFingerprint(goal, 'deepseek-v4', 'deepseek'));
+});
+
+test('S-9：改 model 或 provider 都要 fingerprint-mismatch', () => {
+  const approvals = createAgentApprovals({ stateDir: tmpDir(), log: quietLog() });
+  assert.equal(approvals.record('t3', '写周报', 'm1', 'p1').ok, true);
+  assert.equal(approvals.check('t3', '写周报', 'm1', 'p1').reason, 'approved');
+  assert.equal(approvals.check('t3', '写周报', 'm2', 'p1').reason, 'fingerprint-mismatch');
+  assert.equal(approvals.check('t3', '写周报', 'm1', 'p2').reason, 'fingerprint-mismatch');
 });

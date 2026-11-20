@@ -191,10 +191,12 @@
     },
     {
       "id": "v2618-approval-fingerprint",
-      "status": "open",
+      "status": "fixed",
       "severity": "P2",
       "source": "agent-1",
-      "note": "审批指纹只绑 goal、跨 taskId 迁移；revoke 未连坐"
+      "note": "v2.7.0 S-9：指纹 64→128 bit（FP_HEX_LEN=32）并绑 model/provider；旧 16 位记录按旧算法前缀兼容、命中后就地升级重写。测试见 agent-approval.test.mjs（32hex 稳定 / 旧记录命中并升级 / 改 model 或 provider ⇒ fingerprint-mismatch）",
+      "fixedIn": "B2 (2.7.0)",
+      "updated": "2026-11-20"
     },
     {
       "id": "v2618-ui-local-authz",

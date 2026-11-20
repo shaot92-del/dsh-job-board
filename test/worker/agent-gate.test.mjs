@@ -15,6 +15,7 @@ import {
   normalizeAgentPromptGate,
   normalizeAgentTools,
   normalizePrompt,
+  HARD_MAX_PROMPT_CHARS,
 } from '../../lib/worker/agent-gate.js';
 import { createAgentBudget, budgetDate } from '../../lib/worker/agent-budget.js';
 import { createAgentApprovals, promptFingerprint, APPROVAL_TTL_MS } from '../../lib/worker/agent-approval.js';
@@ -165,7 +166,7 @@ test('promptFingerprint：稳定、按提示词区分、不泄漏原文', () => 
   const a = promptFingerprint('写周报');
   assert.equal(a, promptFingerprint('写周报'));
   assert.notEqual(a, promptFingerprint('写日报'));
-  assert.match(a, /^[0-9a-f]{16}$/);
+  assert.match(a, /^[0-9a-f]{32}$/);
   assert.ok(!a.includes('周报'));
 });
 
@@ -386,4 +387,18 @@ test('normalizeAgentAllowlist：缺 id 的条目自动补 allow-<序号>（v2.6.
   assert.equal(out.entries[0].id, 'allow-1');
   assert.equal(out.entries[0].titlePrefix, '复审');
   assert.equal(out.entries[0].modelPrefix, 'gt14/');
+});
+
+// v2.7.0（安全审计 S-11）：超 256 KiB 的提示词在归一化/正则之前就直接拒。
+// 用未归一化的超大 gate（maxChars 远大于硬上限）证明拦截来自硬上限，而不是配置项。
+test('checkAgentPrompt：超过 256 KiB 硬上限直接 too-long，不进归一化/正则', () => {
+  const gate = { maxChars: 10_000_000, maxBase64Run: 2048, rules: [], invalid: false };
+  const huge = 'x'.repeat(HARD_MAX_PROMPT_CHARS + 1);
+  const r = checkAgentPrompt(huge, gate);
+  assert.equal(r.ok, false);
+  assert.equal(r.rule, 'too-long');
+  assert.match(r.detail, new RegExp(String(HARD_MAX_PROMPT_CHARS)));
+  // 边界内（硬上限内）不会因这条被拒：交给 maxChars/规则继续判。
+  const inside = 'x'.repeat(HARD_MAX_PROMPT_CHARS);
+  assert.notEqual(String(checkAgentPrompt(inside, gate).detail), `${HARD_MAX_PROMPT_CHARS + 1}>${HARD_MAX_PROMPT_CHARS}`);
 });

@@ -76,3 +76,25 @@ test('条目数超上限即失败（压缩炸弹防线）', async () => {
   );
   assert.equal(TAR_LIMITS.MAX_ENTRIES > 0, true);
 });
+
+// v2.7.0（安全审计 S-14）：中段盘符 / UNC 段 / `..` 后接盘符。
+test('拒绝中段盘符条目（a/C:/Windows/x）', async () => {
+  const dir = tmpDir();
+  const tgz = path.join(dir, 'middrive.tgz');
+  await createTarGz(tgz, [{ name: 'a/C:/Windows/evil.txt', data: 'x' }]);
+  await assert.rejects(() => extractTarGz(tgz, path.join(dir, 'out')), /盘符段/);
+});
+
+test('拒绝 UNC 段条目（a/\\\\server\\share\\x）', async () => {
+  const dir = tmpDir();
+  const tgz = path.join(dir, 'unc.tgz');
+  await createTarGz(tgz, [{ name: 'a/\\\\server\\share\\evil.txt', data: 'x' }]);
+  await assert.rejects(() => extractTarGz(tgz, path.join(dir, 'out')), /UNC|绝对化/);
+});
+
+test('拒绝 .. 后接盘符（a/../C:/x）', async () => {
+  const dir = tmpDir();
+  const tgz = path.join(dir, 'dotdotdrive.tgz');
+  await createTarGz(tgz, [{ name: 'a/../C:/evil.txt', data: 'x' }]);
+  await assert.rejects(() => extractTarGz(tgz, path.join(dir, 'out')), /盘符段|可疑路径段/);
+});
