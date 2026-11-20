@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { apply } from '../../lib/worker/index.js';
+import { apply, WORKER_SESSION_DENY } from '../../lib/worker/index.js';
 
 function makeCtx() {
   const handlers = {};
@@ -68,7 +68,7 @@ test('apply：宿主层注册全部工具，agent 会话只注册 worker_status 
 
   assert.deepEqual(agentTools, ['worker_status']);
   assert.equal(restricts.length, 1);
-  assert.deepEqual(restricts[0], { deny: ['worker_control'] });
+  assert.deepEqual(restricts[0], { deny: WORKER_SESSION_DENY });
 });
 
 test('apply：没有 tools.restrict 时停主循环，并在 status 里如实报 agentRestrictBroken', async () => {
@@ -105,7 +105,7 @@ test('apply：agent 层拿到的工具名集合恰为只读的 worker_status', (
   handlers['agent/created']({ agent: { id: 'worker-x', ctx: actx } });
   assert.deepEqual(registered, ['worker_status']);
   assert.equal(registered.includes('worker_control'), false);
-  assert.deepEqual(restricts, [{ deny: ['worker_control'] }]);
+  assert.deepEqual(restricts, [{ deny: WORKER_SESSION_DENY }]);
 });
 
 test('apply：非 worker 会话（操作员自己/子 agent）不注册、不 restrict', () => {
