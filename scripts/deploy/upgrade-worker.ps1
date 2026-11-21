@@ -171,6 +171,26 @@ if ($block -join "`n" -ne ($lines[$teamIdx..$endIdx] -join "`n")) {
 }
 
 # ── 3. 装包 ────────────────────────────────────────────────────────────────
+# 找 DSH 可执行文件（当前进程 → 常见安装位置 → 开始菜单快捷方式）
+function Resolve-DshExe {
+  $proc = Get-Process 'DeepSeek Harness' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($proc -and $proc.Path -and (Test-Path -LiteralPath $proc.Path)) { return $proc.Path }
+  foreach ($c in @(
+      (Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness\DeepSeek Harness.exe'),
+      (Join-Path $env:ProgramFiles 'DeepSeek Harness\DeepSeek Harness.exe'),
+      (Join-Path $env:APPDATA 'DeepSeek Harness\DeepSeek Harness.exe'))) {
+    if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+  }
+  try {
+    $sh = New-Object -ComObject WScript.Shell
+    $dir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+    foreach ($l in @(Get-ChildItem -LiteralPath $dir -Recurse -Filter '*.lnk' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'DeepSeek|Harness' })) {
+      $tp = $sh.CreateShortcut($l.FullName).TargetPath
+      if ($tp -and (Test-Path -LiteralPath $tp)) { return $tp }
+    }
+  } catch { }
+  return ''
+}
 Step 3 ("安装 " + $wantVer + "（当前 " + $before + "）")
 if (-not (Ask '开始装包？')) { Info '已取消'; exit 0 }
 $instArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installer, '-ProfileDir', $ProfileDir, '-Tarball', $Tarball, '-Preset', $Preset, '-GoalPrefix', $GoalPrefix, '-Approval', $Approval, '-BudgetPerDay', "$BudgetPerDay", '-SkipConfig')
@@ -182,7 +202,15 @@ $pw = Get-Command pwsh -ErrorAction SilentlyContinue
 if (-not $pw) { $pw = Get-Command powershell -ErrorAction SilentlyContinue }
 if (-not $pw) { Die '找不到 pwsh / powershell' }
 & $pw.Source @instArgs
-if ($LASTEXITCODE -ne 0) { Die "装包失败（exit=$LASTEXITCODE）；旧目录备份在 <安装目录>.bak-* ，可手工还原" }
+if ($LASTEXITCODE -ne 0) {
+  Warn '装包失败（安装脚本已回滚到旧目录）。'
+  $exeNow = Resolve-DshExe
+  if ($exeNow -and -not (Get-Process 'DeepSeek Harness' -ErrorAction SilentlyContinue)) {
+    Warn ("DSH 已被本次安装停掉，正在帮你重新拉起：{0}" -f $exeNow)
+    Start-Process -LiteralPath $exeNow | Out-Null
+  }
+  Die "装包失败（exit=$LASTEXITCODE）；旧目录备份在 <安装目录>.bak-* ，可手工还原"
+}
 $verFile = Join-Path (Join-Path $ProfileDir 'node_modules\@wfcj\dsh-job-board') 'package.json'
 $instNow = if (Test-Path -LiteralPath $verFile) { (Get-Content -LiteralPath $verFile -Raw | ConvertFrom-Json).version } else { '' }
 if ($instNow -ne $wantVer) { Die ("装完版本不符：磁盘 $instNow / 期望 $wantVer（安装脚本应已回滚，检查 .bak-*）") }

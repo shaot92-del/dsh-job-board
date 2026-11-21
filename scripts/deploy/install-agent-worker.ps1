@@ -34,6 +34,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Say($msg) { Write-Host $msg }
+function Warn($msg) { Write-Host ($msg) -ForegroundColor Yellow }
 function Die($msg) { Write-Host ("ERROR: " + $msg) -ForegroundColor Red; exit 1 }
 
 function Resolve-Profile {
@@ -118,7 +119,7 @@ if (-not $SkipPackage) {
   $running = @(Get-Process 'DeepSeek Harness' -ErrorAction SilentlyContinue)
   if ($running.Count -gt 0) {
     if ($StopDsh) {
-      Say ("检测到 DSH 在运行（pid {0}），先停掉再装（装完由调用方重启）" -f ($running | ForEach-Object { $_.Id } -join ','))
+      Say ("检测到 DSH 在运行（pid {0}），先停掉再装（装完由调用方重启）" -f ((($running | ForEach-Object { $_.Id }) -join ',')))
       $running | Stop-Process -Force -ErrorAction SilentlyContinue
       for ($i = 0; $i -lt 20; $i++) { Start-Sleep -Milliseconds 500; if (-not (Get-Process 'DeepSeek Harness' -ErrorAction SilentlyContinue)) { break } }
     } else {
@@ -177,7 +178,7 @@ if (-not $SkipPackage) {
   $bad = @()
   if ($gotVer -ne $newVer) { $bad += "package.json=$gotVer（期望 $newVer）" }
   if ($gotVerJs -and $gotVerJs -ne $newVer) { $bad += "lib/worker/version.js=$gotVerJs（期望 $newVer）" }
-  if ($gotFiles.Count -ne $srcFiles.Count) { $bad += "文件数=$($gotFiles.Count)（期望 $($srcFiles.Count)）" }
+  if ($gotFiles.Count -ne ($srcFiles.Count + 1)) { $bad += "文件数=$($gotFiles.Count)（期望 $($srcFiles.Count + 1)，含 install-manifest.json）" }
   foreach ($rel in @('lib\index.js','lib\client.js','lib\worker\version.js','install-manifest.json')) {
     if (-not (Test-Path -LiteralPath (Join-Path $instDir $rel))) { $bad += "缺 $rel" }
   }
