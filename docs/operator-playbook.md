@@ -28,7 +28,7 @@
 - id: team
   config:
     boardUrl: 'http://<主控机 IP>:8965'
-    machine: 'gt14'
+    machine: '<this-machine-name>'
     workerMode: 'on'
     approvalMode: 'manual'
     allowlist:
