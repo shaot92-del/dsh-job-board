@@ -190,130 +190,44 @@ if (-not $SkipPackage) {
   Say ("已安装 v{0} → {1}（{2} 文件，复核通过）" -f $gotVer, $instDir, $gotFiles.Count)
   try { [IO.Directory]::Delete($tmp, $true) } catch { }
 }
-if (Test-Path -LiteralPath $tmp) { try { [IO.Directory]::Delete($tmp, $true) } catch { } }
-# ── 2. 改配置（只插入缺失键；worker 必须在 config 内部）────────────────────
+if ($tmp -and (Test-Path -LiteralPath $tmp)) { try { [IO.Directory]::Delete($tmp, $true) } catch { } }
+function Write-CfgLog($msg) {
+  try {
+    $f = "$patchPath.cfglog"
+    [IO.File]::AppendAllText($f, ("[{0}] {1}`n" -f (Get-Date -Format 'HH:mm:ss'), $msg), (New-Object System.Text.UTF8Encoding($false)))
+  } catch { }
+}
+# ── 2. 改配置（交给 patch-config.ps1：位置/内联/去重/只补缺失键都在那里统一处理）──
 if (-not $SkipConfig) {
-  $lines = @(Get-Content -LiteralPath $patchPath)
-  $teamIdx = -1
-  for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*-\s*id:\s*team\s*$') { $teamIdx = $i; break } }
-  if ($teamIdx -lt 0) { Die ("{0} 里没有 `- id: team` 行。先在 profile 里加一行再跑本脚本。" -f $patchPath) }
-  $endIdx = $lines.Count - 1
-  for ($j = $teamIdx + 1; $j -lt $lines.Count; $j++) { if ($lines[$j] -match '^- ') { $endIdx = $j - 1; break } }
+  $modPath = Join-Path $PSScriptRoot 'patch-config.ps1'
+  if (-not (Test-Path -LiteralPath $modPath)) { Die "缺 patch-config.ps1（应与 install-agent-worker.ps1 同目录）" }
+  . $modPath
 
-  $block = @($lines[$teamIdx..$endIdx])
-
-  function Find-Line($pattern) {
-    for ($k = 0; $k -lt $script:block.Count; $k++) { if ($script:block[$k] -match $pattern) { return $k } }
-    return -1
-  }
-
-  $cfgIdx = Find-Line '^(\s+)config:\s*$'
-  if ($cfgIdx -lt 0) { Die "team 块里没有 `config:` 行，无法安全插入 worker 配置（请手工加 config 后重跑）" }
-  $cfgIndent = ([regex]::Match($block[$cfgIdx], '^(\s+)config:')).Groups[1].Value
-
-  # 已有 worker: 吗？位置对不对？
-  $workerIdx = Find-Line '^(\s+)worker:\s*(.*)$'
-  if ($workerIdx -ge 0) {
-    $m = [regex]::Match($block[$workerIdx], '^(\s+)worker:\s*(.*)$')
-    $wIndent = $m.Groups[1].Value
-    $winline = $m.Groups[2].Value
-    if ($wIndent.Length -le $cfgIndent.Length) {
-      # 旧版脚本写错了位置（config 的兄弟键）→ 连子树一起搬进 config，缩进 +2
-      $wEnd = $workerIdx
-      while ($wEnd + 1 -lt $block.Count) {
-        $nx = $block[$wEnd + 1]
-        if ([string]::IsNullOrWhiteSpace($nx)) { break }
-        if ($nx -match '^(\s*)\S' -and $matches[1].Length -le $wIndent.Length) { break }
-        $wEnd++
-      }
-      $sub = @($block[$workerIdx..$wEnd] | ForEach-Object { if ($_.Trim()) { '  ' + $_ } else { $_ } })
-      $before = @(); if ($workerIdx -gt 0) { $before = @($block[0..($workerIdx - 1)]) }
-      $after = @(); if ($wEnd -lt $block.Count - 1) { $after = @($block[($wEnd + 1)..($block.Count - 1)]) }
-      $block = @($before + $after)
-      $cfgIdx = Find-Line '^(\s+)config:\s*$'
-      $block = @($block[0..$cfgIdx]) + $sub + @($block[($cfgIdx + 1)..($block.Count - 1)])
-      Say 'fix   worker 块原来写在 config 同级（旧版脚本的 bug），已搬进 config 内部'
-      $workerIdx = Find-Line '^(\s+)worker:\s*(.*)$'
-    }
-  }
-
-  $want = [ordered]@{
+  $vals = [ordered]@{
     agentEnabled         = 'true'
     agentPreset          = $Preset
-    agentCwdRoot         = $CwdRoot
     agentApproval        = $Approval
     agentBudgetMaxPerDay = [string]$BudgetPerDay
   }
+  if ($CwdRoot) { $vals['agentCwdRoot'] = $CwdRoot }
 
-  $changed = $false
-  if ($workerIdx -lt 0) {
-    # 在 config 行之后新建 worker: 再追加子键
-    $wLine = $cfgIndent + '  worker:'
-    $block = @($block[0..$cfgIdx]) + @($wLine) + @($block[($cfgIdx + 1)..($block.Count - 1)])
-    $workerIdx = $cfgIdx + 1
-    Say 'add   worker:（config 内新建）'
-    $changed = $true
-  } else {
-    $m = [regex]::Match($block[$workerIdx], '^(\s+)worker:\s*(.*)$')
-    if ($m.Groups[2].Value -and $m.Groups[2].Value.Trim() -ne '{}') {
-      Die ("worker 行是内联写法（{0}），不敢自动改。请手动展开成多行 YAML 后再跑。" -f $block[$workerIdx].Trim())
-    }
-    if ($m.Groups[2].Value -match '\{\}') { $block[$workerIdx] = $m.Groups[1].Value + 'worker:'; $changed = $true }
+  try {
+    $r = Update-BoardWorkerConfig -PatchPath $patchPath -Values $vals `
+      -ScalarKeys @('agentEnabled', 'agentBudgetMaxPerDay', 'pollMs', 'autoDispatch') `
+      -AllowlistIds @('dispatch-smoke') -GoalPrefix $GoalPrefix -DryRun:$DryRun
+  } catch {
+    Die ("改配置失败：{0}" -f $_.Exception.Message)
   }
-
-  $wIndent = ([regex]::Match($block[$workerIdx], '^(\s+)worker:')).Groups[1].Value
-  $childIndent = $wIndent + '  '
-
-  # worker 子树的结束位置（用于追加）
-  $wEnd = $workerIdx
-  while ($wEnd + 1 -lt $block.Count) {
-    $nx = $block[$wEnd + 1]
-    if ([string]::IsNullOrWhiteSpace($nx)) { break }
-    if ($nx -match '^(\s*)\S' -and $matches[1].Length -le $wIndent.Length) { break }
-    $wEnd++
-  }
-  $subText = (($block[$workerIdx..$wEnd]) -join "`n")
-
-  $insert = New-Object System.Collections.Generic.List[string]
-  foreach ($key in $want.Keys) {
-    if ($subText -match ('(?m)^\s*' + [regex]::Escape($key) + ':\s')) { Say ("skip  {0}：已存在（保留现值）" -f $key); continue }
-    $val = $want[$key]
-    if ($key -eq 'agentCwdRoot' -and -not $val) { Say 'skip  agentCwdRoot：没给 -CwdRoot，跳过（agent 任务会因 agent-misconfigured 被拦）'; continue }
-    $isScalar = $key -in @('agentEnabled', 'agentBudgetMaxPerDay')
-    $insert.Add($childIndent + $key + ': ' + $(if ($isScalar) { $val } else { "'" + $val + "'" }))
-    Say ("add   {0}: {1}" -f $key, $val)
-  }
-  if ($subText -notmatch '(?m)^\s*agentAllowlist:') {
-    $insert.Add($childIndent + 'agentAllowlist:')
-    $insert.Add($childIndent + '  - id: dispatch-smoke')
-    $insert.Add($childIndent + "    goalPrefix: '" + $GoalPrefix + "'")
-    Say ('add   agentAllowlist: [{id: dispatch-smoke, goalPrefix: ' + $GoalPrefix + '}]')
-  } else {
-    Say 'skip  agentAllowlist：已存在（保留现值，注意空列表 = 全拒）'
-  }
-
-  if ($insert.Count -gt 0) {
-    $changed = $true
-    $block = @($block[0..$wEnd]) + @($insert) + @($block[($wEnd + 1)..($block.Count - 1)])
-  }
-
-  if (-not $changed) {
+  foreach ($n in $r.Notes) { Say $n }
+  if (-not $r.Changed) {
     Say '配置无需改动。'
   } elseif ($DryRun) {
     Say '── [dry] team 块将变成 ──'
-    $block | ForEach-Object { Say ('  ' + $_) }
+    $r.Lines | ForEach-Object { Say ('  ' + $_) }
   } else {
-    $stamp2 = Get-Date -Format 'yyyyMMdd-HHmmss'
-    Copy-Item -LiteralPath $patchPath -Destination ("$patchPath.bak-agent-$stamp2") -Force
-    $out = @()
-    if ($teamIdx -gt 0) { $out += $lines[0..($teamIdx - 1)] }
-    $out += $block
-    if ($endIdx -lt $lines.Count - 1) { $out += $lines[($endIdx + 1)..($lines.Count - 1)] }
-    [IO.File]::WriteAllText($patchPath, (($out -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
-    Say ("已写回 {0}（备份 {0}.bak-agent-{1}）" -f $patchPath, $stamp2)
+    Say ("已写回 {0}（备份 {1}）" -f $patchPath, $r.BackupPath)
   }
 }
-
 # ── 3. 收尾提示 ────────────────────────────────────────────────────────────
 Say ''
 Say '下一步：'
