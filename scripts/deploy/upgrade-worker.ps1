@@ -221,7 +221,15 @@ $cfgArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installer, '-
 if ($CwdRoot) { $cfgArgs += @('-CwdRoot', $CwdRoot) }
 if ($DryRun) { $cfgArgs += '-DryRun' }
 & $pw.Source @cfgArgs
-if ($LASTEXITCODE -ne 0) { Die "改配置失败（exit=$LASTEXITCODE）；备份在同目录 cordis.patch.yml.bak-agent-*" }
+if ($LASTEXITCODE -ne 0) {
+  Warn '改配置失败（配置文件已保留备份 cordis.patch.yml.bak-agent-*）。'
+  $exeNow = Resolve-DshExe
+  if ($exeNow -and -not (Get-Process 'DeepSeek Harness' -ErrorAction SilentlyContinue)) {
+    Warn ("DSH 当前是停着的，先帮你拉起来：{0}" -f $exeNow)
+    Start-Process -LiteralPath $exeNow | Out-Null
+  }
+  Die "改配置失败（exit=$LASTEXITCODE）；备份在同目录 cordis.patch.yml.bak-agent-*"
+}
 
 $instVer = if (Test-Path -LiteralPath $instPkg) { (Get-Content -LiteralPath $instPkg -Raw | ConvertFrom-Json).version } else { '(未安装)' }
 Line
