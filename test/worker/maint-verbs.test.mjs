@@ -189,13 +189,14 @@ test('upgrade：包名不符 → maint-pkg-name', async () => {
 
 test('upgrade：成功 → done + 备份 + 临时目录清理', async () => {
   const pkgDir = tmpDir();
-  // 先放一个旧内容到 pkgDir（模拟已安装）
-  fs.mkdirSync(pkgDir, { recursive: true });
-  fs.writeFileSync(path.join(pkgDir, 'old.txt'), 'old', 'utf8');
+  const installDir = tmpDir();
+  // 旧内容放在真正的安装目录（config.pkgDir），tgz 放维护包目录（maintenancePkgDir）
+  fs.writeFileSync(path.join(installDir, 'old.txt'), 'old', 'utf8');
   const { tgzPath, hash, version } = await makeTgz('@wfcj/dsh-job-board', '2.6.19', { path: 'new.txt', content: 'new' });
   const fileName = path.basename(tgzPath);
+  const tmpBaseline = new Set(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('maint-upgrade-')));
   fs.copyFileSync(tgzPath, path.join(pkgDir, fileName));
-  const v = makeVerbs({ maintenancePkgDir: pkgDir }, { now: () => 1700000000000 });
+  const v = makeVerbs({ maintenancePkgDir: pkgDir }, { now: () => 1700000000000, pkgDir: installDir });
   const r = await v.run('upgrade', { file: fileName, sha256: hash, restart: true }, { taskId: 't1' });
   assert.equal(r.ok, true);
   assert.equal(r.status, 'done');
@@ -204,18 +205,18 @@ test('upgrade：成功 → done + 备份 + 临时目录清理', async () => {
   assert.equal(r.version, '2.6.19');
   assert.match(r.note, /已安装 v2\.6\.19/);
   // 备份目录生成：<pkgDir>.bak-<yyyyMMdd-HHmmss>（时间戳是实现细节，按前缀找）
-  const backups = fs.readdirSync(path.dirname(pkgDir)).filter((n) => n.startsWith(path.basename(pkgDir) + '.bak-'));
+  const backups = fs.readdirSync(path.dirname(installDir)).filter((n) => n.startsWith(path.basename(installDir) + '.bak-'));
   assert.equal(backups.length, 1, '备份目录应生成');
-  const backup = path.join(path.dirname(pkgDir), backups[0]);
+  const backup = path.join(path.dirname(installDir), backups[0]);
   assert.ok(fs.existsSync(path.join(backup, 'old.txt')), '备份含旧内容');
-  // pkgDir 现在是新内容
-  assert.ok(fs.existsSync(path.join(pkgDir, 'package.json')), '新 pkgDir 有 package.json');
-  assert.ok(fs.existsSync(path.join(pkgDir, 'new.txt')), '新 pkgDir 有新文件');
-  assert.ok(!fs.existsSync(path.join(pkgDir, 'old.txt')), '新 pkgDir 无旧文件');
-  // 临时目录清理：os.tmpdir 下无 maint-upgrade- 残留（尽力检查）
-  const tmpEntries = fs.readdirSync(os.tmpdir());
-  const leftover = tmpEntries.filter((n) => n.startsWith('maint-upgrade-'));
-  assert.equal(leftover.length, 0, '临时目录应清理');
+  // installDir 现在是新内容
+  assert.ok(fs.existsSync(path.join(installDir, 'package.json')), '新 installDir 有 package.json');
+  assert.ok(fs.existsSync(path.join(installDir, 'new.txt')), '新 installDir 有新文件');
+  assert.ok(!fs.existsSync(path.join(installDir, 'old.txt')), '新 installDir 无旧文件');
+  // 临时目录清理：本用例期间 os.tmpdir 下不得新增 maint-upgrade-*（先记录基线）
+  const nowTmp = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('maint-upgrade-'));
+  const fresh = nowTmp.filter((n) => !tmpBaseline.has(n));
+  assert.equal(fresh.length, 0, `临时目录应清理（新增：${fresh.join(',')}）`);
 });
 
 test('upgrade：非 tgz 拒（zip 需 spawn，本通道不许）', async () => {
@@ -822,23 +823,29 @@ function lockedFs(pkgDir) {
 
 test('upgrade：DSH 占用包目录（EPERM）且未开重启许可 → 明确提示而非裸 EPERM', async () => {
   const pkgDir = tmpDir();
-  fs.writeFileSync(path.join(pkgDir, 'old.txt'), 'old', 'utf8');
+  const installDir = tmpDir();
+  fs.writeFileSync(path.join(installDir, 'old.txt'), 'old', 'utf8');
   const { tgzPath, hash } = await makeTgz('@wfcj/dsh-job-board', '2.7.8', { path: 'new.txt', content: 'new' });
   const fileName = path.basename(tgzPath);
   fs.copyFileSync(tgzPath, path.join(pkgDir, fileName));
-  const v = makeVerbs({ maintenancePkgDir: pkgDir }, { fs: lockedFs(pkgDir) });
+  const v = makeVerbs({ maintenancePkgDir: pkgDir }, { fs: lockedFs(installDir), pkgDir: installDir });
   const r = await v.run('upgrade', { file: fileName, sha256: hash }, { taskId: 't-ep' });
   assert.equal(r.ok, false);
   assert.equal(r.status, 'blocked');
   assert.equal(r.reason, MAINT_VERB_REASONS.INSTALL_FAILED);
   assert.match(r.note, /maintenanceAllowRestart/);
   // 旧内容必须还在（回滚成功）
-  assert.ok(fs.existsSync(path.join(pkgDir, 'old.txt')));
+  assert.ok(fs.existsSync(path.join(installDir, 'old.txt')));
+  // 暂存目录必须清理（不得留 <installDir>.stage-*；只按本用例前缀判，避免误数别人的临时目录）
+  const stagePrefix = path.basename(installDir) + '.stage-';
+  const leftovers = fs.readdirSync(path.dirname(installDir)).filter((n) => n.startsWith(stagePrefix));
+  assert.equal(leftovers.length, 0, '暂存目录应清理');
 });
 
 test('upgrade：EPERM + 已开重启许可 → 排入安装并 spawn 重启助手（含 Stop-Process）', async () => {
   const pkgDir = tmpDir();
-  fs.writeFileSync(path.join(pkgDir, 'old.txt'), 'old', 'utf8');
+  const installDir = tmpDir();
+  fs.writeFileSync(path.join(installDir, 'old.txt'), 'old', 'utf8');
   const { tgzPath, hash } = await makeTgz('@wfcj/dsh-job-board', '2.7.8', { path: 'new.txt', content: 'new' });
   const fileName = path.basename(tgzPath);
   fs.copyFileSync(tgzPath, path.join(pkgDir, fileName));
@@ -846,7 +853,7 @@ test('upgrade：EPERM + 已开重启许可 → 排入安装并 spawn 重启助�
   const spawnImpl = (exe, args, opts) => { calls.push({ exe, args, opts }); return { pid: 1 }; };
   const v = makeVerbs(
     { maintenancePkgDir: pkgDir, maintenanceAllowRestart: true, dshExePath: process.execPath },
-    { fs: lockedFs(pkgDir), spawnImpl },
+    { fs: lockedFs(installDir), spawnImpl, pkgDir: installDir },
   );
   const r = await v.run('upgrade', { file: fileName, sha256: hash }, { taskId: 't-eq' });
   assert.equal(r.ok, true);
