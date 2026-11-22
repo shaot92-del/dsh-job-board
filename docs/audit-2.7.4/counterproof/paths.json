@@ -1,7 +1,7 @@
 {
   "version": "2.7.4",
   "base": "v2.7.3",
-  "head": "c8e7597",
+  "head": "dee4e03",
   "note": "按 docs/release-review-procedure.md §2A 逐条填；status ∈ EXECUTED / UNEXECUTED / UNKNOWN / NOT_APPLICABLE。UNEXECUTED 必须写 closure（发布前如何闭合）。",
   "files": [
     {

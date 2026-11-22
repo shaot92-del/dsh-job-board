@@ -1,3 +1,37 @@
+## v2.7.6 — 2026-11-22（全量审查修正：result.reasons 脱敏链闭合 + 子块键收口 + 脚本/测试/文档）
+
+**安全（审查 P1-1，唯一未闭合项）**
+- `lib/worker/result.js`：净化阶段不再把 reason 截到 120 字符（新增 `MAX_REASON_INPUT_CHARS = 4096` 只防内存放大）。
+  原先的 `t.slice(0, 120)` 发生在 `maskResult` 之前，token 跨越第 120 字符时会被切成残片、掩码匹配不到 → 残片落板。
+  现在完整 reason 进入 `maskResult`，由它「先打码、后截 120」，与 board 的 `_clean_result` 契约不变。
+- 新增测试：`test/worker/result.test.mjs`（跨 120 边界 token 保持完整、4096 上限）、`test/worker/worker.test.mjs`（跨边界 token 落板前必须打码且 ≤120）。
+
+**正确性（审查 P3-1）**
+- `lib/worker/config.js`：`mergeWorkerPayload()` 对 `worker:` 子块同样按 `WORKER_FORWARD_KEYS` 过滤。
+  否则子块里残留的 `workerMode`/`machine`/`token` 会跟着 spread 进载荷，`normalizeConfig` 的 pick() 子块优先会把宿主值顶掉。
+- 新增测试：`test/worker/worker-payload-merge.test.mjs`（子块宿主键不得顶掉宿主值 + normalizeConfig 复核）。
+
+**脚本**
+- `scripts/enable-maint-write.ps1`：公钥除 base64 形态外，再解 DER-SPKI 校验 Ed25519 OID（1.3.101.112），错公钥在配置阶段就失败。
+- `scripts/install-board.ps1`：token 前缀固定显示 6 字符（原先 `Min(8, Length)` 在短 token 时会整枚打印）。
+
+**测试 / 工具**
+- `test/worker/maint-ticket-cli.test.mjs`：badsig 用例原先「把 nonce 末位换成 X」——末位本来就是 X 时票据未变，签名仍有效，约 1/64 概率偶发失败（本次采集器实测撞到）。改成翻首位、保证一定变化。
+- `scripts/audit-collect.mjs`：`--base` 用注解标签时要解到 commit（`<ref>^{commit}`），否则 `git rev-parse v2.7.5` 返回 tag 对象、diff 得到「0 个变更文件」（本轮实测撞到）。
+
+**测试**
+- `test/worker/agent-gate.test.mjs`：硬上限内改为断言「不触发 `too-long`」（原先是「detail 不等于某个串」的弱断言）。
+- `test/worker/exec-runner.test.mjs`：`//server/share` 改为断言 `reason === 'missing'`（原先是 `!== 'not-absolute'`）。
+
+**文档 / 证据链**
+- `docs/review/findings.json`：version → 2.7.6，补 2.7.5 审计 8 条窄记（含仍未修的 P2-8 标 open）。
+- `docs/audit-2.7.4/`：统一三份不一致的 HEAD 到 `dee4e03`（审查 P3-3）。
+- `docs/ui-2.7.4/patch.diff`：标注为 stage2 原始补丁（审查 P3-4），最终实现指向 `main-control-fixes.md`。
+- `docs/operator-playbook.md`：修掉 exec 表格断裂行（审查 P3-5）。
+
+**怎么验证**
+- `npm run gate` 全绿；`node scripts/audit-collect.mjs --version 2.7.6 --base v2.7.5 --coverage` 在真实 git 检出上产出完整证据链（审查 P1-2 的闭合方式）。
+
 ## v2.7.5 — 2026-11-22（安全收口 + 自检横幅可收缩 + 派工弹窗守卫）
 
 ### 修什么

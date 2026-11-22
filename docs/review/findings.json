@@ -1,6 +1,6 @@
 {
-  "version": "2.7.0",
-  "updated": "2026-11-20",
+  "version": "2.7.6",
+  "updated": "2026-11-22",
   "sources": [
     {
       "id": "glm-sec",
@@ -264,6 +264,71 @@
       "id": "v2619-tmp-pid",
       "severity": "P3",
       "source": "pangu"
+    }
+  ],
+  "findings": [
+    {
+      "id": "A-2.7.5-P1-1",
+      "version": "2.7.5",
+      "level": "P1",
+      "status": "fixed-in-2.7.6",
+      "title": "result.reasons 先截断后打码（跨 120 边界 token 残片落板）",
+      "fixedBy": "lib/worker/result.js: MAX_REASON_INPUT_CHARS"
+    },
+    {
+      "id": "A-2.7.5-P2-3",
+      "version": "2.7.5",
+      "level": "P2",
+      "status": "fixed-in-2.7.6",
+      "title": "enable-maint-write.ps1 公钥只验 base64 形态",
+      "fixedBy": "scripts/enable-maint-write.ps1 DER/OID 校验"
+    },
+    {
+      "id": "A-2.7.5-P2-5",
+      "version": "2.7.5",
+      "level": "P2",
+      "status": "fixed-in-2.7.6",
+      "title": "install-board.ps1 短 token 前缀整枚打印",
+      "fixedBy": "scripts/install-board.ps1 固定 6 字符"
+    },
+    {
+      "id": "A-2.7.5-P2-8",
+      "version": "2.7.5",
+      "level": "P2",
+      "status": "open",
+      "title": "exec-runner 全部用例在非 Windows 上 skip（Linux CI 零覆盖）"
+    },
+    {
+      "id": "A-2.7.5-P2-9",
+      "version": "2.7.5",
+      "level": "P2",
+      "status": "fixed-in-2.7.6",
+      "title": "agent-gate 边界内放行是弱断言",
+      "fixedBy": "test/worker/agent-gate.test.mjs 断言 ok===true"
+    },
+    {
+      "id": "A-2.7.5-P2-10",
+      "version": "2.7.5",
+      "level": "P2",
+      "status": "fixed-in-2.7.6",
+      "title": "exec-runner UNC 用例是弱断言",
+      "fixedBy": "test/worker/exec-runner.test.mjs 断言 reason===missing"
+    },
+    {
+      "id": "A-2.7.5-P3-1",
+      "version": "2.7.5",
+      "level": "P3",
+      "status": "fixed-in-2.7.6",
+      "title": "worker 子块残留宿主键可覆盖 workerMode",
+      "fixedBy": "lib/worker/config.js mergeWorkerPayload 子块按白名单过滤"
+    },
+    {
+      "id": "A-2.7.5-P3-5",
+      "version": "2.7.5",
+      "level": "P3",
+      "status": "fixed-in-2.7.6",
+      "title": "operator-playbook exec 表格断裂",
+      "fixedBy": "docs/operator-playbook.md 拆行"
     }
   ]
 }

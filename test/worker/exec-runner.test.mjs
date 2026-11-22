@@ -424,7 +424,7 @@ test('checkScriptAccess：//server/share 判绝对路径（与 config.isAbsolute
   const r = checkScriptAccess('//server/share/foo.ps1', { allowlist: [allowedDir] });
   // 新实现：isAbsolutePath 认 // → 不是 not-absolute；UNC 检查只认 \\ → // 不拦；
   // statSync 失败 → missing。关键是 reason 不再是 not-absolute。
-  assert.notEqual(r.reason, 'not-absolute', `//server/share 不应被判 not-absolute（reason=${r.reason}）`);
+  assert.equal(r.reason, 'missing', `//server/share 应被锁定为 missing（reason=${r.reason}）`);
 });
 
 // v2.6.28（安全审计 C-10）：exit 后 250ms drain 窗口内若 timeoutMs 更小，

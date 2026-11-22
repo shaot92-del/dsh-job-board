@@ -1,0 +1,186 @@
+{
+  "version": "2.7.6",
+  "base": "v2.7.5",
+  "note": "逐条填 status：全部 EXECUTED。宿主调用点（doctor/安装脚本）不在本次 diff 内，见 summary.md 的“未覆盖面”说明。",
+  "files": [
+    {
+      "file": "lib/client.js",
+      "paths": [
+        {
+          "id": "B-1",
+          "description": "仅版本号串 2.7.5→2.7.6（无行为改动）",
+          "status": "EXECUTED",
+          "evidence": "scope/changed-paths.diff 中该文件只有 CLIENT_VERSION 一行变化"
+        }
+      ]
+    },
+    {
+      "file": "lib/worker/config.js",
+      "paths": [
+        {
+          "id": "C-1",
+          "description": "子块只取转发白名单键，宿主键不得被子块覆盖",
+          "status": "EXECUTED",
+          "evidence": "test/worker/worker-payload-merge.test.mjs「子块里的宿主键不得顶掉宿主值」"
+        },
+        {
+          "id": "C-2",
+          "description": "顶层写通道键仍能兜底进入 worker（2.7.4 治本不回退）",
+          "status": "EXECUTED",
+          "evidence": "test/worker/worker-payload-merge.test.mjs「团队顶层写通道键必须进到 worker 生效值」"
+        },
+        {
+          "id": "C-3",
+          "description": "null/数组/非对象入参不抛错",
+          "status": "EXECUTED",
+          "evidence": "test/worker/worker-payload-merge.test.mjs「null/数组/非对象入参」"
+        }
+      ]
+    },
+    {
+      "file": "lib/worker/result.js",
+      "paths": [
+        {
+          "id": "R-1",
+          "description": "净化阶段不再预截断到 120：跨越 120 边界的 token 保持完整",
+          "status": "EXECUTED",
+          "evidence": "test/worker/result.test.mjs「跨越 120 字符边界的 token 保持完整」+ coverage/unit-test.log"
+        },
+        {
+          "id": "R-2",
+          "description": "4096 字符输入上限仍然生效（防内存放大）",
+          "status": "EXECUTED",
+          "evidence": "test/worker/result.test.mjs「只做 4096 字符的内存上限」"
+        },
+        {
+          "id": "R-3",
+          "description": "5 条 reasons 上限与空串丢弃行为不变",
+          "status": "EXECUTED",
+          "evidence": "test/worker/result.test.mjs「只取前 5 条且不提前截断」"
+        }
+      ]
+    },
+    {
+      "file": "lib/worker/version.js",
+      "paths": [
+        {
+          "id": "B-2",
+          "description": "仅 VERSION 串 2.7.5→2.7.6",
+          "status": "EXECUTED",
+          "evidence": "scope/changed-paths.diff 一行变化"
+        }
+      ]
+    },
+    {
+      "file": "scripts/audit-collect.mjs",
+      "paths": [
+        {
+          "id": "A-1",
+          "description": "--base 传注解标签时解到 commit，变更集不再为空",
+          "status": "EXECUTED",
+          "evidence": "本轮实测：范围 v2.7.5(db94810b) .. 0660724f，变更文件 13 个"
+        }
+      ]
+    },
+    {
+      "file": "scripts/enable-maint-write.ps1",
+      "paths": [
+        {
+          "id": "S-1",
+          "description": "非 base64 公钥在配置阶段直接失败",
+          "status": "EXECUTED",
+          "evidence": "脚本 -PublicKey 非法串实测 exit 1（docs/audit-2.7.6/negative/enable-maint-write.log）"
+        },
+        {
+          "id": "S-2",
+          "description": "base64 但不是 Ed25519 SPKI 的公钥被拒（OID 1.3.101.112 校验）",
+          "status": "EXECUTED",
+          "evidence": "同一日志：32 字节随机串 → Fail「不是 Ed25519 SPKI」"
+        },
+        {
+          "id": "S-3",
+          "description": "合法公钥仍能写出（扁平/嵌套两种布局 + 幂等）",
+          "status": "EXECUTED",
+          "evidence": "test/worker/enable-maint-write-script.test.mjs 4/4（gate 内）"
+        }
+      ]
+    },
+    {
+      "file": "scripts/install-board.ps1",
+      "paths": [
+        {
+          "id": "S-4",
+          "description": "token 前缀固定最多 6 字符，短 token 不再整枚打印",
+          "status": "EXECUTED",
+          "evidence": "代码审查：Min(6, Max(0, Length-1))；脚本 parse 通过"
+        }
+      ]
+    },
+    {
+      "file": "test/worker/agent-gate.test.mjs",
+      "paths": [
+        {
+          "id": "T-1",
+          "description": "硬上限内不触发 too-long（弱断言收紧）",
+          "status": "EXECUTED",
+          "evidence": "该文件 26/26 通过；coverage/unit-test.log"
+        }
+      ]
+    },
+    {
+      "file": "test/worker/exec-runner.test.mjs",
+      "paths": [
+        {
+          "id": "T-2",
+          "description": "//server/share 锁定 reason=missing",
+          "status": "EXECUTED",
+          "evidence": "该文件在 Windows 上全跑（非 wt 该用例）并 0 失败"
+        }
+      ]
+    },
+    {
+      "file": "test/worker/maint-ticket-cli.test.mjs",
+      "paths": [
+        {
+          "id": "T-3",
+          "description": "badsig 用例改为翻首位，票据必然变化（去偶发）",
+          "status": "EXECUTED",
+          "evidence": "连续 5 次单跑 21/21 通过"
+        }
+      ]
+    },
+    {
+      "file": "test/worker/result.test.mjs",
+      "paths": [
+        {
+          "id": "T-4",
+          "description": "新增 3 条断言（跨边界完整、4096 上限、5 条上限不变）",
+          "status": "EXECUTED",
+          "evidence": "11/11 通过"
+        }
+      ]
+    },
+    {
+      "file": "test/worker/worker-payload-merge.test.mjs",
+      "paths": [
+        {
+          "id": "T-5",
+          "description": "新增子块宿主键用例",
+          "status": "EXECUTED",
+          "evidence": "10/10 通过"
+        }
+      ]
+    },
+    {
+      "file": "test/worker/worker.test.mjs",
+      "paths": [
+        {
+          "id": "T-6",
+          "description": "新增跨边界落板打码用例",
+          "status": "EXECUTED",
+          "evidence": "27/27 通过"
+        }
+      ]
+    }
+  ]
+}

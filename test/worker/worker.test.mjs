@@ -420,6 +420,31 @@ test('finishTask：result.reasons 落看板前也要脱敏（stdout 通道，P1-
   assert.equal(mark.result.expected, 30);
 });
 
+test('finishTask：reason 里的 token 跨越 120 字符边界时也必须被完整打码（result.js 不再预截断）', async () => {
+  const boards = makeBoard({ t1: task('t1') });
+  const token = 'opaque-board-token-boundary-1a2b3c4d5e6f';
+  // 让 token 从第 110 字符开始，横跨 120 边界：净化阶段若先截到 120，token 会被切成 10 字符残片
+  const padded = 'p'.repeat(110) + token + ' tail';
+  const worker = makeWorker(
+    boards,
+    async () => ({
+      status: 'failed',
+      stage: 'exec',
+      note: 'stage=exec exit=1',
+      result: { ok: false, reasons: [padded] },
+      artifact: '',
+    }),
+    { ...BASE_CONFIG, token },
+  );
+  await worker.tick();
+  await new Promise((r) => setTimeout(r, 30));
+  const mark = boards.calls.find((c) => c.kind === 'mark' && c.status === 'failed');
+  assert.ok(mark, '应该有 failed 回写');
+  const first = String((mark.result && mark.result.reasons && mark.result.reasons[0]) || '');
+  assert.ok(!first.includes(token.slice(0, 10)), `reason 泄漏 token 前缀残片: ${first}`);
+  assert.equal(first.length <= 120, true, '最终落板仍必须 ≤120 字符');
+});
+
 test('finishTask：result 里夹带的额外字段被丢掉', async () => {
   const boards = makeBoard({ t1: task('t1') });
   const worker = makeWorker(boards, async () => ({

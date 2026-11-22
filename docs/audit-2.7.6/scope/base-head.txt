@@ -1,0 +1,5 @@
+base=v2.7.5
+base_sha=db94810be0fda9ad67f471bee259fe3cb95ab3e3
+head=0660724f544a4ea5fcba04c3f564c7b58214ad36
+version=2.7.6
+collected_at=2026-11-22T11:24:04.108Z

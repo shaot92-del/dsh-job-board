@@ -72,7 +72,8 @@ Get-NetTCPConnection -State Listen |
 **exec（跑脚本）**
 | reason | 含义 | 处置 |
 | --- | --- | --- |
-| `empty` | 任务里没给脚本路径 | 补 `script` 参数 |`n| `not-allowlisted` | 脚本不在白名单内，且 `approvalMode=manual`（**运行期 note 里显示为 `approval-required`**） | 加白名单，或人工审批 |
+| `empty` | 任务里没给脚本路径 | 补 `script` 参数 |
+| `not-allowlisted` | 脚本不在白名单内，且 `approvalMode=manual`（**运行期 note 里显示为 `approval-required`**） | 加白名单，或人工审批 |
 | `not-allowlisted-auto` | **放行**了非白名单脚本（`approvalMode=auto`） | 你开的是自动放行，确认机器受控 |
 | `not-absolute` / `bad-path` / `bad-extension` | 路径不是绝对路径 / 含 `..` / 不是 `.ps1` | 修正任务参数 |
 | `missing` / `not-file` | 脚本不存在 / 是目录 | 检查副机上文件是否真的在 |

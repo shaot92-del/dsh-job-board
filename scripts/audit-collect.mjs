@@ -96,7 +96,9 @@ function run(name, command, cmdArgs, opts = {}) {
 
 // ---- 1. 范围底账 -----------------------------------------------------------
 const baseRef = args.base || 'HEAD~1'
-const baseSha = gitGit(['rev-parse', baseRef])
+// 注解标签(annotated tag)的 rev-parse 返回 tag 对象 SHA，直接拿去 diff 会得到空变更集。
+// 统一解到 commit：v2.7.5^{commit} → db94810。
+const baseSha = gitGit(['rev-parse', '--verify', `${baseRef}^{commit}`]) || gitGit(['rev-parse', baseRef])
 const headSha = gitGit(['rev-parse', 'HEAD'])
 if (!headSha) {
   console.error('无法读取 HEAD（是否在 git 仓库内？）')

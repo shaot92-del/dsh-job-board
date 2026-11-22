@@ -59,6 +59,18 @@ if (-not $PublicKey) {
 }
 $PublicKey = $PublicKey.Trim()
 if ($PublicKey -notmatch '^[A-Za-z0-9+/=]{40,400}$') { Fail "公钥格式不对（应为 base64，40-400 字符）：$($PublicKey.Substring(0,[Math]::Min(20,$PublicKey.Length)))…" }
+# v2.7.6（审查 P2-3）：只验 base64 形态会把「长得像公钥的垃圾」写进配置，等到副机验签时才失败。
+# 这里再解一次 DER-SPKI，确认里面带 Ed25519 的算法 OID（1.3.101.112 = 06 03 2B 65 70）。
+try {
+  $pubDer = [Convert]::FromBase64String($PublicKey)
+} catch {
+  Fail "公钥不是合法 base64：$($PublicKey.Substring(0,[Math]::Min(20,$PublicKey.Length)))…"
+}
+$hasEd25519Oid = $false
+for ($i = 0; $i -le ($pubDer.Length - 5); $i++) {
+  if ($pubDer[$i] -eq 0x06 -and $pubDer[$i + 1] -eq 0x03 -and $pubDer[$i + 2] -eq 0x2B -and $pubDer[$i + 3] -eq 0x65 -and $pubDer[$i + 4] -eq 0x70) { $hasEd25519Oid = $true; break }
+}
+if (-not $hasEd25519Oid) { Fail "公钥不是 Ed25519 SPKI（DER 里找不到 OID 1.3.101.112）。请用 maint-ticket.mjs keygen 生成的 publicKey。" }
 
 $allProfileDirs = @()
 if (Test-Path $profilesRoot) { $allProfileDirs = @(Get-ChildItem $profilesRoot -Directory | ForEach-Object { $_.Name }) }

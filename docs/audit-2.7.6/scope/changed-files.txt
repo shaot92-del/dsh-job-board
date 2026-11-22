@@ -1,0 +1,13 @@
+lib/client.js
+lib/worker/config.js
+lib/worker/result.js
+lib/worker/version.js
+scripts/audit-collect.mjs
+scripts/enable-maint-write.ps1
+scripts/install-board.ps1
+test/worker/agent-gate.test.mjs
+test/worker/exec-runner.test.mjs
+test/worker/maint-ticket-cli.test.mjs
+test/worker/result.test.mjs
+test/worker/worker-payload-merge.test.mjs
+test/worker/worker.test.mjs

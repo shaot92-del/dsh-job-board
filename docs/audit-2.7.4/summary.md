@@ -1,6 +1,6 @@
 # 2.7.4 发布审计摘要（规程 v1.2 / WI-001）
 
-- 版本：**2.7.4**　HEAD `c8e7597`　tag `v2.7.4`（已推）
+- 版本：**2.7.4**　HEAD `dee4e03`　tag `v2.7.4`（已推）
 - 基线：`v2.7.3`（`63a18f08`）
 - 采集：`node scripts/audit-collect.mjs --version 2.7.4 --base v2.7.3 --coverage --crash-bundle "C:\review\case\lib-client-2.7.0-crash.bak"`
   → **7 条命令 0 失败**（崩溃包 exit=1 属预期，见 `negative-gate.txt`）

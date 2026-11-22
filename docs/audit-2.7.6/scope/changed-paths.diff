@@ -1,0 +1,187 @@
+diff --git a/lib/client.js b/lib/client.js
+index 080840b..7329252 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -42 +42 @@ window.__ModuleLoader__.load({
+-    const CLIENT_VERSION = '2.7.5'
++    const CLIENT_VERSION = '2.7.6'
+diff --git a/lib/worker/config.js b/lib/worker/config.js
+index 6ca236e..e3bf4c1 100644
+--- a/lib/worker/config.js
++++ b/lib/worker/config.js
+@@ -296 +296,7 @@ export function mergeWorkerPayload(raw = {}) {
+-  return { ...merged, ...nested }
++  // 子块同样只取转发白名单里的键（v2.7.6）：否则子块里的 workerMode / machine / token
++  // 这类宿主键会跟着 spread 进去，normalizeConfig 的 pick() 子块优先会把宿主值顶掉。
++  const nestedPicked = {}
++  for (const key of WORKER_FORWARD_KEYS) {
++    if (nested[key] !== undefined && nested[key] !== null) nestedPicked[key] = nested[key]
++  }
++  return { ...merged, ...nestedPicked }
+diff --git a/lib/worker/result.js b/lib/worker/result.js
+index a10a38b..2bd725c 100644
+--- a/lib/worker/result.js
++++ b/lib/worker/result.js
+@@ -18,0 +19 @@ export const MAX_REASONS = 5;
++/** 最终落板长度（与 board 侧 120 字符规则一致，由 worker.js 的 maskResult 执行截断）。 */
+@@ -19,0 +21,6 @@ export const MAX_REASON_CHARS = 120;
++/**
++ * 净化阶段的输入上限：只防内存放大，**不做最终截断**。
++ * 脱敏（maskResult）必须拿到完整的 reason 才能匹配跨边界的 token，
++ * 所以这里不能先截到 120 —— 否则 token 跨越边界时被切成残片、掩码匹配失败。
++ */
++export const MAX_REASON_INPUT_CHARS = 4096;
+@@ -94 +101 @@ export function sanitizeResult(raw) {
+-      reasons.push(t.slice(0, MAX_REASON_CHARS));
++      reasons.push(t.slice(0, MAX_REASON_INPUT_CHARS));
+diff --git a/lib/worker/version.js b/lib/worker/version.js
+index 034e38a..9d6c2b2 100644
+--- a/lib/worker/version.js
++++ b/lib/worker/version.js
+@@ -10 +10 @@
+-export const VERSION = '2.7.5'
++export const VERSION = '2.7.6'
+diff --git a/scripts/audit-collect.mjs b/scripts/audit-collect.mjs
+index fdae98c..77bf0b1 100644
+--- a/scripts/audit-collect.mjs
++++ b/scripts/audit-collect.mjs
+@@ -99 +99,3 @@ const baseRef = args.base || 'HEAD~1'
+-const baseSha = gitGit(['rev-parse', baseRef])
++// 注解标签(annotated tag)的 rev-parse 返回 tag 对象 SHA，直接拿去 diff 会得到空变更集。
++// 统一解到 commit：v2.7.5^{commit} → db94810。
++const baseSha = gitGit(['rev-parse', '--verify', `${baseRef}^{commit}`]) || gitGit(['rev-parse', baseRef])
+diff --git a/scripts/enable-maint-write.ps1 b/scripts/enable-maint-write.ps1
+index 433bc0c..de96a31 100644
+--- a/scripts/enable-maint-write.ps1
++++ b/scripts/enable-maint-write.ps1
+@@ -61,0 +62,12 @@ if ($PublicKey -notmatch '^[A-Za-z0-9+/=]{40,400}$') { Fail "公钥格式不对
++# v2.7.6（审查 P2-3）：只验 base64 形态会把「长得像公钥的垃圾」写进配置，等到副机验签时才失败。
++# 这里再解一次 DER-SPKI，确认里面带 Ed25519 的算法 OID（1.3.101.112 = 06 03 2B 65 70）。
++try {
++  $pubDer = [Convert]::FromBase64String($PublicKey)
++} catch {
++  Fail "公钥不是合法 base64：$($PublicKey.Substring(0,[Math]::Min(20,$PublicKey.Length)))…"
++}
++$hasEd25519Oid = $false
++for ($i = 0; $i -le ($pubDer.Length - 5); $i++) {
++  if ($pubDer[$i] -eq 0x06 -and $pubDer[$i + 1] -eq 0x03 -and $pubDer[$i + 2] -eq 0x2B -and $pubDer[$i + 3] -eq 0x65 -and $pubDer[$i + 4] -eq 0x70) { $hasEd25519Oid = $true; break }
++}
++if (-not $hasEd25519Oid) { Fail "公钥不是 Ed25519 SPKI（DER 里找不到 OID 1.3.101.112）。请用 maint-ticket.mjs keygen 生成的 publicKey。" }
+diff --git a/scripts/install-board.ps1 b/scripts/install-board.ps1
+index 1734b18..e0681cd 100644
+--- a/scripts/install-board.ps1
++++ b/scripts/install-board.ps1
+@@ -106 +106 @@ if ($tokens.Count -eq 0) {
+-Say ("token: {0} 枚（首枚前缀 {1}…）" -f $tokens.Count, $tokens[0].Substring(0, [Math]::Min(8, $tokens[0].Length)))
++Say ("token: {0} 枚（首枚前缀 {1}…）" -f $tokens.Count, $tokens[0].Substring(0, [Math]::Min(6, [Math]::Max(0, $tokens[0].Length - 1))))
+diff --git a/test/worker/agent-gate.test.mjs b/test/worker/agent-gate.test.mjs
+index 0a65354..ad78fe2 100644
+--- a/test/worker/agent-gate.test.mjs
++++ b/test/worker/agent-gate.test.mjs
+@@ -403 +403,4 @@ test('checkAgentPrompt：超过 256 KiB 硬上限直接 too-long，不进归一
+-  assert.notEqual(String(checkAgentPrompt(inside, gate).detail), `${HARD_MAX_PROMPT_CHARS + 1}>${HARD_MAX_PROMPT_CHARS}`);
++  const insideRes = checkAgentPrompt(inside, gate);
++  // 恰好 HARD_MAX 字符：硬上限这条规则不该触发（它可能因 base64 大块等其它规则被拒，
++  // 所以断言「不是 too-long」而不是「ok===true」——那才是这条用例真正要锁定的行为）。
++  assert.notEqual(insideRes.rule, 'too-long', `硬上限内不应触发 too-long（实际 rule=${insideRes.rule}）`);
+diff --git a/test/worker/exec-runner.test.mjs b/test/worker/exec-runner.test.mjs
+index 77be38a..cff3911 100644
+--- a/test/worker/exec-runner.test.mjs
++++ b/test/worker/exec-runner.test.mjs
+@@ -427 +427 @@ test('checkScriptAccess：//server/share 判绝对路径（与 config.isAbsolute
+-  assert.notEqual(r.reason, 'not-absolute', `//server/share 不应被判 not-absolute（reason=${r.reason}）`);
++  assert.equal(r.reason, 'missing', `//server/share 应被锁定为 missing（reason=${r.reason}）`);
+diff --git a/test/worker/maint-ticket-cli.test.mjs b/test/worker/maint-ticket-cli.test.mjs
+index 7deada8..d06fc95 100644
+--- a/test/worker/maint-ticket-cli.test.mjs
++++ b/test/worker/maint-ticket-cli.test.mjs
+@@ -100 +100,3 @@ test('verifyGoal：票据字段被改（JSON 合法但签名不符）→ badsig'
+-  ticket.nonce = `${ticket.nonce.slice(0, -1)}X`;
++  // 必须保证「真的改了」：原写法把末位换成 X，若末位本来就是 X 则票据未变、签名仍有效 → 偶发失败
++  const flipped = ticket.nonce[0] === 'A' ? 'B' : 'A';
++  ticket.nonce = flipped + ticket.nonce.slice(1);
+diff --git a/test/worker/result.test.mjs b/test/worker/result.test.mjs
+index 65e6886..132b415 100644
+--- a/test/worker/result.test.mjs
++++ b/test/worker/result.test.mjs
+@@ -10,0 +11 @@ import {
++  MAX_REASON_INPUT_CHARS,
+@@ -64 +65 @@ test('cleanNumber：越界与非法值返回 undefined（不落成 0）', () =>
+-test('sanitizeResult：ok 必须是布尔，reasons 截断到 5 条 ×120 字符', () => {
++test('sanitizeResult：ok 必须是布尔，reasons 只取前 5 条且不提前截断（脱敏后才截断）', () => {
+@@ -69 +70 @@ test('sanitizeResult：ok 必须是布尔，reasons 截断到 5 条 ×120 字符
+-  const long = 'x'.repeat(MAX_REASON_CHARS + 40);
++  const long = 'x'.repeat(MAX_REASON_CHARS + 40); // 160 字符，仍在净化输入上限内
+@@ -76 +77,3 @@ test('sanitizeResult：ok 必须是布尔，reasons 截断到 5 条 ×120 字符
+-  assert.equal(out.reasons[0].length, MAX_REASON_CHARS);
++  // 净化阶段不截断（否则跨 120 边界的 token 会被切成残片，maskResult 匹配不到）
++  assert.equal(out.reasons[0].length, MAX_REASON_CHARS + 40);
++  assert.equal(out.reasons[0], long);
+@@ -97,0 +101,14 @@ test('formatResultSummary：单行摘要', () => {
++
++test('sanitizeResult：只做 4096 字符的内存上限，不做 120 字符最终截断', () => {
++  const huge = 'y'.repeat(MAX_REASON_INPUT_CHARS + 500);
++  const out = sanitizeResult({ ok: true, reasons: [huge] });
++  assert.equal(out.reasons[0].length, MAX_REASON_INPUT_CHARS);
++});
++
++test('sanitizeResult：跨越 120 字符边界的 token 保持完整，交由 maskResult 打码', () => {
++  const t_oken = 'tok_1234567890abcdef1234567890abcdef';
++  const pad = 'z'.repeat(MAX_REASON_CHARS - 10); // token 从第 110 字符开始，跨过 120 边界
++  const reason = pad + t_oken + 'tail';
++  const out = sanitizeResult({ ok: false, reasons: [reason] });
++  assert.ok(out.reasons[0].includes(t_oken), '净化阶段必须保留完整 token，否则下游打码必漏');
++});
+diff --git a/test/worker/worker-payload-merge.test.mjs b/test/worker/worker-payload-merge.test.mjs
+index 7db6a08..5177e19 100644
+--- a/test/worker/worker-payload-merge.test.mjs
++++ b/test/worker/worker-payload-merge.test.mjs
+@@ -107 +107,16 @@ test('mergeWorkerPayload：null/数组/非对象入参不抛错、返回空对
+-});
+\ No newline at end of file
++});
++test('mergeWorkerPayload：子块里的宿主键（workerMode/machine/token）不得顶掉宿主值（v2.7.6，P3-1）', () => {
++  const payload = buildWorkerPayload(
++    { workerMode: 'off', machine: 'should-not-leak', token: 'nested-token', worker: { workerMode: 'off', machine: 'should-not-leak', token: 'nested-token', agentEnabled: true } },
++    { workerMode: 'on', machine: 'gt14', token: 'host-token' },
++  );
++  assert.equal(payload.workerMode, 'on', '宿主 workerMode 必须留在顶层');
++  assert.equal(payload.machine, 'gt14', '宿主 machine 不得被子块覆盖');
++  assert.equal(payload.token, 'host-token', '宿主 token 不得被子块覆盖');
++  assert.equal(payload.worker.workerMode, undefined, 'workerMode 不是转发键，不得进 worker 块');
++  assert.equal(payload.worker.machine, undefined, 'machine 不得进 worker 块');
++  assert.equal(payload.worker.token, undefined, 'token 不得进 worker 块');
++  assert.equal(payload.worker.agentEnabled, true, '白名单内的子块键仍生效');
++  const eff = normalizeConfig(payload);
++  assert.equal(eff.config.workerMode, 'on', 'normalizeConfig 不得被残留子块键改回 off');
++});
+diff --git a/test/worker/worker.test.mjs b/test/worker/worker.test.mjs
+index 9b008b1..8f62f0e 100644
+--- a/test/worker/worker.test.mjs
++++ b/test/worker/worker.test.mjs
+@@ -422,0 +423,25 @@ test('finishTask：result.reasons 落看板前也要脱敏（stdout 通道，P1-
++test('finishTask：reason 里的 token 跨越 120 字符边界时也必须被完整打码（result.js 不再预截断）', async () => {
++  const boards = makeBoard({ t1: task('t1') });
++  const token = 'opaque-board-token-boundary-1a2b3c4d5e6f';
++  // 让 token 从第 110 字符开始，横跨 120 边界：净化阶段若先截到 120，token 会被切成 10 字符残片
++  const padded = 'p'.repeat(110) + token + ' tail';
++  const worker = makeWorker(
++    boards,
++    async () => ({
++      status: 'failed',
++      stage: 'exec',
++      note: 'stage=exec exit=1',
++      result: { ok: false, reasons: [padded] },
++      artifact: '',
++    }),
++    { ...BASE_CONFIG, token },
++  );
++  await worker.tick();
++  await new Promise((r) => setTimeout(r, 30));
++  const mark = boards.calls.find((c) => c.kind === 'mark' && c.status === 'failed');
++  assert.ok(mark, '应该有 failed 回写');
++  const first = String((mark.result && mark.result.reasons && mark.result.reasons[0]) || '');
++  assert.ok(!first.includes(token.slice(0, 10)), `reason 泄漏 token 前缀残片: ${first}`);
++  assert.equal(first.length <= 120, true, '最终落板仍必须 ≤120 字符');
++});
++

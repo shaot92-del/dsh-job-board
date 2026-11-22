@@ -103,7 +103,7 @@ if ($tokens.Count -eq 0) {
     Write-Log "abort: token 文件为空/不存在（$TokenFile）"
     exit 3
 }
-Say ("token: {0} 枚（首枚前缀 {1}…）" -f $tokens.Count, $tokens[0].Substring(0, [Math]::Min(8, $tokens[0].Length)))
+Say ("token: {0} 枚（首枚前缀 {1}…）" -f $tokens.Count, $tokens[0].Substring(0, [Math]::Min(6, [Math]::Max(0, $tokens[0].Length - 1))))
 $probe = $tokens[0]
 
 if ($OnlyCheck) {

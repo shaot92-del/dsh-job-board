@@ -8,6 +8,7 @@ import {
   formatResultSummary,
   RESULT_PREFIX,
   MAX_REASON_CHARS,
+  MAX_REASON_INPUT_CHARS,
   MAX_REASONS,
 } from '../../lib/worker/result.js';
 
@@ -61,19 +62,21 @@ test('cleanNumber：越界与非法值返回 undefined（不落成 0）', () => 
   assert.equal(cleanNumber(true), undefined);
 });
 
-test('sanitizeResult：ok 必须是布尔，reasons 截断到 5 条 ×120 字符', () => {
+test('sanitizeResult：ok 必须是布尔，reasons 只取前 5 条且不提前截断（脱敏后才截断）', () => {
   assert.equal(sanitizeResult(null), null);
   assert.equal(sanitizeResult([]), null);
   assert.equal(sanitizeResult({ ok: 1 }), null);
 
-  const long = 'x'.repeat(MAX_REASON_CHARS + 40);
+  const long = 'x'.repeat(MAX_REASON_CHARS + 40); // 160 字符，仍在净化输入上限内
   const reasons = Array.from({ length: 7 }, (_, i) => (i === 0 ? long : `r${i}`));
   const out = sanitizeResult({ ok: true, expected: 5, actual: 4, reasons: [...reasons, '  ', 123] });
   assert.equal(out.ok, true);
   assert.equal(out.expected, 5);
   assert.equal(out.actual, 4);
   assert.equal(out.reasons.length, MAX_REASONS);
-  assert.equal(out.reasons[0].length, MAX_REASON_CHARS);
+  // 净化阶段不截断（否则跨 120 边界的 token 会被切成残片，maskResult 匹配不到）
+  assert.equal(out.reasons[0].length, MAX_REASON_CHARS + 40);
+  assert.equal(out.reasons[0], long);
   // 空串与非字符串被丢弃、接下来的条目顶上
   assert.equal(out.reasons[1], 'r1');
 });
@@ -94,4 +97,18 @@ test('formatResultSummary：单行摘要', () => {
   assert.equal(formatResultSummary({ ok: true, expected: 3, actual: 2, reasons: ['x'] }), 'result=ok expected=3 actual=2 reasons=1');
   assert.equal(formatResultSummary({ ok: false }), 'result=not-ok');
   assert.equal(RESULT_PREFIX, 'DSH_RESULT');
+});
+
+test('sanitizeResult：只做 4096 字符的内存上限，不做 120 字符最终截断', () => {
+  const huge = 'y'.repeat(MAX_REASON_INPUT_CHARS + 500);
+  const out = sanitizeResult({ ok: true, reasons: [huge] });
+  assert.equal(out.reasons[0].length, MAX_REASON_INPUT_CHARS);
+});
+
+test('sanitizeResult：跨越 120 字符边界的 token 保持完整，交由 maskResult 打码', () => {
+  const t_oken = 'tok_1234567890abcdef1234567890abcdef';
+  const pad = 'z'.repeat(MAX_REASON_CHARS - 10); // token 从第 110 字符开始，跨过 120 边界
+  const reason = pad + t_oken + 'tail';
+  const out = sanitizeResult({ ok: false, reasons: [reason] });
+  assert.ok(out.reasons[0].includes(t_oken), '净化阶段必须保留完整 token，否则下游打码必漏');
 });

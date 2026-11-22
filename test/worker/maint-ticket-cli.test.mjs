@@ -97,7 +97,9 @@ test('verifyGoal：票据字段被改（JSON 合法但签名不符）→ badsig'
   const { goalText } = signGoal({ keyFile, payloadText: PAYLOAD, machine: 'gt14', verb: 'config-set' });
   const [payloadLine, ticketLine] = goalText.split('\n');
   const ticket = JSON.parse(Buffer.from(ticketLine.slice('ticket='.length), 'base64url').toString('utf8'));
-  ticket.nonce = `${ticket.nonce.slice(0, -1)}X`;
+  // 必须保证「真的改了」：原写法把末位换成 X，若末位本来就是 X 则票据未变、签名仍有效 → 偶发失败
+  const flipped = ticket.nonce[0] === 'A' ? 'B' : 'A';
+  ticket.nonce = flipped + ticket.nonce.slice(1);
   const reencoded = Buffer.from(JSON.stringify(ticket), 'utf8').toString('base64url');
   const r = verifyGoal({ goalText: `${payloadLine}\nticket=${reencoded}`, keyFile, machine: 'gt14' });
   assert.equal(r.ok, false);

@@ -105,3 +105,18 @@ test('mergeWorkerPayload：null/数组/非对象入参不抛错、返回空对�
   assert.deepEqual(mergeWorkerPayload({ worker: null }), {});
   assert.deepEqual(mergeWorkerPayload({ worker: [] }), {});
 });
+test('mergeWorkerPayload：子块里的宿主键（workerMode/machine/token）不得顶掉宿主值（v2.7.6，P3-1）', () => {
+  const payload = buildWorkerPayload(
+    { workerMode: 'off', machine: 'should-not-leak', token: 'nested-token', worker: { workerMode: 'off', machine: 'should-not-leak', token: 'nested-token', agentEnabled: true } },
+    { workerMode: 'on', machine: 'gt14', token: 'host-token' },
+  );
+  assert.equal(payload.workerMode, 'on', '宿主 workerMode 必须留在顶层');
+  assert.equal(payload.machine, 'gt14', '宿主 machine 不得被子块覆盖');
+  assert.equal(payload.token, 'host-token', '宿主 token 不得被子块覆盖');
+  assert.equal(payload.worker.workerMode, undefined, 'workerMode 不是转发键，不得进 worker 块');
+  assert.equal(payload.worker.machine, undefined, 'machine 不得进 worker 块');
+  assert.equal(payload.worker.token, undefined, 'token 不得进 worker 块');
+  assert.equal(payload.worker.agentEnabled, true, '白名单内的子块键仍生效');
+  const eff = normalizeConfig(payload);
+  assert.equal(eff.config.workerMode, 'on', 'normalizeConfig 不得被残留子块键改回 off');
+});

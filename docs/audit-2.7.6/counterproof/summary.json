@@ -1,0 +1,10 @@
+{
+  "version": "2.7.6",
+  "executed": 19,
+  "unexecuted": 0,
+  "unknown": 0,
+  "notApplicable": 0,
+  "unexecutedIds": [],
+  "verdict": "PASS",
+  "reason": "全部反证路径 EXECUTED；命令 7/7 符合预期（含崩溃包负向门禁 exit=1）。"
+}

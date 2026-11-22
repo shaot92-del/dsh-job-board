@@ -400,5 +400,8 @@ test('checkAgentPrompt：超过 256 KiB 硬上限直接 too-long，不进归一�
   assert.match(r.detail, new RegExp(String(HARD_MAX_PROMPT_CHARS)));
   // 边界内（硬上限内）不会因这条被拒：交给 maxChars/规则继续判。
   const inside = 'x'.repeat(HARD_MAX_PROMPT_CHARS);
-  assert.notEqual(String(checkAgentPrompt(inside, gate).detail), `${HARD_MAX_PROMPT_CHARS + 1}>${HARD_MAX_PROMPT_CHARS}`);
+  const insideRes = checkAgentPrompt(inside, gate);
+  // 恰好 HARD_MAX 字符：硬上限这条规则不该触发（它可能因 base64 大块等其它规则被拒，
+  // 所以断言「不是 too-long」而不是「ok===true」——那才是这条用例真正要锁定的行为）。
+  assert.notEqual(insideRes.rule, 'too-long', `硬上限内不应触发 too-long（实际 rule=${insideRes.rule}）`);
 });
