@@ -593,6 +593,88 @@ if (identPatched !== RAW) {
   }
 }
 
+// ── 第 5 轮：自检报警横幅收缩开关（v2.7.5 U1，用户反馈：笔记本上报警条挡任务列表）────────────
+// 负向门禁：旧 bundle 无 dsh-doctor-collapsed-v1 / doctorOpen，以下静态断言必须 FAIL。
+check('U1 收缩开关存在（localStorage 键 dsh-doctor-collapsed-v1）', RAW.includes("dsh-doctor-collapsed-v1"), 'doctor-collapsed key')
+check('U1 状态与切换函数存在（doctorOpen / toggleDoctor）', RAW.includes('const [doctorOpen, setDoctorOpen]') && RAW.includes('toggleDoctor'), 'doctorOpen/toggleDoctor')
+check('U1 收缩条有样式钩子（dsb-doctor-collapsed）', RAW.includes('dsb-doctor-collapsed'), 'dsb-doctor-collapsed')
+check('U1 自检不可用不可折叠（ok===false 强制展开）', /ok === false\)\) && doctorIssues\.length/.test(RAW) || RAW.includes("!(doctor && doctor.ok === false) && doctorIssues.length"), 'ok=false 强制展开')
+
+function findByClassOnClick(node, cls) {
+  if (!node || typeof node !== 'object') return null
+  if (node.props && node.props.className === cls && typeof node.props.onClick === 'function') return node
+  for (const k of (Array.isArray(node) ? node : node.children || [])) {
+    const g = findByClassOnClick(k, cls)
+    if (g) return g
+  }
+  return null
+}
+
+// U1 断言统一用子串匹配（数组 indexOf 是精确元素匹配，'自检：有警告'/'! w1' 这类合并节点会误判）
+const hasText = (arr, s) => arr.some((x) => String(x).indexOf(s) >= 0)
+
+const U1_DOCTOR = { ok: true, version: '2.7.4', installedVersion: '2.7.4', role: 'owner', checks: [{ id: 'a', level: 'warn', message: 'w1' }, { id: 'b', level: 'warn', message: 'w2' }] }
+const U1_ANCHOR = 'const [doctor, setDoctor] = React.useState(null)'
+
+// U1-a 默认展开：无折叠记忆 ⇒ 完整横幅（标题 + 每条 message + 收起按钮）
+{
+  const src = RAW.replace(U1_ANCHOR, 'const [doctor, setDoctor] = React.useState(' + JSON.stringify(U1_DOCTOR) + ')')
+  const t = flattenText(renderOnce(src).tree)
+  check('U1-a 默认展开：标题 + 明细 w1/w2 + 「收起 ▴」按钮', hasText(t, '有警告') && hasText(t, 'w1') && hasText(t, 'w2') && hasText(t, '收起 ▴'), '')
+
+  // U1-b 收缩态：localStorage 记忆 '1' ⇒ 单行摘要，不含明细，可点
+  const collapsed = renderOnce(src, { localStorage: { 'dsh-doctor-collapsed-v1': '1' } })
+  const tc = flattenText(collapsed.tree)
+  const collapsedNode = findByClassOnClick(collapsed.tree, 'dsb-doctor-collapsed')
+  check(
+    'U1-b 收缩态：单行摘要「2 项待处理…2 警告」且不含明细 w1/w2',
+    hasText(tc, '2 项待处理') && !hasText(tc, 'w1') && !hasText(tc, 'w2') && hasText(tc, '2 警告'),
+    '',
+  )
+  check('U1-b2 收缩条可点（onClick + role=button + aria-expanded=false）', Boolean(collapsedNode) && collapsedNode.props.role === 'button' && collapsedNode.props['aria-expanded'] === 'false', '')
+
+  // U1-c 互切：点收缩条 → 展开；点「收起 ▴」 → 收缩 + 记忆落盘
+  if (collapsedNode) {
+    collapsedNode.props.onClick()
+    const tOpen = flattenText(collapsed.rerender())
+    check('U1-c1 点收缩条 ⇒ 展开（w1/w2 可见）', hasText(tOpen, 'w1') && hasText(tOpen, 'w2'), '')
+  }
+  {
+    const collapsed2 = renderOnce(src, { localStorage: { 'dsh-doctor-collapsed-v1': '1' } })
+    const node2 = findByClassOnClick(collapsed2.tree, 'dsb-doctor-collapsed')
+    if (node2) {
+      node2.props.onClick()
+      const tree2 = collapsed2.rerender()
+      const openBtn = findButton(tree2, '收起 ▴')
+      check('U1-c2 展开态有「收起 ▴」按钮', Boolean(openBtn), '')
+      if (openBtn) {
+        openBtn.props.onClick()
+        const tC = flattenText(collapsed2.rerender())
+        // 收起 ⇒ doctorOpen=false ⇒ toggleDoctor 写入 '1'（'1'=收缩）
+        check('U1-c3 点「收起 ▴」 ⇒ 收缩（明细不可见）+ 记忆写入 localStorage（=1）', !hasText(tC, 'w1') && String(collapsed2.sandbox.localStorage.getItem('dsh-doctor-collapsed-v1')) === '1', '')
+      }
+    }
+  }
+
+  // U1-d ok=false 强制展开：即使记忆为收缩，也渲染「自检不可用」且无收起按钮
+  const badSrc = RAW.replace(U1_ANCHOR, 'const [doctor, setDoctor] = React.useState(' + JSON.stringify({ ok: false, error: 'boom' }) + ')')
+  const tb = flattenText(renderOnce(badSrc, { localStorage: { 'dsh-doctor-collapsed-v1': '1' } }).tree)
+  check('U1-d 自检不可用强制展开（collapsed=1 仍可见）且无「收起 ▴」', hasText(tb, '自检不可用') && !hasText(tb, '收起 ▴'), '')
+
+  // U1-e 混合 error+warn 收缩：计数正确 + 错误数红字（不靠颜色单独传达，文案本身含「错误」）
+  const mixSrc = RAW.replace(U1_ANCHOR, 'const [doctor, setDoctor] = React.useState(' + JSON.stringify({ ok: true, version: '2.7.4', checks: [{ id: 'e', level: 'error', message: 'e1' }, { id: 'w', level: 'warn', message: 'w9' }] }) + ')')
+  const mixRun = renderOnce(mixSrc, { localStorage: { 'dsh-doctor-collapsed-v1': '1' } })
+  const tm = flattenText(mixRun.tree)
+  check('U1-e 收缩计数「2 项待处理（1 错误 / 1 警告）」', tm.some((x) => String(x).indexOf('2 项待处理') >= 0) && tm.some((x) => String(x).indexOf('1 错误') >= 0) && tm.some((x) => String(x).indexOf('1 警告') >= 0), '')
+  const mixNode = findByClassOnClick(mixRun.tree, 'dsb-doctor-collapsed')
+  const errSpan = mixNode && (mixNode.children || []).find((c) => c && c.props && String(flattenText(c).join('')) === '1 错误')
+  check('U1-e2 错误数红色加粗（color=--dsb-bad, fontWeight 700）', Boolean(errSpan) && errSpan.props.style.color === 'var(--dsb-bad)' && errSpan.props.style.fontWeight === 700, '')
+
+  // U1-f 畸形：checks 非数组 / doctor=null → 不渲染横幅且不崩
+  const tBad = flattenText(renderOnce(RAW.replace(U1_ANCHOR, 'const [doctor, setDoctor] = React.useState(' + JSON.stringify({ ok: true, checks: 'corrupted' }) + ')')).tree)
+  check('U1-f checks 非数组 ⇒ 横幅不渲染、不崩（:1547 Array.isArray 守卫）', !hasText(tBad, '自检：') && !hasText(tBad, '调度台渲染出错'), '')
+}
+
 const failed = results.filter((r) => !r.cond)
 console.log(
   failed.length

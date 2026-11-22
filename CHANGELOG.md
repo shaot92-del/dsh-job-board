@@ -1,3 +1,26 @@
+## v2.7.5 — 2026-11-22（安全收口 + 自检横幅可收缩 + 派工弹窗守卫）
+
+### 修什么
+
+- **note 脱敏阈值对齐**（盘古全盘扫描 P0-1）：`agent-runner` / `exec-runner` 的 `noteSecrets` 阈值从 `>= 4` 改 `>= 1`，与 `log.js` 一致——3 位及以下 token 以前会原样写进任务 note 上板。
+- **先脱敏后截断**（P0-2）：`agent-runner` / `exec-runner` 改为 `oneLine(noteMask(text))`；旧顺序是截断后再打码，token 跨 400 字符边界就漏出残片。
+- **restart 日志文件名安全化**（P0-3）：`maint-verbs` 的 `restart-<taskId>.log` 先用白名单字符集清洗并做 stateDir 包含校验，杜绝 `..` 穿越。
+- **额度退款失败可见**（P1-1）：`budget.refund()` 返回 `ok:false` 时打 warn，不再静默吞掉。
+- **spawn 失败清理临时目录**（P1-2）：`exec-runner` 失败分支调用 `cleanupTmp()`。
+- **config-set 支持多行块序列**（P1-3）：`upsertBlock` 替换键时连同其子行整块替换，不再留下孤儿 `- id:` 行破坏 YAML；插入位置也跳到最后一个键的子行之后。
+
+### 改了什么（体验）
+
+- **自检报警横幅可收缩**（用户需求 / U1）：默认按上次偏好（localStorage `dsh-doctor-collapsed-v1`）收缩成单行摘要「N 项待处理（x 错误 / y 警告）」，点击或 Enter/Space 展开；`ok=false`（自检不可用）强制展开且不提供收起。
+- **派工弹窗守卫**（GLM 可用性 S1/S2）：没有在线副机时「确认派工」禁用并给出原因；离线机器卡不可选中（点击提示「当前离线，不能派工」）。
+- **行内中文诊断**（S4）：任务行 note 命中闸门时直接显示「诊断：<中文说明>」，原始 reason 放 `title` 悬停查看。
+
+### 怎么验证
+
+`npm run gate`：check-text PASSED、plugcheck 18/28、smoke **65/65**、单测 **469/469**、pack-check 108 文件。
+负向门禁 `SMOKE_BUNDLE=<2.7.0 崩溃包>` 仍必须 FAIL（含 `#130`）。
+真机：GT14 装 2.7.5 后 `maint version` 报 `plugin=2.7.5`，写通道 `维护写动词已接线`，派工 D4 落本机 worker（`remote_id` 空）。
+
 ## v2.7.4 — 2026-11-22（治本：团队顶层键不再丢 + 写通道可观测 + 装完自检）
 
 真机事故（GT14）：`maintenanceWriteEnabled` / `maintAuthPublicKeys` 写在团队行顶层时，宿主只把

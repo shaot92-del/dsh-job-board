@@ -286,6 +286,30 @@ test('config-set：类型错（allowAllRoots 非布尔） → maint-config-inval
   assert.equal(r.reason, MAINT_VERB_REASONS.CONFIG_INVALID);
 });
 
+test('config-set：agentAllowlist 是多行块序列 → 整块替换、不留孤儿子行（v2.7.5 P1-3）', async () => {
+  const profileDir = tmpDir();
+  const patchFile = path.join(profileDir, 'cordis.patch.yml');
+  fs.writeFileSync(patchFile, [
+    "plugins:",
+    "  - id: team",
+    "    config:",
+    "      worker:",
+    "        workerMode: 'on'",
+    "        agentAllowlist:",
+    "          - id: old",
+    "            matchAll: true",
+    "        pollMs: 2000",
+  ].join('\n'), 'utf8');
+  const v = makeVerbs({ profileDir });
+  const r = await v.run('config-set', { set: { agentAllowlist: [{ id: 'any', matchAll: true }] }, dryRun: false }, { taskId: 't1' });
+  assert.equal(r.ok, true, r.note);
+  const after = fs.readFileSync(patchFile, 'utf8');
+  assert.ok(!/^\s*- id: old/m.test(after), '旧序列项必须被删掉');
+  assert.match(after, /agentAllowlist: \[/, '值应改成单行流式数组');
+  assert.match(after, /pollMs: 2000/, '后续键必须完好');
+  assert.ok(!/^ {10}- /m.test(after), '不得留下孤儿序列行');
+});
+
 test('config-set：类型错（agentAllowlist 项非对象） → maint-config-invalid', async () => {
   const v = makeConfigVerbs(samplePatch(), {});
   const r = await v.run('config-set', { set: { agentAllowlist: ['review'] } }, { taskId: 't1' });
