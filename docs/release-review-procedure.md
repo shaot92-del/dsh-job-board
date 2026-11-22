@@ -1,4 +1,4 @@
-# 发版审查操作规程（v1.1，三方合稿已整篇并入）
+# 发版审查操作规程（v1.2，三方合稿已整篇并入 + 事故注入条款）
 
 > 状态：**v1.1（2026-11-21 01:00 冻结）**。组装方式：§0/§1/§7/附录A 主控起草；§1.4 + §3 + §5 = GLM 合稿；§2 + §4 = 盘古合稿；§2A + §6 + §8 = Kimi 合稿（均整篇并入，未做删改，仅标题降级；两处冲突已裁决见附录 B）。
 > 来源文件：`_外部评估\2026-11-20-派工白屏\{盘古-全量审计模板, Kimi-react130复核报告, GLM-派工弹窗修复spec}.md`、`C:\Users\17827\codearts\DSH\crashcase-2.7.0\docs\review\release-review-§2-§6-§8.md`。
@@ -1535,6 +1535,8 @@ foreach ($File in $JsonFiles) {
 
 ## 附录 B 合稿冲突裁决（2026-11-21，主控）
 
+> **v1.2 变更**：新增 §9（部署与安装审查）、§10（发布通道审查）、附录 C（事故注入台账，8 条）。这些条款全部来自 2026-11-20~21 的六个真实事故，每条都能指到一次翻车。
+
 | # | 冲突点 | 各方原文 | 裁决 | 理由 |
 |---|---|---|---|---|
 | 1 | 全量审计频率 | GLM §5.4.1 规则 2 / Kimi auditor-protocol：「每 5 个版本或公开发布前」 | **每次发版都全量**；常驻增量仅作辅助 | 用户明确口径：每次上架前必须全量审计；2.7.0 正是「只审改动面」漏掉休眠分支 |
@@ -1545,3 +1547,81 @@ foreach ($File in $JsonFiles) {
 | 6 | 路径限定 | 盘古 §4.3：限定 ~/.dsh/profiles/ | 保留限定，**保留 -PatchPath 逃生门**（测试/副机） | 与既有实现一致，避免锁死排障路径 |
 
 > 裁决生效后，正文中与之冲突的措辞以上表为准；下一版合稿由章节作者自行收敛，主控不再逐条改。
+
+---
+
+## §9 部署与安装审查（v1.2 新增，硬门）
+
+> 背景：2.7.1 装到 GT14 后 DSH 起不来。根因不是代码写错，而是**安装方式**——`robocopy /E` 覆盖正在运行的目录，留下「新 `lib/index.js` + 旧 `lib/dispatch-filter.js`」的混合树，ESM 链接期抛 `does not provide an export named 'canDispatchRemote'`。
+> 结论：**安装本身就是一次发版面**，必须像代码一样被审查。
+
+### 9.1 安装必须原子
+| 要求 | 判定 |
+|---|---|
+| 解包到 `.stage-<ts>`，不直接写目标目录 | 目标目录在切换前字节不变 |
+| 写 `install-manifest.json`（版本 + 关键文件 SHA256） | 清单存在且 `package.json` 版本一致 |
+| 旧目录改名 `.bak-<ts>` 后再换名 | 失败可换回，用户数据不丢 |
+| 装完自检：版本 / 文件数 / 关键文件 SHA256 / 清单 | 任一不符 → 自动回滚并报错 |
+| 目标 DSH 在跑时先停，装完自动拉起 | 失败分支也必须拉起（不许把用户机器留在关机态） |
+| **禁止** `robocopy /E` 覆盖运行中目录 | 出现即 FAIL |
+
+关键文件至少含：`lib/index.js`、`lib/dispatch-filter.js`、`lib/client.js`、`lib/worker/version.js`。
+
+### 9.2 装完必须在真副机验三件事
+1. `maint version` 或 `plugin=<ver>` 探针回报新版本；
+2. DSH 能起来（进程在、面板可开、`doctor` 有返回）；
+3. 插件 `apply()` 的安装清单自检没有 warn（有 warn 就是混合树，直接回滚）。
+
+> 只在本机 fixture 验过不算过。**2.7.2 的教训**：本机 fixture 全绿、真副机起不来，差别在「运行中目录 + 部分文件」这个真实条件。
+
+### 9.3 脚本自身也要过门禁
+装机脚本这几类 bug 都真实发生过，必须写进用例：
+- 调用了不存在的函数（`Warn` 未定义）；
+- 复核计数把自生成文件算漏/算多（`install-manifest.json` off-by-one）；
+- 参数拼接被 PowerShell 解析成别的参数（`ForEach-Object { } -join`）；
+- 只改配置分支里 `$tmp` 未赋值，收尾 `Test-Path` 抛异常（`-SkipPackage`）；
+- YAML 形状假设（`worker: {}` 内联、worker 位置错放、重复键）。
+
+用例矩阵（fixture 上跑，必须全绿）：5 种 YAML 形状 × （装包 / 只改配置）× （成功 / 故意失败）+ 幂等重跑一次。
+
+---
+
+## §10 发布通道审查（v1.2 新增）
+
+> 背景：① npm 发布被 `EOTP` 挡住——账号是 auth-and-writes，CLI 拿不到可用授权 URL（日志里被脱敏）；② 代理 `127.0.0.1:7897` 让 registry TLS 握手失败（`ECONNRESET`）；③ 自动更新通道哑火——插件读 GitHub Releases，而 Releases 停在 `v2.5.10`，2.6.x/2.7.x 全部没建 Release。
+
+### 10.1 npm 发布
+| 项 | 要求 |
+|---|---|
+| 网络 | `--noproxy '*'` 且清空 `HTTP(S)_PROXY`（Registry 直连） |
+| 身份 | 先 `npm whoami` 打印账号；**发布权限**要么 Automation/Granular token（勾 Bypass 2FA），要么人在场用浏览器 Authorize |
+| 产物校验 | 发布后 `npm view <pkg>@<ver> dist.shasum` **必须等于**本地 tgz 的 SHA1；`fileCount` 与 pack-check 一致 |
+| 失败回滚 | 版本不可撤销 → 只能用 `deprecate` + 更高版本覆盖 `latest`；签核表必须写 deprecate 话术 |
+| 记录 | 发布人、时间、sha1、`_npmUser`、`dist-tags` 截图/输出留档 |
+
+### 10.2 GitHub Release 与 tag
+- **tag 与 Release 必须同时存在**：`v2.7.x` 起每次发版都要建 Release（名称含版本 + 一段「修什么/怎么验」），否则客户端更新提示读不到。
+- tag 用 annotated tag；`git ls-remote --tags` 核验远端有 `^{}` 解引用提交。
+- Release 正文模板：版本、npm 包名与版本、修复清单、验证命令与数字、回滚方式。
+
+### 10.3 商城条目（awesome-dsh-plugin）
+- 条目描述里的工具数/能力必须与代码一致（当前 14 `board_*` + 4 `sh_*` = 18）。
+- 平台维护者意见（占位符、命名、清单完整性）视为**发版输入**，处理后在 PR 里回一条说明并附 commit。
+- 条目本身不随版本变化；npm `latest` 才是用户装到的版本 ⇒ **npm 没发成功，商城条目就等于没更新**。
+
+---
+
+## 附录 C 事故注入台账（v1.2，2026-11-20 ~ 11-21）
+
+| # | 事故 | 根因（机制） | 由哪条兜住 |
+|---|---|---|---|
+| C1 | 2.7.0 点「派工」整槽白屏（React #130） | `lib/client.js:3000` 嵌套 `h(h(...))`，element type 变成对象；空池/无默认模型时 `return null` 让分支休眠 | §3 严格渲染 + §3.3 数据翻转 + §5 D3/D4 真派工 |
+| C2 | 指定模型派工必失败（三层） | Host `take` 4s 与 worker `claim` 2s 抢同一 queued 任务；远程桥 headless 拒 model 且 note 不可操作；allowlist 条目缺 `matchAll`/前缀被静默丢弃 | §5 派工矩阵（D4 `remote_id` 必须空、D5/D7 必须可操作 blocked）+ §10 配置就绪检查 |
+| C3 | GT14 装 2.7.2 后 DSH 起不来 | 跨文件具名导入 + robocopy 覆盖运行中目录 → 混合树 → ESM 链接期 `does not provide an export` | §9.1 原子安装 + §9.2 真副机验证 |
+| C4 | 装机脚本 5 个自身 bug | `Warn` 未定义 / 文件数 off-by-one / pid join 括号 / `-SkipPackage` 下 `$tmp` 未赋值 / YAML 形状假设 | §9.3 脚本用例矩阵 |
+| C5 | npm 发布 EOTP + 代理 TLS 失败 | auth-and-writes 账号 CLI 需 OTP，授权 URL 被脱敏；7897 代理拦 TLS | §10.1 网络与权限条款 |
+| C6 | 自动更新通道哑火 | 只推 tag 与 npm，没建 GitHub Release | §10.2 tag/Release 同步 |
+| C7 | 审查口径被裁成「只审改动面」 | 审查员按「改了 N 条审 N 条」，全量审计与可用性缺位 | §1 六类无效证据 + §2/§2A 全量 + 本规程「每次发版全量」 |
+| C8 | 主控误判「机器名大小写导致通道分裂」 | 拿现象对照当机制证据，没先查资料库 `10-模型路由与派工.md` | §2A 反证四态 + 方法约束（先查库、区分现象与机制、结果字段≠原因字段） |
+
+**使用方式**：每次发版在 `docs/audit-<ver>/summary.md` 里逐条写 C1–C8 的适用性（`PASS` / `N/A` / `FAIL` + 证据路径）。出现新的翻车，就新增 C9 并补一条能兜住它的门。
