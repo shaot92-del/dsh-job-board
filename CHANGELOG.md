@@ -1,3 +1,23 @@
+## v2.7.7 — 2026-11-22（Host 侧回板路径脱敏：远端 reasons / note 先打码后截断）
+
+**安全（2.7.6 定向复审 §6 记录的既有同类缺陷，本版修复）**
+- 复现链：副机任务结束后 Host 侧 `syncRemote` 读回 logs → `parseDshResult()` → `POST /api/mark` 写板。
+  原实现 `lib/index.js` 把 `result.reasons` 直接 `String(x).slice(0, 120)`、把 note 用的 detail 直接 `slice(0, 200)`，
+  **整条路径没有打码**——远端 stdout 里出现的 board token / 家目录会原样进板与面板。
+- 修法：`lib/worker/result.js` 新增两个纯函数 `maskReasons(list, {secrets, home, max, chars})` 与
+  `maskDetailText(text, {secrets, home, max})`，一律**先 mask 再截断**（顺序反了就会把跨边界 token 切成残片，
+  与 v2.7.6 修的 worker 侧 P1-1 同一类问题）。
+- `lib/index.js`：`parseDshResult(text, maskOpts)` 增加打码入参；`syncRemote` 调用处传 `{ secrets: [cfg.token], home: os.homedir() }`；
+  detail 改走 `maskDetailText(..., { max: 200 })`。
+- 新增测试（`test/worker/result.test.mjs` 4 条）：跨 120 边界 token 不留残片且 ≤120、最多 5 条且过滤空串、家目录打码、
+  `maskDetailText` 打码+拉平+200 截断且 token 跨 200 边界不漏。
+
+**未改行为**
+- board `_clean_result` 契约不变（reasons ≤5 条、每条 ≤120）；note 长度上限不变（400 字符）。
+- 仅 Host 侧回板路径受影响；worker 侧 v2.7.6 的修复保持原样。
+
+**验证**
+- `npm run gate`：check-text / plugcheck(18 tools, 28 routes) / client-render-smoke / 单测 / pack-check 全绿（见提交记录）。
 ## v2.7.6 — 2026-11-22（全量审查修正：result.reasons 脱敏链闭合 + 子块键收口 + 脚本/测试/文档）
 
 **安全（审查 P1-1，唯一未闭合项）**

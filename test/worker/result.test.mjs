@@ -10,6 +10,8 @@ import {
   MAX_REASON_CHARS,
   MAX_REASON_INPUT_CHARS,
   MAX_REASONS,
+  maskReasons,
+  maskDetailText,
 } from '../../lib/worker/result.js';
 
 test('parseDshResult：取最后一条，忽略前面的旧结果', () => {
@@ -111,4 +113,37 @@ test('sanitizeResult：跨越 120 字符边界的 token 保持完整，交由 ma
   const reason = pad + t_oken + 'tail';
   const out = sanitizeResult({ ok: false, reasons: [reason] });
   assert.ok(out.reasons[0].includes(t_oken), '净化阶段必须保留完整 token，否则下游打码必漏');
+});
+
+test('maskReasons（v2.7.7）：先打码再截 120，跨边界 token 不留残片', () => {
+  const token = 'tok_1234567890abcdef1234567890abcdef';
+  const pad = 'z'.repeat(MAX_REASON_CHARS - 10); // token 从第 110 字符开始，跨过 120 边界
+  const out = maskReasons([pad + token + 'tail'], { secrets: [token] });
+  assert.equal(out.length, 1);
+  assert.ok(out[0].length <= MAX_REASON_CHARS, '必须 ≤120');
+  assert.ok(!out[0].includes(token), 'token 必须已被打码');
+  assert.ok(!out[0].includes(token.slice(0, 12)), '跨边界的 token 前缀残片也不能落板');
+});
+
+test('maskReasons：最多 5 条、过滤空串、非数组返回空', () => {
+  const many = ['a', '', 'b', 'c', 'd', 'e', 'f'];
+  assert.equal(maskReasons(many).length, MAX_REASONS);
+  assert.deepEqual(maskReasons(null), []);
+  assert.deepEqual(maskReasons('nope'), []);
+});
+
+test('maskReasons：家目录打码（note 上板前不能泄露用户名）', () => {
+  const home = 'C:\\Users\\tester';
+  const out = maskReasons(['读取 ' + home + '\\secret.txt 失败'], { home });
+  assert.ok(!out[0].includes('tester'), '家目录必须被打码');
+});
+
+test('maskDetailText（v2.7.7）：打码 + 拉平 + 截断，token 跨 200 边界也不漏', () => {
+  const token = 'board_token_abcdef1234567890';
+  const line = 'x'.repeat(190) + token + 'y'.repeat(40);
+  const out = maskDetailText(line, { secrets: [token], max: 200 });
+  assert.ok(out.length <= 200);
+  assert.ok(!out.includes(token));
+  assert.ok(!out.includes(token.slice(0, 8)));
+  assert.equal(maskDetailText('a\nb\r\nc', { max: 200 }), 'a b c');
 });
