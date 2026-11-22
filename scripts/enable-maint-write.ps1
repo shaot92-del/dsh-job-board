@@ -26,6 +26,7 @@ param(
   [string]$PublicKeyFile = '',
   [string]$OutDir = '',
   [string]$PkgDir = '',
+  [string]$DshExePath = '',
   [switch]$AllowRestart,
   [switch]$Force,
   [switch]$DryRun
@@ -182,11 +183,50 @@ function Get-KeyValue($key) {
 }
 
 $pad = ' ' * $childIndent
+
+# v2.7.8：升级包目录缺省自动探测（副机共享盘映射的常用位置），省得每次手传。
+if (-not $PkgDir) {
+  foreach ($cand in @('Z:\_tools\dsh-job-board', 'L:\云盘\gp_video_xfer\_tools\dsh-job-board')) {
+    # 盘符可能没映射（Join-Path 会抛「找不到驱动器」）⇒ 先确认卷在
+    try { if (-not (Test-Path -LiteralPath (Split-Path -Qualifier $cand))) { continue } } catch { continue }
+    try {
+      if (Test-Path -LiteralPath $cand -PathType Container) { $PkgDir = $cand; break }
+    } catch { continue }
+  }
+}
+
+# v2.7.8：-AllowRestart 时同时写 dshExePath（远程升级要「停 DSH→换包→拉起」）。
+# 这两个键刻意不在远程可写白名单里，只能本机写一次。
+if ($AllowRestart -and -not $DshExePath) {
+  $cands = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness\DeepSeek Harness.exe'),
+    'C:\Program Files\DeepSeek Harness\DeepSeek Harness.exe'
+  )
+  foreach ($c in $cands) { if (Test-Path $c -PathType Leaf) { $DshExePath = $c; break } }
+  if (-not $DshExePath) {
+    $lnkRoot = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+    if (Test-Path $lnkRoot) {
+      $lnk = Get-ChildItem $lnkRoot -Recurse -Filter '*DeepSeek*.lnk' -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($lnk) {
+        try {
+          $sh = New-Object -ComObject WScript.Shell
+          $target = $sh.CreateShortcut($lnk.FullName).TargetPath
+          if ($target -and (Test-Path $target -PathType Leaf)) { $DshExePath = $target }
+        } catch { /* 拿不到就跳过 */ }
+      }
+    }
+  }
+}
+
 $wanted = [ordered]@{}
 $wanted['maintenanceWriteEnabled'] = 'true'
 if ($OutDir) { $wanted['maintenanceOutDir'] = "'" + $OutDir.Replace("'", "''") + "'" }
 if ($PkgDir) { $wanted['maintenancePkgDir'] = "'" + $PkgDir.Replace("'", "''") + "'" }
-if ($AllowRestart) { $wanted['maintenanceAllowRestart'] = 'true' }
+if ($AllowRestart) {
+  $wanted['maintenanceAllowRestart'] = 'true'
+  if ($DshExePath) { $wanted['dshExePath'] = "'" + $DshExePath.Replace("'", "''") + "'" }
+  else { Say "[!] -AllowRestart 已给但找不到 DSH 可执行文件；远程升级仍会因无权重启而失败（用 -DshExePath 显式指定）" }
+}
 $wanted['maintAuthPublicKeys'] = "['" + $PublicKey + "']"
 
 $adds = @()

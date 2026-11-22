@@ -1,3 +1,25 @@
+## v2.7.8 — 2026-11-22（远程升级治本：DSH 运行时可停可换可拉起）
+
+**修复（远程升级一直失败的真因）**
+- `lib/worker/maint-verbs.js` 的 `upgrade` 原来在 DSH 运行时直接 `rename(pkgDir → .bak)` 再 `cp` 进去。
+  Windows 上运行中的 DSH 占着包目录里的文件 ⇒ `EPERM`，远程升级**永远失败**（只能本机点脚本）。
+- 现在分两步：
+  1. 先复制到同卷 `staging` 目录（新目录没有锁，运行中也能写）；
+  2. 尝试原子换名；若仍 `EPERM/EACCES/EBUSY` 且**允许重启**（`maintenanceAllowRestart: true` + `dshExePath` 存在），
+     则排入 detached 重启助手：`停 DSH → 等 2 秒 → 换包 → 拉起 DSH`，任务回报 `queued: true`（约 6 秒后生效）。
+  若不允许重启，报错改成可操作文案（提示先开维护重启许可或本机跑 `upgrade-worker.cmd`），不再只丢一个 EPERM。
+- 换名失败一律回滚（旧内容原样恢复），staging 目录清理。
+
+**`scripts/enable-maint-write.ps1`（一次本机运行，永久解锁自动升级）**
+- 新增 `-DshExePath`（可自动探测 `%LOCALAPPDATA%\Programs\DeepSeek Harness\DeepSeek Harness.exe`、Program Files、开始菜单快捷方式）。
+- `-AllowRestart` 时同时写 `maintenanceAllowRestart: true` 与 `dshExePath`（这两个键**刻意不在远程可写白名单**，只能本机写）。
+- `-PkgDir` 缺省自动探测 `Z:\_tools\dsh-job-board` / `L:\云盘\gp_video_xfer\_tools\dsh-job-board`（盘符未映射时安全跳过）。
+
+**测试**
+- `test/worker/maint-verbs.test.mjs` 新增 2 条：EPERM + 未开重启许可 → `maint-install-failed` 且旧内容回滚、提示含 `maintenanceAllowRestart`；
+  EPERM + 已开重启许可 → `queued: true` 且 spawn 的脚本含 `Stop-Process` / `Move-Item` / `Start-Process`。
+
+**验证**：`npm run gate` 全绿（单测 480、smoke 65、plugcheck 18/28、pack-check 108 文件）。
 ## v2.7.7 — 2026-11-22（Host 侧回板路径脱敏：远端 reasons / note 先打码后截断）
 
 **安全（2.7.6 定向复审 §6 记录的既有同类缺陷，本版修复）**

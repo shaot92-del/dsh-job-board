@@ -805,3 +805,57 @@ test('端到端：签发票据 → runner 消费 → maint-verbs 真写 config-s
   assert.ok(fs.existsSync(path.join(dir, 'maint-used-nonces.json')));
   assert.doesNotMatch(String(r.note || ''), /ticket=/);
 });
+// v2.7.8：远程升级在 DSH 运行时 —— Windows 会 EPERM（包目录被占用）。
+// 不允许重启时必须给可操作报错；允许重启时必须排入「停 DSH→换包→拉起」。
+function lockedFs(pkgDir) {
+  const wrapper = Object.create(fs);
+  wrapper.renameSync = (a, b) => {
+    if (String(a) === String(pkgDir)) {
+      const err = new Error('EPERM: operation not permitted, rename');
+      err.code = 'EPERM';
+      throw err;
+    }
+    return fs.renameSync(a, b);
+  };
+  return wrapper;
+}
+
+test('upgrade：DSH 占用包目录（EPERM）且未开重启许可 → 明确提示而非裸 EPERM', async () => {
+  const pkgDir = tmpDir();
+  fs.writeFileSync(path.join(pkgDir, 'old.txt'), 'old', 'utf8');
+  const { tgzPath, hash } = await makeTgz('@wfcj/dsh-job-board', '2.7.8', { path: 'new.txt', content: 'new' });
+  const fileName = path.basename(tgzPath);
+  fs.copyFileSync(tgzPath, path.join(pkgDir, fileName));
+  const v = makeVerbs({ maintenancePkgDir: pkgDir }, { fs: lockedFs(pkgDir) });
+  const r = await v.run('upgrade', { file: fileName, sha256: hash }, { taskId: 't-ep' });
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.reason, MAINT_VERB_REASONS.INSTALL_FAILED);
+  assert.match(r.note, /maintenanceAllowRestart/);
+  // 旧内容必须还在（回滚成功）
+  assert.ok(fs.existsSync(path.join(pkgDir, 'old.txt')));
+});
+
+test('upgrade：EPERM + 已开重启许可 → 排入安装并 spawn 重启助手（含 Stop-Process）', async () => {
+  const pkgDir = tmpDir();
+  fs.writeFileSync(path.join(pkgDir, 'old.txt'), 'old', 'utf8');
+  const { tgzPath, hash } = await makeTgz('@wfcj/dsh-job-board', '2.7.8', { path: 'new.txt', content: 'new' });
+  const fileName = path.basename(tgzPath);
+  fs.copyFileSync(tgzPath, path.join(pkgDir, fileName));
+  const calls = [];
+  const spawnImpl = (exe, args, opts) => { calls.push({ exe, args, opts }); return { pid: 1 }; };
+  const v = makeVerbs(
+    { maintenancePkgDir: pkgDir, maintenanceAllowRestart: true, dshExePath: process.execPath },
+    { fs: lockedFs(pkgDir), spawnImpl },
+  );
+  const r = await v.run('upgrade', { file: fileName, sha256: hash }, { taskId: 't-eq' });
+  assert.equal(r.ok, true);
+  assert.equal(r.queued, true);
+  assert.equal(r.version, '2.7.8');
+  assert.equal(calls.length, 1);
+  const script = calls[0].args[calls[0].args.length - 1];
+  assert.match(script, /Stop-Process -Id \d+ -Force/);
+  assert.match(script, /Move-Item -LiteralPath/);
+  assert.match(script, /Start-Process -FilePath/);
+  assert.equal(calls[0].opts.detached, true);
+});
