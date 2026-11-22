@@ -120,3 +120,24 @@ test('mergeWorkerPayload：子块里的宿主键（workerMode/machine/token）�
   const eff = normalizeConfig(payload);
   assert.equal(eff.config.workerMode, 'on', 'normalizeConfig 不得被残留子块键改回 off');
 });
+
+test('v2.7.9：路径配置展开 %VAR% 与 ~（agentCwdRoot / execCwdRoot）', () => {
+  const prev = process.env.DSB_TEST_HOME_LIKE;
+  process.env.DSB_TEST_HOME_LIKE = 'C:\\Users\\probe';
+  try {
+    const out = normalizeConfig({
+      worker: { agentCwdRoot: '%DSB_TEST_HOME_LIKE%\\Documents', execCwdRoot: '%DSB_TEST_HOME_LIKE%\\Work' },
+      agentApproval: 'auto',
+    });
+    assert.equal(out.config.agentCwdRoot, 'C:\\Users\\probe\\Documents');
+    assert.equal(out.config.execCwdRoot, 'C:\\Users\\probe\\Work');
+  } finally {
+    if (prev === undefined) delete process.env.DSB_TEST_HOME_LIKE;
+    else process.env.DSB_TEST_HOME_LIKE = prev;
+  }
+});
+
+test('v2.7.9：agentApproval 缺省为 auto（与加通讯插件前的派工体验对齐）', () => {
+  const out = normalizeConfig({ worker: { agentEnabled: true, agentCwdRoot: 'C:\\work' } });
+  assert.equal(out.config.agentApproval, 'auto');
+});

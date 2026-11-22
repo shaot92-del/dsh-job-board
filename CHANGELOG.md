@@ -1,3 +1,21 @@
+## v2.7.9 — 2026-11-22（派工体验回到「指派即跑」：审批默认 auto + 路径展开）
+
+**体验修复（对齐加通讯插件之前的派工）**
+- `agentApproval` 缺省从 `confirm` 改为 **`auto`**：主控派工 + 选机器 + 选模型之后，副机直接执行，
+  不再要求「在那台机器上再点一次批准」。`confirm` 保留为实验机/高风险机器显式选项
+  （`agentApproval: confirm` 时行为与 2.7.8 完全一致）。
+  安全边界不变：`agentAllowlist` 前缀、`agentBudgetMaxPerDay`、提示词门（prompt gate）、
+  `agentCwdRoot` 包含校验都仍是静默校验，不需要人工点。
+
+**缺陷修复**
+- 配置路径不展开环境变量：`agentCwdRoot` / `execCwdRoot` 配 `%USERPROFILE%\Documents` 会被原样
+  送进 `statSync` ⇒ agent 任务恒报 `agent-cwd-denied why=unresolved`（真机 2026-11-22 复现）。
+  现在统一展开 `%VAR%`、`$env:VAR` 与 `~`；任务的 `workspace` / `execCwd` 候选同样展开。
+
+**测试**
+- `test/worker/worker-payload-merge.test.mjs` 新增 2 条：路径展开、`agentApproval` 缺省为 auto。
+
+**验证**：`npm run gate` 全绿（单测 482、smoke 65、plugcheck 18/28、pack-check 108 文件）。
 ## v2.7.8 — 2026-11-22（远程升级治本：DSH 运行时可停可换可拉起）
 
 **修复（远程升级一直失败的真因）**
