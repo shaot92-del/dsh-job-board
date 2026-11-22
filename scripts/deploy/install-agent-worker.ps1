@@ -18,7 +18,7 @@
 #>
 param(
   [string]$ProfileDir = '',
-  [string]$Tarball = 'L:\云盘\gp_video_xfer\_tools\dsh-job-board\wfcj-dsh-job-board-2.7.11.tgz',
+  [string]$Tarball = 'L:\云盘\gp_video_xfer\_tools\dsh-job-board\wfcj-dsh-job-board-2.7.12.tgz',
   [string]$CwdRoot = '',
   [string]$Preset = 'standard',
   [string]$GoalPrefix = '只回答',
