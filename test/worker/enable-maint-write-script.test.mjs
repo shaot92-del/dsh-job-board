@@ -81,3 +81,22 @@ test('没有 worker: 子块：干净失败，不写坏文件', { skip }, () => {
   assert.notEqual(r.status, 0, '缺 worker 子块应当非零退出');
   assert.equal(fs.readFileSync(patch, 'utf8'), before, '失败时文件必须原样');
 });
+
+// v2.7.4：GT14 这类机器把 worker 配置**平铺**在 team -> config 下（没有嵌套 worker: 块）。
+// 脚本必须能识别这种布局、按同级缩进追加、并且重跑幂等（曾经会写重复键）。
+test('扁平布局（无 worker: 子块，键平铺在 config 下）：同级追加 + 幂等', { skip }, () => {
+  const { root, patch } = makeFixture(
+    ['- id: team', '  config:', "    machine: 'gt14'", "    workerMode: 'on'", '    pollMs: 2000', '- id: other', '  config:', '    x: 1', ''].join('\n'),
+  );
+  const first = runScript(root);
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  const afterFirst = fs.readFileSync(patch, 'utf8');
+  assert.match(afterFirst, /^ {4}maintenanceWriteEnabled: true$/m, '扁平布局必须按同级 4 空格缩进追加');
+  assert.match(afterFirst, /^ {4}maintAuthPublicKeys: \['/m);
+  assert.match(afterFirst, /^ {4}workerMode: 'on'$/m, '既有键必须保留');
+  assert.match(afterFirst, /^- id: other$/m, '后续块必须完好');
+
+  const second = runScript(root);
+  assert.equal(second.status, 0, second.stdout + second.stderr);
+  assert.equal(fs.readFileSync(patch, 'utf8'), afterFirst, '第二次运行不应改动文件（不得写重复键）');
+});

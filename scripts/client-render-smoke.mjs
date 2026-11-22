@@ -49,6 +49,7 @@ const ELEMENT_TAG = Symbol.for('react.element')
  * 这正是 2.7.0 白屏（`h(h('div'),… )` 把元素对象当 type）在线上炸掉的同一条规则。
  */
 function makeReact(states) {
+  let hookIdx = 0
   const React = {
     createElement(type, props, ...children) {
       if (strictValidate) {
@@ -78,18 +79,30 @@ function makeReact(states) {
         children: children.flat(4).filter((c) => c !== null && c !== undefined && c !== false && c !== true),
       }
     },
+    // v2.7.4：setter 真实生效（写入 states 槽位），配合 __resetHooks 可重渲染组件 ——
+    // 评估卡超时链路必须「点击 → loading → 超时 → error 卡」全程驱动，布尔桩（()=>{}）做不到。
     useState(init) {
-      const v = typeof init === 'function' ? init() : init
-      states.push(v)
-      return [v, () => {}]
+      const i = hookIdx++
+      if (i >= states.length) states.push(typeof init === 'function' ? init() : init)
+      return [
+        states[i],
+        (nv) => {
+          states[i] = typeof nv === 'function' ? nv(states[i]) : nv
+        },
+      ]
     },
     useEffect() {},
+    __resetHooks() {
+      hookIdx = 0
+    },
   }
   return React
 }
 
-/** 宿主全局最小桩：DOM 只做到「不抛错」，Pet 挂载失败会被 bundle 自己 try/catch 掉。 */
-function makeSandbox(React) {
+/** 宿主全局最小桩：DOM 只做到「不抛错」，Pet 挂载失败会被 bundle 自己 try/catch 掉。
+ * v2.7.4：opts 可控 —— fetch（评估链路桩）、deferTimeouts（超时定时器手动 flush）、
+ * localStorage（needsAssessment 兜底记录种子）、AbortController（vm context 不自带，必须注入）。 */
+function makeSandbox(React, opts = {}) {
   const el = () => ({
     id: '',
     textContent: '',
@@ -110,12 +123,19 @@ function makeSandbox(React) {
     focus() {},
   })
   const els = []
+  const timers = []
+  const lsStore = Object.assign({}, opts.localStorage || {})
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
     React,
+    AbortController,
     setInterval: () => 0,
     clearInterval: () => {},
     setTimeout: (fn) => {
+      if (opts.deferTimeouts) {
+        timers.push(fn)
+        return timers.length
+      }
       try {
         fn()
       } catch {
@@ -126,7 +146,7 @@ function makeSandbox(React) {
     clearTimeout: () => {},
     requestAnimationFrame: () => 0,
     cancelAnimationFrame: () => {},
-    fetch: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' }),
+    fetch: opts.fetch || (async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' })),
     MutationObserver: class {
       observe() {}
       disconnect() {}
@@ -149,8 +169,17 @@ function makeSandbox(React) {
       querySelectorAll: () => [],
     },
     navigator: { userAgent: 'client-render-smoke' },
-    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    localStorage: {
+      getItem: (k) => (Object.prototype.hasOwnProperty.call(lsStore, k) ? lsStore[k] : null),
+      setItem: (k, v) => {
+        lsStore[k] = String(v)
+      },
+      removeItem: (k) => {
+        delete lsStore[k]
+      },
+    },
   }
+  sandbox.__timers = timers
   sandbox.window = sandbox
   sandbox.globalThis = sandbox
   sandbox.window.addEventListener = () => {}
@@ -170,11 +199,15 @@ function makeSandbox(React) {
 
 /**
  * 渲染一轮，返回 Panel 的元素树。
+ * v2.7.4：opts 透传给 makeSandbox（fetch 桩 / deferTimeouts / localStorage 种子）；
+ * 返回值带 rerender()/flushTimers()，供评估卡交互链路用例驱动状态机。
  * @param {string} src  bundle 源码（默认原样；第二轮会把 doctor 的初始 state 换掉）
+ * @param {object} opts makeSandbox 选项
  */
-function renderOnce(src) {
+function renderOnce(src, opts = {}) {
   const states = []
-  const sandbox = makeSandbox(makeReact(states))
+  const React = makeReact(states)
+  const sandbox = makeSandbox(React, opts)
   vm.createContext(sandbox)
   vm.runInContext(src, sandbox, { filename: 'client.js' })
 
@@ -212,7 +245,28 @@ function renderOnce(src) {
   } catch {
     /* 卸载失败不影响断言 */
   }
-  return { tree, states }
+  return {
+    tree,
+    states,
+    sandbox,
+    // 重渲染：hook 按调用序复用 states 槽位（setter 已写入的值生效）
+    rerender() {
+      React.__resetHooks()
+      return main.comp()
+    },
+    // 手动触发 deferTimeouts 模式下排队的定时器（评估 15s 超时就用这条路径）
+    flushTimers() {
+      const queued = sandbox.__timers.splice(0)
+      for (const fn of queued) {
+        try {
+          fn()
+        } catch {
+          /* 定时器回调异常不算渲染失败 */
+        }
+      }
+      return queued.length
+    },
+  }
 }
 
 function flattenText(node, out = []) {
@@ -393,6 +447,150 @@ if (askPatched !== RAW) {
     caught = String((e && e.message) || e)
   }
   check('严格假 React 能抓到「元素对象当 type」（#130 同型）', /#130/.test(caught), caught.slice(0, 160))
+}
+
+// ── 第 4 轮：评估卡四态 + 15s 超时重试 + needsAssessment 本机兜底（v2.7.4 UI-1/UI-2 + MC-1..4）───
+// 故障 A：2.7.3 runAssess 裸 fetch 无超时（client.js:839 基线），服务端 assess 卡住 ⇒ 永久转圈。
+// 故障 B：服务端 saveIdentity 写盘失败只 trace（index.js:817-827 基线）⇒ needsAssessment 恒 true，
+//         面板重挂（切「对话」再回来）被重新拉回引导卡。
+// 负向门禁：下面 6 条静态断言对旧 bundle（case/lib-client-2.7.0-crash.bak）必须 FAIL。
+check('评估请求有 15s 客户端超时（ASSESS_TIMEOUT_MS=15000）', RAW.includes('const ASSESS_TIMEOUT_MS = 15000'), 'ASSESS_TIMEOUT_MS')
+check('评估 fetch 带 AbortController（signal 传入，超时可中止）', RAW.includes('new AbortController()') && RAW.includes('signal: assessAbortCtl'), 'AbortController')
+check('超时/失败有专属错误卡且给「重试」出口', RAW.includes('dsb-assess-retry') && RAW.includes('评估超时'), 'dsb-assess-retry')
+check('评估成功写本机兜底记录（dsh-assess-done-v1）', RAW.includes("ASSESS_DONE_KEY = 'dsh-assess-done-v1'"), 'dsh-assess-done-v1')
+check('写盘失败降级只提示一次（dsh-assess-degrade-notified-v1 + 「不再重复弹出」）', RAW.includes("ASSESS_DEGRADE_NOTIFIED_KEY = 'dsh-assess-degrade-notified-v1'") && RAW.includes('不再重复弹出'), 'degrade-notified')
+check('评估卡按 phase 四态渲染（idle/loading/success/error）', ["'loading'", "'error'", "'success'", "'idle'"].every((p) => RAW.includes('assessPhase === ' + p)), 'assessPhase 四分支')
+// v2.7.4 主控修订 MC-1/MC-3 的静态锚点（复核反证 1/P1、反证 3/P1）
+check('本机兜底记录有 TTL（ASSESS_DONE_TTL_MS），不再永久压制服务端 needsAssessment', RAW.includes('const ASSESS_DONE_TTL_MS = ') && RAW.includes('Date.now() - rec.assessedAt > ASSESS_DONE_TTL_MS'), 'ASSESS_DONE_TTL_MS')
+check('兜底记录带 caps 摘要（capsDigest），硬件变了即失效', RAW.includes('function capsDigest(caps)') && RAW.includes('rec.capsDigest !== digest'), 'capsDigest')
+check('评估成功后的二段 /identity 刷新失败不翻成 error 卡（解耦）', RAW.includes('.then((r) => r.json())') && RAW.includes('.catch(() => null)'), 'identity-decoupled')
+
+function findButton(node, label) {
+  if (!node || typeof node !== 'object') return null
+  if (node.type === 'button' && flattenText(node).indexOf(label) >= 0) return node
+  const kids = Array.isArray(node) ? node : node.children || []
+  for (const k of kids) {
+    const got = findButton(k, label)
+    if (got) return got
+  }
+  return null
+}
+
+const IDENT_ANCHOR = 'const [ident, setIdent] = React.useState(null)'
+const PHASE_ANCHOR = "const [assessPhase, setAssessPhase] = React.useState('idle')"
+const ERR_ANCHOR = "const [assessErr, setAssessErr] = React.useState('')"
+const fakeIdent = { ok: true, machine: 'GT14', needsAssessment: true, assessed: false, assessedAt: 0, caps: null }
+const identPatched = RAW.replace(IDENT_ANCHOR, 'const [ident, setIdent] = React.useState(' + JSON.stringify(fakeIdent) + ')')
+check('评估卡测试锚点存在（ident 初始 state 可注入）', identPatched !== RAW, IDENT_ANCHOR)
+
+// 4-1 引导态：needsAssessment=true 且无本机兜底 ⇒ 引导卡 + 「开始评估」
+if (identPatched !== RAW) {
+  const t1 = flattenText(renderOnce(identPatched).tree)
+  check('4-1 引导态：needsAssessment=true 且无兜底 ⇒ 「开始评估」引导卡', t1.indexOf('开始评估') >= 0 && t1.some((x) => String(x).includes('还没做过工作能力评估')), '')
+
+  // 4-6 数据翻转（故障 B 主场景）：needsAssessment=true 但本机有兜底记录 ⇒ 按已评估渲染（能力条），不再弹引导卡
+  const marker = JSON.stringify({ machine: 'GT14', assessedAt: Date.now() })  // MC-1：TTL 内才有效，故用当前时间
+  const t6 = flattenText(renderOnce(identPatched, { localStorage: { 'dsh-assess-done-v1': marker } }).tree)
+  check(
+    '4-6 本机兜底：服务端 needsAssessment=true 但有兜底 ⇒ 显示「工作能力」条而非引导卡（重挂不再要求重评）',
+    !t6.some((x) => String(x).includes('还没做过工作能力评估')) && t6.some((x) => String(x).includes('· 工作能力')),
+    '',
+  )
+
+  // 4-7 MC-4 补强（复核三阶段 P0）：ident=null + phase=success 时能力条必须出「占位」而不是崩进 PanelSafe。
+  // 这里不注入 ident（保持默认 null），只把 phase 顶成 success —— 正是反证 f 的可达场景。
+  const nullIdentSuccess = RAW.replace(PHASE_ANCHOR, PHASE_ANCHOR.replace("'idle'", "'success'"))
+  const t7 = flattenText(renderOnce(nullIdentSuccess).tree)
+  check(
+    '4-7 ident=null + 评估成功 ⇒ 能力条显示「清单待 /identity 刷新」占位（不 crash、不降级）',
+    t7.some((x) => String(x).includes('· 工作能力')) && t7.some((x) => String(x).includes('能力清单待 /identity 刷新')),
+    '',
+  )
+
+  const phasePatched = identPatched.replace(PHASE_ANCHOR, PHASE_ANCHOR.replace("'idle'", "'loading'"))
+  check('评估 phase 锚点存在（v2.7.4 才有；旧 bundle 此处必 FAIL）', phasePatched !== identPatched, PHASE_ANCHOR)
+
+  if (phasePatched !== identPatched) {
+    // 4-2 loading 态：明示 8 秒上限 + 可取消 —— 不给「永久转圈」留门
+    const t2 = flattenText(renderOnce(phasePatched, { deferTimeouts: true }).tree)
+    check('4-2 loading 态：明示「最长 15 秒」+ 有「取消」按钮', t2.some((x) => /最长 15 秒/.test(String(x))) && t2.indexOf('取消') >= 0, '')
+
+    // 4-3 error 态：专属错误卡，含原因与「重试」
+    const errPatched = identPatched
+      .replace(PHASE_ANCHOR, PHASE_ANCHOR.replace("'idle'", "'error'"))
+      .replace(ERR_ANCHOR, ERR_ANCHOR.replace("''", "'评估超时（8 秒），可重试'"))
+    const t3 = flattenText(renderOnce(errPatched).tree)
+    check('4-3 error 态：「评估没有完成」卡 + 「重试」按钮', t3.indexOf('评估没有完成') >= 0 && t3.indexOf('重试') >= 0, '')
+
+    // 4-4 交互超时链（故障 A 主场景）：点「开始评估」→ loading；flush 15s 定时器（fetch 永不落定）
+    // → 必须进入 error 卡并给「重试」，绝不永久转圈。旧版这条链永远停在 loading。
+    const timeoutRun = renderOnce(identPatched, {
+      deferTimeouts: true,
+      // 桩必须模拟真 fetch 对 AbortSignal 的行为：abort ⇒ reject(AbortError)。否则这条链测不出超时。
+      fetch: (url, init) => {
+        if (String(url).indexOf('/assess') >= 0) {
+          return new Promise((resolve, reject) => {
+            const abortErr = () => Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })
+            const sig = init && init.signal
+            if (sig) {
+              if (sig.aborted) reject(abortErr())
+              else sig.addEventListener('abort', () => reject(abortErr()))
+            }
+            // 不 resolve：模拟服务端 assess 永不返回（故障 A 场景）
+          })
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, machine: 'GT14', needsAssessment: false, assessed: true, assessedAt: 1, caps: null }),
+          text: async () => '{}',
+        })
+      },
+    })
+    const btnT = findButton(timeoutRun.tree, '开始评估')
+    check('4-4a 交互链起点：能找到「开始评估」按钮', Boolean(btnT), '')
+    if (btnT) {
+      btnT.props.onClick()
+      const loadingTexts = flattenText(timeoutRun.rerender())
+      check('4-4b 点击后进入 loading 态（明示不会一直转圈）', loadingTexts.some((x) => /不会一直转圈/.test(String(x))), '')
+      const flushed = timeoutRun.flushTimers()
+      await new Promise((r) => setTimeout(r, 30)) // 让 abort 的 rejection 走完微任务链
+      const errTexts = flattenText(timeoutRun.rerender())
+      check(
+        '4-4c 8s 定时器触发 ⇒ error 卡 + 「重试」出口（旧版此处永久转圈）',
+        flushed >= 1 && errTexts.indexOf('重试') >= 0 && errTexts.some((x) => /评估超时/.test(String(x))),
+        'flushed=' + flushed,
+      )
+    }
+
+    // 4-5 成功链：assess 返回 ok ⇒ notice 摘要 + 本机兜底记录写入（旧版没有兜底）
+    const okRun = renderOnce(identPatched, {
+      fetch: async (url) => {
+        if (String(url).indexOf('/assess') >= 0) {
+          return { ok: true, status: 200, json: async () => ({ ok: true, machine: 'GT14', summary: '首次评估完成 GT14', caps: {} }), text: async () => '{}' }
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, machine: 'GT14', needsAssessment: false, assessed: true, assessedAt: 1763712000000, caps: {} }),
+          text: async () => '{}',
+        }
+      },
+    })
+    const btnO = findButton(okRun.tree, '开始评估')
+    check('4-5a 成功链起点：能找到「开始评估」按钮', Boolean(btnO), '')
+    if (btnO) {
+      btnO.props.onClick()
+      await new Promise((r) => setTimeout(r, 30))
+      const doneTexts = flattenText(okRun.rerender())
+      check('4-5b 评估成功：notice 出现服务端摘要、引导卡消失', doneTexts.some((x) => String(x).indexOf('首次评估完成 GT14') >= 0) && doneTexts.indexOf('开始评估') < 0, '')
+      check(
+        '4-5c 评估成功：本机兜底记录已写入（dsh-assess-done-v1，故障 B 的客户端侧补丁）',
+        String(okRun.sandbox.localStorage.getItem('dsh-assess-done-v1') || '').indexOf('"machine":"GT14"') >= 0,
+        '',
+      )
+    }
+  }
 }
 
 const failed = results.filter((r) => !r.cond)

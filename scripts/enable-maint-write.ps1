@@ -60,7 +60,15 @@ if (-not $PublicKey) {
 $PublicKey = $PublicKey.Trim()
 if ($PublicKey -notmatch '^[A-Za-z0-9+/=]{40,400}$') { Fail "公钥格式不对（应为 base64，40-400 字符）：$($PublicKey.Substring(0,[Math]::Min(20,$PublicKey.Length)))…" }
 
+$allProfileDirs = @()
+if (Test-Path $profilesRoot) { $allProfileDirs = @(Get-ChildItem $profilesRoot -Directory | ForEach-Object { $_.Name }) }
 $names = @(Get-PluginProfiles)
+if (-not $Profile -and $allProfileDirs.Count -gt 1) {
+  # v2.7.4：多 profile 的机器最容易「改了一份、DSH 加载另一份」——真机上排查过一整轮。
+  # 这里显式把「有哪些 profile / 哪些会被改」打出来，免得又白跑。
+  Say "检测到多个 profile：$($allProfileDirs -join ', ')"
+  Say "其中含本插件/键位的：$($names -join ', ')（将按顺序补键）"
+}$names = @(Get-PluginProfiles)
 if (-not $Profile) {
   if ($names.Count -eq 0) { Fail "没找到装了 dsh-job-board 的 profile（$profilesRoot）。DSH 启动过吗？" }
   if ($names.Count -gt 1) { Fail "有多个 profile：$($names -join ', ')。请用 -Profile 指定一个。" }
@@ -85,11 +93,51 @@ for ($i = $teamIdx + 1; $i -lt $lines.Count; $i++) {
     if ($l -match '^\s*worker:\s*(\{\})?\s*$') { $workerIdx = $i; break }
   }
 }
+# 扁平布局兼容（v2.7.4 起）：有些机器把 worker 配置**直接平铺**在 team -> config 下
+# （workerMode / pollMs / allowlist … 没有嵌套 worker: 块）。插件两种布局都读，本脚本也要两种都能写。
+$flatMode = $false
+$insertAt = -1
+$flatConfigIdx = -1
+$flatConfigEnd = -1
 if ($workerIdx -lt 0) {
-  Fail "$patch 的 team 块里没有 worker: 子块。请在 team 行的 config: 下新增：`n  worker:`n    workerMode: 'off'`n再用本脚本。"
+  $configIdx = -1
+  for ($i = $teamIdx + 1; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match '^\s*config:\s*$') { $configIdx = $i; break }
+    if ($lines[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $teamIndent) { break }
+  }
+  if ($configIdx -ge 0) {
+    $configIndent = ($lines[$configIdx] -replace '^(\s*).*$', '$1').Length
+    $lastKey = -1
+    $keyIndent = -1
+    for ($i = $configIdx + 1; $i -lt $lines.Count; $i++) {
+      if ($lines[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $configIndent) { break }
+      if ($lines[$i] -match '^(\s*)(workerMode|pollMs|allowlist|allowAllRoots|allowedRoots|shellTimeoutMs|maxOutputBytes|agentEnabled|agentAllowlist|agentPreset|execCwdRoot|approvalMode|allowInline)\s*:') {
+        $lastKey = $i
+        $keyIndent = $Matches[1].Length
+      }
+    }
+    if ($lastKey -ge 0) {
+      $flatMode = $true
+      $workerIdx = $lastKey
+      $workerIndent = $keyIndent
+      # config 块结束行：新键统一追加到 config 末尾（而不是紧贴最后一个 worker 键），
+      # 这样 Get-KeyValue 的扫描区间才能覆盖已有的 maintenance* 键（否则重跑会写重复键）。
+      $cfgEnd = $lines.Count
+      for ($i = $configIdx + 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $configIndent) { $cfgEnd = $i; break }
+      }
+      $flatConfigIdx = $configIdx
+      $flatConfigEnd = $cfgEnd
+      $insertAt = $cfgEnd
+    }
+  }
+}
+if ($workerIdx -lt 0) {
+  Fail "$patch 的 team 块里既没有 worker: 子块、也没有平铺的 workerMode 等键。请先在 team 的 config: 下建 worker 配置（可跑 scripts/set-team-config.ps1），再用本脚本。"
 }
 $workerIndent = ($lines[$workerIdx] -replace '^(\s*).*$', '$1').Length
-$childIndent = $workerIndent + 2
+$childIndent = if ($flatMode) { $workerIndent } else { $workerIndent + 2 }
+if ($flatMode) { Say "检测到扁平布局：worker 键平铺在 config 下（缩进 $workerIndent），新键按同级追加" }
 
 # 内联空 map（worker: {}）必须展开成 worker: 空块，否则子键挂不到 worker 上，
 # 标准 YAML 解析会失败（DSH 起不来）。v2.7.0 二次复审 P1。
@@ -99,17 +147,23 @@ if ($inlineEmptyMap) {
   Say "worker: {} 为内联空 map，已展开为 worker: 空块再插入子键"
 }
 
-# worker 子块结束行
+# 插入位置：嵌套布局 = worker 子块结束行；扁平布局 = 最后一个 worker 键的下一行
 $end = $lines.Count
-for ($i = $workerIdx + 1; $i -lt $lines.Count; $i++) {
-  if ($lines[$i] -match '^(\s*)\S') {
-    if ($Matches[1].Length -le $workerIndent) { $end = $i; break }
+if ($flatMode) {
+  $end = $insertAt
+} else {
+  for ($i = $workerIdx + 1; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match '^(\s*)\S') {
+      if ($Matches[1].Length -le $workerIndent) { $end = $i; break }
+    }
   }
 }
 
 # 读取现有键
 function Get-KeyValue($key) {
-  for ($i = $workerIdx + 1; $i -lt $end; $i++) {
+  $from = if ($flatMode) { $flatConfigIdx + 1 } else { $workerIdx + 1 }
+  $to = if ($flatMode) { $flatConfigEnd } else { $end }
+  for ($i = $from; $i -lt $to; $i++) {
     if ($lines[$i] -match "^\s*$([regex]::Escape($key)):\s*(.*)$") { return $Matches[1].Trim() }
   }
   return $null
@@ -170,11 +224,21 @@ $problems = @()
 if ($wIdx -ge 0 -and $check[$wIdx] -match '\{\}') { $problems += "worker: {} 仍是内联空 map，子键挂不到 worker 上" }
 foreach ($k in $wanted.Keys) {
   $hit = $false
-  for ($i = $wIdx + 1; $i -lt $check.Count; $i++) {
-    if ($check[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $workerIndent) { break }
-    if ($check[$i] -match "^\s*$([regex]::Escape($k)):") { $hit = $true; break }
+  if ($flatMode) {
+    $cfgIdx2 = -1
+    for ($i = $teamIdx + 1; $i -lt $check.Count; $i++) { if ($check[$i] -match '^\s*config:\s*$') { $cfgIdx2 = $i; break } }
+    $cfgIndent2 = if ($cfgIdx2 -ge 0) { ($check[$cfgIdx2] -replace '^(\s*).*$', '$1').Length } else { $workerIndent - 2 }
+    for ($i = $cfgIdx2 + 1; $i -lt $check.Count; $i++) {
+      if ($check[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $cfgIndent2) { break }
+      if ($check[$i] -match "^\s*$([regex]::Escape($k)):") { $hit = $true; break }
+    }
+  } else {
+    for ($i = $wIdx + 1; $i -lt $check.Count; $i++) {
+      if ($check[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $workerIndent) { break }
+      if ($check[$i] -match "^\s*$([regex]::Escape($k)):") { $hit = $true; break }
+    }
   }
-  if (-not $hit) { $problems += "$k 未落到 worker 子块" }
+  if (-not $hit) { $problems += "$k 未落到 worker 配置里" }
 }
 if ($problems.Count -gt 0) {
   Copy-Item $backup $patch -Force

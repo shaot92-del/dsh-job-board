@@ -291,7 +291,15 @@ for (`$i = 0; `$i -lt 45; `$i++) {
   } catch { }
   if (`$ok) { break }
 }
-`$text = if (`$ok) { "重启完成：运行版本 v`$ver，GUI 端口 `$port" } else { "重启后 90 秒内没探到 DSH 的 doctor，请手工打开 DSH 并查看版本" }
+`$writeState = ""
+if (`$ok) {
+  try {
+    `$d2 = Invoke-RestMethod ("http://127.0.0.1:" + `$port + '/api/board/ui/doctor') -TimeoutSec 3
+    `$off = @(`$d2.checks | Where-Object { `$_.id -eq 'maint-write-off' })
+    `$writeState = if (`$off.Count -gt 0) { "；写通道未开（远程升级会失败，跑 enable-maint-write.ps1 后重启）" } else { "；写通道已开" }
+  } catch { }
+}
+$text = if (`$ok) { "重启完成：运行版本 v`$ver，GUI 端口 `$port" + `$writeState } else { "重启后 90 秒内没探到 DSH 的 doctor，请手工打开 DSH 并查看版本" }
 `$text | Out-File -FilePath '$resultFile' -Encoding utf8
 try { (New-Object -ComObject WScript.Shell).Popup(`$text, 12, 'dsh-job-board 升级', 64) | Out-Null } catch { }
 "@

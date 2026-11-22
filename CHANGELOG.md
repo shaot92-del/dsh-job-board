@@ -1,3 +1,24 @@
+## v2.7.4 — 2026-11-22（治本：团队顶层键不再丢 + 写通道可观测 + 装完自检）
+
+真机事故（GT14）：`maintenanceWriteEnabled` / `maintAuthPublicKeys` 写在团队行顶层时，宿主只把
+`config.worker` 子块转交给 worker，顶层键在传入前就被丢掉 ⇒ worker 恒用默认值（写通道 off）。
+而「打开写通道」本身只能走写通道 ⇒ 死锁：主机远程开 agent 永远 `maint-write-disabled`。
+
+修（不是绕）：
+- **`lib/worker/config.js` 新增 `mergeWorkerPayload()`**：团队行顶层键**兜底**、`worker:` 子块**优先**，
+  只转发 worker 真正会读的键（boardUrl/token/machine 等宿主键不混入）。宿主 apply 载荷改用
+  `worker: mergeWorkerPayload(config)` ⇒ 「写在顶层」和「写在子块里」从此等价。
+- **启动自检进日志**：apply 时用插件自己的 `normalizeConfig()` 算出 worker 实际生效值，
+  写通道没开就 `trace()` 出明确一行（含实际加载的 `cordis.patch.yml` 路径），不再出现
+  「配置文件写着 true、worker 里是 false」而没人发现。
+- **doctor 新增 `maint-write-off` 警告**：面板自检直接报「写通道未开，远程升级会失败」并附 profile 路径。
+- **`upgrade-worker.ps1` 装完自检**：重启后读 doctor 的 `maint-write-off`，弹窗直接说「写通道已开/未开」。
+- **`enable-maint-write.ps1`**：多 profile 时先打印「检测到/将修改哪些 profile」；扁平布局（无 `worker:` 子块）
+  也支持，且重跑幂等（修掉曾会写重复键的查重区间 bug）。
+- 回归：`test/worker/worker-payload-merge.test.mjs` 5 条（顶层生效/子块优先/宿主键不混入/向后兼容）。
+  门禁 465/465、pack-check 108 文件。
+
+升级后仍需重启 DSH 才生效；副机升级一次后，写通道/agent 开关就都能远程处理，不必再逐台手改缩进。
 ## v2.7.3 — 2026-11-21（安装不再敢覆盖运行中的目录：原子切换 + 校验 + 安装清单）
 
 ### 修的是什么
