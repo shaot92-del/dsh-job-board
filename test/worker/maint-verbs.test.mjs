@@ -821,6 +821,30 @@ function lockedFs(pkgDir) {
   return wrapper;
 }
 
+test('upgrade：换名成功且已开重启许可 → 自动排入重启（v2.7.10）', async () => {
+  const pkgDir = tmpDir();
+  const installDir = tmpDir();
+  fs.writeFileSync(path.join(installDir, 'old.txt'), 'old', 'utf8');
+  const { tgzPath, hash } = await makeTgz('@wfcj/dsh-job-board', '2.7.10', { path: 'new.txt', content: 'new' });
+  const fileName = path.basename(tgzPath);
+  fs.copyFileSync(tgzPath, path.join(pkgDir, fileName));
+  const calls = [];
+  const spawnImpl = (exe, args, opts) => { calls.push({ exe, args, opts }); return { pid: 1 }; };
+  const v = makeVerbs(
+    { maintenancePkgDir: pkgDir, maintenanceAllowRestart: true, dshExePath: process.execPath },
+    { spawnImpl, pkgDir: installDir },
+  );
+  const r = await v.run('upgrade', { file: fileName, sha256: hash }, { taskId: 't-r' });
+  assert.equal(r.ok, true);
+  assert.equal(r.queued, true, r.note);
+  assert.match(r.note, /自动重启/);
+  assert.equal(calls.length, 1);
+  const script = calls[0].args[calls[0].args.length - 1];
+  assert.match(script, /Stop-Process -Id \d+ -Force/);
+  assert.match(script, /Start-Process -FilePath/);
+  assert.ok(!/Move-Item/.test(script), '只重启时不该再动目录');
+  assert.equal(calls[0].opts.detached, true);
+});
 test('upgrade：DSH 占用包目录（EPERM）且未开重启许可 → 明确提示而非裸 EPERM', async () => {
   const pkgDir = tmpDir();
   const installDir = tmpDir();

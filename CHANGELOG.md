@@ -1,3 +1,17 @@
+## v2.7.10 — 2026-11-22（远程升级真正闭环：换包后自动重启）
+
+**修复**
+- `lib/worker/maint-verbs.js`：`swapIn()` 成功后 DSH 仍在跑旧代码，原来只回「需重启」，等于把最后一步推回给人。
+  现在若已开维护重启许可（`maintenanceAllowRestart: true` + `dshExePath` 存在），直接排入 detached 助手：
+  等 6 秒 → `Stop-Process` 旧进程 → 停 2 秒 → `Start-Process` 拉起；note 写明「约 6 秒后自动重启 DSH 生效」。
+- 新增 `queueRestartOnly()`（只重启，不再动包目录）；EPERM 分支原有的「排入安装 → 停 → 换 → 拉起」保持不变。
+
+**测试**
+- `test/worker/maint-verbs.test.mjs` 新增 1 条：换名成功 + 已开重启许可 → `queued: true`、spawn 脚本含 `Stop-Process`/`Start-Process`、且不再含 `Move-Item`。
+
+**怎么验证**
+- `npm run gate`（单测、smoke、check-text、pack-check 全绿）
+- 真机：`maint upgrade` 推同一版本 → note 出现「自动重启」→ 约 8 秒后 GT14 实例号变化、`plugin=2.7.10`
 ## v2.7.9 — 2026-11-22（派工体验回到「指派即跑」：审批默认 auto + 路径展开）
 
 **体验修复（对齐加通讯插件之前的派工）**
