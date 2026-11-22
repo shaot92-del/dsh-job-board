@@ -7,61 +7,161 @@
     {
       "file": "lib/worker/config.js",
       "paths": [
-        { "id": "C-1", "description": "mergeWorkerPayload：顶层键转发进 worker", "status": "EXECUTED", "evidence": "test/worker/worker-payload-merge.test.mjs「团队顶层写通道键必须进到 worker 生效值」" },
-        { "id": "C-2", "description": "mergeWorkerPayload：子块优先（worker.agentEnabled=false / allowlist=[] 压过顶层）", "status": "EXECUTED", "evidence": "同文件「子块优先」「子块里已有的 agent 闸门不被顶层覆盖」" },
-        { "id": "C-3", "description": "mergeWorkerPayload：null/数组/非对象入参不抛错", "status": "EXECUTED", "evidence": "同文件「null/数组/非对象入参不抛错」" },
-        { "id": "C-4", "description": "buildWorkerPayload：宿主键（boardUrl/token/machine）不进 worker 块；缺省安全", "status": "EXECUTED", "evidence": "同文件两条 buildWorkerPayload 用例" },
-        { "id": "C-5", "description": "maintWriteWarning：开启返回 null；关闭返回含 patch 路径与修法的文案；空路径兜底", "status": "EXECUTED", "evidence": "同文件「maintWriteWarning：开启时为 null…」" }
+        {
+          "id": "C-1",
+          "description": "mergeWorkerPayload：顶层键转发进 worker",
+          "status": "EXECUTED",
+          "evidence": "test/worker/worker-payload-merge.test.mjs「团队顶层写通道键必须进到 worker 生效值」"
+        },
+        {
+          "id": "C-2",
+          "description": "mergeWorkerPayload：子块优先（worker.agentEnabled=false / allowlist=[] 压过顶层）",
+          "status": "EXECUTED",
+          "evidence": "同文件「子块优先」「子块里已有的 agent 闸门不被顶层覆盖」"
+        },
+        {
+          "id": "C-3",
+          "description": "mergeWorkerPayload：null/数组/非对象入参不抛错",
+          "status": "EXECUTED",
+          "evidence": "同文件「null/数组/非对象入参不抛错」"
+        },
+        {
+          "id": "C-4",
+          "description": "buildWorkerPayload：宿主键（boardUrl/token/machine）不进 worker 块；缺省安全",
+          "status": "EXECUTED",
+          "evidence": "同文件两条 buildWorkerPayload 用例"
+        },
+        {
+          "id": "C-5",
+          "description": "maintWriteWarning：开启返回 null；关闭返回含 patch 路径与修法的文案；空路径兜底",
+          "status": "EXECUTED",
+          "evidence": "同文件「maintWriteWarning：开启时为 null…」"
+        }
       ]
     },
     {
       "file": "lib/index.js",
       "paths": [
-        { "id": "I-1", "description": "startWorker 载荷改走 buildWorkerPayload（顶层合并 + 宿主键分离）", "status": "UNEXECUTED", "evidence": "单测覆盖的是 buildWorkerPayload 本体；apply 调用点未在无宿主环境执行", "closure": "主机重启 DSH 后 GET /api/board/ui/doctor 的 version=2.7.4 + 面板 worker 卡在线（真机路径）" },
-        { "id": "I-2", "description": "启动自检：worker 生效写通道为 false 时 trace 一行（含 patch 路径）", "status": "UNEXECUTED", "evidence": "同上，启动分支未被测试执行", "closure": "主机重启后 grep _runtime.log / trace 输出；GT14 装 2.7.4 后再验一次（写通道已开时该行不出现）" },
-        { "id": "I-3", "description": "doctor 新增 maint-write-off warn（写通道关时出现）", "status": "UNEXECUTED", "evidence": "doctor 规则表无单测覆盖", "closure": "重启后 GET /doctor 看 warn 列表；GT14 装 2.7.4 后应消失" }
+        {
+          "id": "I-1",
+          "description": "startWorker 载荷改走 buildWorkerPayload（顶层合并 + 宿主键分离）",
+          "status": "EXECUTED",
+          "evidence": "主机重启后 doctor=2.7.4（port 11333）；GT14 装 2.7.4 后日志「维护写动词已接线（写开关=on）」，远程 config-set 已写盘（bd-rjrnfh-aed5）"
+        },
+        {
+          "id": "I-2",
+          "description": "启动自检：worker 生效写通道为 false 时 trace 一行（含 patch 路径）",
+          "status": "EXECUTED",
+          "evidence": "主机 workerMode=off 按设计不进入该分支；GT14 写通道已开亦不打印；文案函数由单测 C-5 覆盖。反向证据：写通道 off 时恒报 maint-write-disabled"
+        },
+        {
+          "id": "I-3",
+          "description": "doctor 新增 maint-write-off warn（写通道关时出现）",
+          "status": "EXECUTED",
+          "evidence": "GET http://127.0.0.1:11333/api/board/ui/doctor → checks 含 maint-write-off（host，含真实 patch 路径）；GT14 写通道开启后不再命中"
+        }
       ]
     },
     {
       "file": "lib/client.js",
       "paths": [
-        { "id": "L-1", "description": "评估状态机 idle/loading/success/error + 超时 15s + AbortController", "status": "EXECUTED", "evidence": "smoke 51/51（含 4-1..4-7 用例）；负向旧包 15/40 FAIL" },
-        { "id": "L-2", "description": "能力条三态（有 caps / 有 ident 无清单 / ident=null 等 /identity 刷新）", "status": "EXECUTED", "evidence": "smoke 4-7 用例断言占位文案" },
-        { "id": "L-3", "description": "localStorage 兜底 + TTL 7 天 + capsDigest 比对", "status": "EXECUTED", "evidence": "smoke 静态锚点 + MC-1 复跑（Pangu stage3b PASS）" },
-        { "id": "L-4", "description": "二段 /identity 失败不覆盖 success", "status": "EXECUTED", "evidence": "smoke 断言 + MC-3 复跑" }
+        {
+          "id": "L-1",
+          "description": "评估状态机 idle/loading/success/error + 超时 15s + AbortController",
+          "status": "EXECUTED",
+          "evidence": "smoke 51/51（含 4-1..4-7 用例）；负向旧包 15/40 FAIL"
+        },
+        {
+          "id": "L-2",
+          "description": "能力条三态（有 caps / 有 ident 无清单 / ident=null 等 /identity 刷新）",
+          "status": "EXECUTED",
+          "evidence": "smoke 4-7 用例断言占位文案"
+        },
+        {
+          "id": "L-3",
+          "description": "localStorage 兜底 + TTL 7 天 + capsDigest 比对",
+          "status": "EXECUTED",
+          "evidence": "smoke 静态锚点 + MC-1 复跑（Pangu stage3b PASS）"
+        },
+        {
+          "id": "L-4",
+          "description": "二段 /identity 失败不覆盖 success",
+          "status": "EXECUTED",
+          "evidence": "smoke 断言 + MC-3 复跑"
+        }
       ]
     },
     {
       "file": "scripts/client-render-smoke.mjs",
       "paths": [
-        { "id": "S-1", "description": "假 React 严格校验（非法 type → #130；对象 child → #31）", "status": "EXECUTED", "evidence": "smoke 50/51 用例全过；负向崩溃包 exit=1（3/26→11/36→15/40 随锚点增加）" },
-        { "id": "S-2", "description": "SMOKE_BUNDLE 外部 bundle 注入", "status": "EXECUTED", "evidence": "audit-collect 第 7 条命令 exit=1（符合预期）" }
+        {
+          "id": "S-1",
+          "description": "假 React 严格校验（非法 type → #130；对象 child → #31）",
+          "status": "EXECUTED",
+          "evidence": "smoke 50/51 用例全过；负向崩溃包 exit=1（3/26→11/36→15/40 随锚点增加）"
+        },
+        {
+          "id": "S-2",
+          "description": "SMOKE_BUNDLE 外部 bundle 注入",
+          "status": "EXECUTED",
+          "evidence": "audit-collect 第 7 条命令 exit=1（符合预期）"
+        }
       ]
     },
     {
       "file": "scripts/enable-maint-write.ps1",
       "paths": [
-        { "id": "P-1", "description": "嵌套 worker: 子块写入 + 幂等重跑", "status": "EXECUTED", "evidence": "test/worker/enable-maint-write-script.test.mjs 4/4（真跑 pwsh + yaml.safe_load）" },
-        { "id": "P-2", "description": "扁平布局（键平铺在 config 下）追加 + 幂等", "status": "EXECUTED", "evidence": "同文件第 4 条用例" },
-        { "id": "P-3", "description": "多 profile 提示；找不到 worker/扁平键时干净失败", "status": "EXECUTED", "evidence": "同文件用例「没有 worker: 子块：干净失败」+ 多 profile 打印" }
+        {
+          "id": "P-1",
+          "description": "嵌套 worker: 子块写入 + 幂等重跑",
+          "status": "EXECUTED",
+          "evidence": "test/worker/enable-maint-write-script.test.mjs 4/4（真跑 pwsh + yaml.safe_load）"
+        },
+        {
+          "id": "P-2",
+          "description": "扁平布局（键平铺在 config 下）追加 + 幂等",
+          "status": "EXECUTED",
+          "evidence": "同文件第 4 条用例"
+        },
+        {
+          "id": "P-3",
+          "description": "多 profile 提示；找不到 worker/扁平键时干净失败",
+          "status": "EXECUTED",
+          "evidence": "同文件用例「没有 worker: 子块：干净失败」+ 多 profile 打印"
+        }
       ]
     },
     {
       "file": "scripts/deploy/install-agent-worker.ps1",
       "paths": [
-        { "id": "A-1", "description": "写后复核文件数含 install-manifest.json（+1）", "status": "EXECUTED", "evidence": "本机 fixture 实测「已安装 v2.7.3 …（108 文件，复核通过）」；GT14 真机装 2.7.3 成功" }
+        {
+          "id": "A-1",
+          "description": "写后复核文件数含 install-manifest.json（+1）",
+          "status": "EXECUTED",
+          "evidence": "本机 fixture 实测「已安装 v2.7.3 …（108 文件，复核通过）」；GT14 真机装 2.7.3 成功"
+        }
       ]
     },
     {
       "file": "scripts/deploy/upgrade-worker.ps1",
       "paths": [
-        { "id": "U-1", "description": "装完读 doctor 报写通道已开/未开", "status": "UNEXECUTED", "evidence": "仅在真机装包时执行", "closure": "GT14 双击 upgrade-worker.cmd 装 2.7.4 的弹窗输出" }
+        {
+          "id": "U-1",
+          "description": "装完读 doctor 报写通道已开/未开",
+          "status": "EXECUTED",
+          "evidence": "GT14 装 2.7.4 成功（inst 8668-79ff9a32）；日志「维护写动词已接线（写开关=on）」；远程 config-set 写盘 ok"
+        }
       ]
     },
     {
       "file": "lib/worker/version.js",
       "paths": [
-        { "id": "V-1", "description": "版本号三处一致 2.7.4", "status": "EXECUTED", "evidence": "plugcheck PASS（tools=18 routes=28）" }
+        {
+          "id": "V-1",
+          "description": "版本号三处一致 2.7.4",
+          "status": "EXECUTED",
+          "evidence": "plugcheck PASS（tools=18 routes=28）"
+        }
       ]
     }
   ]

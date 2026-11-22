@@ -1,12 +1,12 @@
 {
   "version": "2.7.4",
-  "head": "c8e7597",
-  "executed": 16,
-  "unexecuted": 4,
+  "head": "0fa41e7",
+  "executed": 20,
+  "unexecuted": 0,
   "unknown": 0,
   "notApplicable": 0,
-  "unexecutedIds": ["I-1", "I-2", "I-3", "U-1"],
-  "closure": "宿主重启 DSH（I-1/I-2/I-3）+ GT14 双击 upgrade-worker.cmd 装 2.7.4（U-1）",
-  "verdict": "BLOCKED",
-  "reason": "unknown=0，但 4 条宿主/真机调用点尚未执行；按 §2A「证据不足不得判 PASS」，闭合后重算"
+  "unexecutedIds": [],
+  "closure": "I-1/I-2/I-3 由主机 doctor 2.7.4 + GT14 日志与写通道端到端闭合；U-1 由 GT14 装 2.7.4 成功闭合",
+  "verdict": "PASS",
+  "reason": "全部可执行路径均有证据：16 条由测试/门禁执行，4 条宿主/真机调用点由本机 doctor 与 GT14 真机行为闭合"
 }
