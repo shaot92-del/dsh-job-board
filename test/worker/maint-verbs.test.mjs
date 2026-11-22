@@ -663,9 +663,10 @@ test('restart：成功时传给 spawnImpl 的脚本含校验 + Stop + Start', as
   assert.equal(spawned.opts.stdio, 'ignore');
   // script 含校验（Test-Path dshExe）+ Stop-Process + Start-Process
   const script = spawned.args[4];
-  assert.match(script, /Test-Path -LiteralPath '.*dsh\.exe'/, '脚本含 dshExe 校验');
+  assert.match(script, /Get-Process/, '脚本按可执行路径枚举进程');
+  assert.match(script, /dsh-maint-restart\.log/, '脚本写重试日志');
   assert.match(script, /Stop-Process -Id \d+ -Force/, '脚本含 Stop-Process');
-  assert.match(script, /Start-Process -FilePath '.*dsh\.exe'/, '脚本含 Start-Process');
+  assert.match(script, /Start-Process -FilePath \$target/, '脚本含 Start-Process');
   assert.match(script, /Start-Sleep -Milliseconds 5000/, '脚本含 delay');
   // 注：本测试 config 无 stateDir → 不写 log；log 写入见下条测试
 });
@@ -744,7 +745,7 @@ test('restart：dshExePath 含单引号 → 单引号加倍转义后仍可执行
   const script = spawned.args[4];
   assert.ok(script.includes("dsh''q.exe"), '单引号被加倍转义');
   assert.ok(!script.includes("'dsh'q.exe'"), '未出现可闭合的原始单引号串');
-  assert.match(script, /Test-Path -LiteralPath/);
+  assert.match(script, /\$target/, '脚本含目标路径变量');
 });
 
 test('restart：dshExePath 含分号 → 不存在的路径仍拦住', async () => {
@@ -841,6 +842,7 @@ test('upgrade：换名成功且已开重启许可 → 自动排入重启（v2.7.
   assert.equal(calls.length, 1);
   const script = calls[0].args[calls[0].args.length - 1];
   assert.match(script, /Stop-Process -Id \d+ -Force/);
+  assert.match(script, /Get-Process/);
   assert.match(script, /Start-Process -FilePath/);
   assert.ok(!/Move-Item/.test(script), '只重启时不该再动目录');
   assert.equal(calls[0].opts.detached, true);
@@ -886,6 +888,7 @@ test('upgrade：EPERM + 已开重启许可 → 排入安装并 spawn 重启助�
   assert.equal(calls.length, 1);
   const script = calls[0].args[calls[0].args.length - 1];
   assert.match(script, /Stop-Process -Id \d+ -Force/);
+  assert.match(script, /Get-Process/);
   assert.match(script, /Move-Item -LiteralPath/);
   assert.match(script, /Start-Process -FilePath/);
   assert.equal(calls[0].opts.detached, true);

@@ -1,3 +1,21 @@
+## v2.7.11 — 2026-11-22（重启助手改成「按 exe 路径杀 + 全程日志」）
+
+**修复**
+- 2.7.10 的「换包后自动重启」在真机没生效：helper 只按 `Stop-Process -Id <pid>` 杀进程，实测会被拒（权限/父子关系），
+  脚本静默失败、DSH 根本没重启（任务回执却写「将在 N 秒后重启」）。
+- 现在 helper 统一由 `buildRestartScript()` 生成：
+  ① 先 `Get-Process` 枚举、按 `$_.Path -eq <dshExe>` 精确匹配后逐个 `Stop-Process -Force`；
+  ② 一个都没杀到时才回退到 pid；
+  ③ 全过程追加写 `%TEMP%\dsh-maint-restart.log`（helper start / kill path pid / kill failed / fallback / start / done）；
+  ④ `Start-Process` 带上 `-WorkingDirectory`（exe 所在目录），避免以错误 cwd 启动。
+- 三条路径共用同一构造：`restart` 动词、`queueRestartOnly`（换包后重启）、`queueInstallThenRestart`（EPERM 时停→换→拉起）。
+
+**说明**
+- 重启仍是「升级完成后立刻自动做」。若需要「装好但等人点重启」，见后续 2.8.x 的 UI 更新流程（机器卡显示版本 + 手动重启按钮）。
+
+**怎么验证**
+- `npm run gate` 全绿；`test/worker/maint-verbs.test.mjs` 断言脚本含路径枚举与重启日志。
+- 本机夹具：起一个临时 exe 进程 → 跑生成的脚本 → 旧进程被杀、新进程拉起、日志三行落地。
 ## v2.7.10 — 2026-11-22（远程升级真正闭环：换包后自动重启）
 
 **修复**
