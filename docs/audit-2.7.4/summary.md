@@ -5,19 +5,19 @@
 - 采集：`node scripts/audit-collect.mjs --version 2.7.4 --base v2.7.3 --coverage --crash-bundle "C:\review\case\lib-client-2.7.0-crash.bak"`
   → **7 条命令 0 失败**（崩溃包 exit=1 属预期，见 `negative-gate.txt`）
 - 反证清单：`counterproof/paths.json`（**16 EXECUTED / 4 UNEXECUTED / 0 UNKNOWN**）
-  → `counterproof/summary.json` verdict **BLOCKED**：4 条宿主/真机调用点待闭合
+  → `counterproof/summary.json` verdict **PASS**：20/20 路径有证据（4 条真机调用点已闭合）
 
 ## §7 发布签核表（9 项）
 
 | # | 项目 | 判定 | 证据 |
 |---|---|---|---|
-| 1 | 全量审计 | **BLOCKED**（待 4 条 closure） | `counterproof/paths.json`、`independent-review.md` |
+| 1 | 全量审计 | **PASS**（20/20 路径有证据，0 UNKNOWN） | `counterproof/paths.json`、`independent-review.md` |
 | 2 | UI 渲染证据链 | PASS（旧 FAIL 15/40 · 新 PASS 51/51） | `ui-render.md`、`negative-gate.txt` |
-| 3 | 可用性走查 | 部分（真点截图待用户） | `usability.md` |
+| 3 | 可用性走查 | 部分（D3–D8 已实测；三条 UI 真点截图待用户） | `usability.md` |
 | 4 | 门禁全绿 | PASS（gate exit 0；单测 **468/468**） | `gate.log` |
 | 5 | 三处版本一致 | PASS（plugcheck `tools=18 routes=28`） | `gate.log` |
 | 6 | 包内容核对 | PASS（108 文件 / 1,510,274 B） | `deploy.md` |
-| 7 | 部署一致性 | 待重启（installed=2.7.4，运行 2.7.3） | `deploy.md` |
+| 7 | 部署一致性 | PASS（本机桌面 2.7.4 / GT14 2.7.4，doctor 一致） | `deploy.md` |
 | 8 | 重启提示 | 已告知 | 会话记录 |
 | 9 | 回滚路径 | PASS（tag v2.7.3 + rollback 脚本 + deprecate 话术） | `deploy.md` |
 
@@ -42,3 +42,12 @@
 | C-6 | 2.7.3 已发布但 GitHub Release 缺失 | §10 发布通道审查（tag↔Release 同步） |
 | C-7 | 只做「改动面审计」漏全量 | 每次发版全量审计（附录 B 裁决①） |
 | C-8 | 冒烟假 React 不校验 → 全绿仍崩 | 严格假 React + `SMOKE_BUNDLE` 负向门禁 |
+## 真机闭合记录（2026-11-22 16:0x）
+
+| 项 | 证据 |
+|---|---|
+| I-1 | `GET http://127.0.0.1:11333/api/board/ui/doctor` → `version=2.7.4 installedVersion=2.7.4 updateAvailable=false` |
+| I-3 | 同响应 `checks` 含 `id=maint-write-off`（附真实 patch 路径） |
+| U-1 | GT14 装 2.7.4（`inst=gt14/8668-79ff9a32`），日志 `维护写动词已接线（machine=gt14 写开关=on）` |
+| 治本生效 | 远程 `config-set`（票据 `maint-mwrjp55a`）→ `bd-rjrnfh-aed5` **已写盘**；此前同一动作恒 `maint-write-disabled` |
+| D4 | `bd-rjsqxj-234f`（gt14 + `local-llama/qwen35-9b`）→ `remote_id` 空、落本机 worker，被审批门拦成可操作 blocked（note 给 `worker_control action=approve`） |
