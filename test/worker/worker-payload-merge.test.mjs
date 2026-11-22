@@ -6,7 +6,7 @@
 // 形成死锁。这里钉住修法：顶层兜底、子块优先、宿主键不混入。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeWorkerPayload } from '../../lib/worker/config.js';
+import { buildWorkerPayload, maintWriteWarning, mergeWorkerPayload } from '../../lib/worker/config.js';
 import { normalizeConfig } from '../../lib/worker/config.js';
 
 const ROW = {
@@ -63,4 +63,38 @@ test('完全没有顶层键时行为不变（老配置向后兼容）', () => {
   const cfg = effective({ workerMode: 'on', worker: { pollMs: 2000 } });
   assert.equal(cfg.maintenanceWriteEnabled, false);
   assert.deepEqual(cfg.maintAuthPublicKeys, []);
+});
+// ---- v2.7.4 追加：宿主载荷组装 / 启动自检文案 ----
+test('buildWorkerPayload：宿主键在顶层、worker 里只有转发键', () => {
+  const p = buildWorkerPayload(ROW, {
+    boardUrl: 'http://host:8965',
+    machine: 'host',
+    token: 'h-tok',
+    timeoutMs: 5000,
+    workerMode: 'on',
+  });
+  assert.equal(p.boardUrl, 'http://host:8965');
+  assert.equal(p.machine, 'host');
+  assert.equal(p.token, 'h-tok');
+  assert.equal(p.timeoutMs, 5000);
+  assert.equal(p.workerMode, 'on');
+  assert.equal('boardUrl' in p.worker, false, '宿主 boardUrl 不得进 worker');
+  assert.equal('machine' in p.worker, false, '宿主 machine 不得进 worker（否则子块会覆盖机器名）');
+  assert.equal(p.worker.maintenanceWriteEnabled, true, '顶层写通道键必须被带进 worker');
+});
+
+test('buildWorkerPayload：缺省宿主键安全（空 boardUrl、workerMode 默认 on）', () => {
+  const p = buildWorkerPayload({}, {});
+  assert.equal(p.boardUrl, '');
+  assert.equal(p.workerMode, 'on');
+  assert.deepEqual(p.worker, {});
+});
+
+test('maintWriteWarning：开启时为 null，关闭时给出 patch 路径与修法', () => {
+  assert.equal(maintWriteWarning({ maintenanceWriteEnabled: true }, 'C:\\p\\cordis.patch.yml'), null);
+  const msg = maintWriteWarning({}, 'C:\\Users\\x\\.dsh\\profiles\\desktop\\cordis.patch.yml');
+  assert.match(msg, /maintenanceWriteEnabled=false/);
+  assert.match(msg, /cordis\.patch\.yml/);
+  assert.match(msg, /enable-maint-write\.ps1/);
+  assert.match(maintWriteWarning(null, ''), /未解析到 profile 路径/);
 });
