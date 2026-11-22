@@ -98,3 +98,10 @@ test('maintWriteWarning：开启时为 null，关闭时给出 patch 路径与修
   assert.match(msg, /enable-maint-write\.ps1/);
   assert.match(maintWriteWarning(null, ''), /未解析到 profile 路径/);
 });
+test('mergeWorkerPayload：null/数组/非对象入参不抛错、返回空对象', () => {
+  assert.deepEqual(mergeWorkerPayload(null), {});
+  assert.deepEqual(mergeWorkerPayload([]), {});
+  assert.deepEqual(mergeWorkerPayload('x'), {});
+  assert.deepEqual(mergeWorkerPayload({ worker: null }), {});
+  assert.deepEqual(mergeWorkerPayload({ worker: [] }), {});
+});

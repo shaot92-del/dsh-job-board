@@ -1,0 +1,9 @@
+lib/client.js
+lib/index.js
+lib/worker/config.js
+lib/worker/version.js
+scripts/client-render-smoke.mjs
+scripts/deploy/upgrade-worker.ps1
+scripts/enable-maint-write.ps1
+test/worker/enable-maint-write-script.test.mjs
+test/worker/worker-payload-merge.test.mjs

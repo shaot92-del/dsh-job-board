@@ -1,0 +1,899 @@
+diff --git a/lib/client.js b/lib/client.js
+index d6d0c4e..255ed53 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -42 +42 @@ window.__ModuleLoader__.load({
+-    const CLIENT_VERSION = '2.7.3'
++    const CLIENT_VERSION = '2.7.4'
+@@ -310,0 +311,74 @@ window.__ModuleLoader__.load({
++    /* ---------- v2.7.4（UI-1/UI-2）：评估卡四态 + 服务端写盘失败的本机兜底 ----------
++     * 故障 A（2.7.3 挂死）：runAssess 裸 fetch 无超时（client.js:839），服务端 assess 卡住
++     *   （index.js:1013 assess() → reportCaps({force:true})）⇒ assessing 永久 true，永久转圈。
++     * 故障 B（2.7.3 反复重评）：评估成功与否只记在服务端磁盘；saveIdentity 写盘失败只 trace
++     *   （index.js:817-827，825-826 行）⇒ identityState().needsAssessment = !same 恒 true
++     *   （index.js:829-837）。面板重挂（切「对话」再回来）重新拉 /identity 就被拉回引导卡。
++     *   客户端不能改服务端 ⇒ 在本机建第二事实源（localStorage）做降级。 */
++
++    // v2.7.4（主控修订 MC-2）：超时从 8s 放宽到 15s —— 本机探测含 CPU/磁盘/GPU/PowerShell
++    // 冷启动，实测慢机可到 8–12s；8s 会误杀「慢但成功」的响应（复核反证 2/P2）。
++    const ASSESS_TIMEOUT_MS = 15000
++    // v2.7.4（主控修订 MC-1）：本机兜底记录要过期时间 —— 否则服务端写盘长期失败时，
++    // 客户端会永久压住服务端真实 needsAssessment（换硬件/环境变了也不再重评，复核反证 1/P1）。
++    const ASSESS_DONE_TTL_MS = 7 * 24 * 60 * 60 * 1000
++    const ASSESS_DONE_KEY = 'dsh-assess-done-v1'
++    const ASSESS_DEGRADE_NOTIFIED_KEY = 'dsh-assess-degrade-notified-v1'
++    let assessAbortCtl = null // 同一时刻最多一个评估请求；「取消」按钮与 8s 超时共用
++    let assessCancelRequested = false // 「取消」路径不进 error 态的标记（与超时竞态）
++
++    function lsGet(key) {
++      try {
++        return window.localStorage.getItem(key)
++      } catch (e) {
++        return null
++      }
++    }
++    function lsSet(key, val) {
++      try {
++        window.localStorage.setItem(key, val)
++        return true
++      } catch (e) {
++        return false
++      }
++    }
++    function lsDel(key) {
++      try {
++        window.localStorage.removeItem(key)
++      } catch (e) {
++        /* 无 localStorage 时兜底不可用，退化为 2.7.3 原行为 */
++      }
++    }
++    // v2.7.4（MC-1）：能力摘要 —— 用来判断「同一台机器的硬件/环境有没有变」。
++    // 只做轻量散列，不落任何敏感字段；caps 变了视为兜底记录失效，强制重新评估。
++    function capsDigest(caps) {
++      if (!caps || typeof caps !== 'object') return ''
++      let s = ''
++      try {
++        s = JSON.stringify(caps)
++      } catch (e) {
++        return ''
++      }
++      let h = 5381
++      for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0
++      return h.toString(16)
++    }
++    // 读本机评估兜底记录；machine 不匹配（换机/改名）时视为不存在
++    // v2.7.4（MC-1）：加 TTL（默认 7 天）与 caps 摘要比对 —— 过期或硬件变了都视为不存在，
++    // 避免「服务端写盘一直失败 ⇒ 客户端永久压住 needsAssessment」。
++    function readLocalAssess(machine, digest) {
++      const raw = lsGet(ASSESS_DONE_KEY)
++      if (!raw) return null
++      try {
++        const rec = JSON.parse(raw)
++        if (!rec || !(rec.assessedAt > 0)) return null
++        if (String(rec.machine) !== String(machine)) return null
++        if (Date.now() - rec.assessedAt > ASSESS_DONE_TTL_MS) return null
++        if (rec.capsDigest && digest && rec.capsDigest !== digest) return null
++        return rec
++      } catch (e) {
++        /* 坏 JSON 同样视为不存在 */
++      }
++      return null
++    }
++
+@@ -754 +828,5 @@ window.__ModuleLoader__.load({
+-      const [assessing, setAssessing] = React.useState(false)
++      // v2.7.4（UI-1）：评估卡四态 —— 原 assessing 布尔只有「转圈/不转圈」，没有超时与失败出口
++      const [assessPhase, setAssessPhase] = React.useState('idle')
++      const [assessErr, setAssessErr] = React.useState('')
++      // v2.7.4（UI-2）：「稍后」按机器记一轮；否则 15s 轮询把 needsAssessment 翻回来又弹卡（原有缺陷顺带修）
++      const [assessLater, setAssessLater] = React.useState('')
+@@ -759,0 +838,2 @@ window.__ModuleLoader__.load({
++      // v2.7.4（MC-4）：评估结果里的 caps 单独留一份 —— ident 还没刷新回来时能力条仍有数据可渲染
++      const [assessCaps, setAssessCaps] = React.useState(null)
+@@ -824 +904,18 @@ window.__ModuleLoader__.load({
+-              if (alive && d && d.ok) setIdent(d)
++              if (!alive || !d || !d.ok) return
++              // v2.7.4（UI-2）：服务端写盘失败降级 —— needsAssessment=true 但本机有兜底记录
++              // ⇒ 合并为已评估；降级提示只弹一次（之后不重复弹，见 docs/ui-2.7.4/design.md §2.2）
++              if (d.needsAssessment) {
++                const fb = readLocalAssess(d.machine, capsDigest(d.caps))
++                if (fb) {
++                  if (!lsGet(ASSESS_DEGRADE_NOTIFIED_KEY)) {
++                    lsSet(ASSESS_DEGRADE_NOTIFIED_KEY, JSON.stringify({ machine: d.machine, at: Date.now() }))
++                    setNotice('提示：上次评估没能写进服务端档案（identity 写盘失败），本面板先用本机记录代替，不再重复弹出；需要时点「评估」重测并重写档案。')
++                  }
++                  setIdent(Object.assign({}, d, { needsAssessment: false, assessed: true, assessedAt: fb.assessedAt }))
++                  return
++                }
++              } else {
++                // 服务端档案恢复正常 ⇒ 清掉「已提示」标记；下次写盘再失败还能提示一次
++                lsDel(ASSESS_DEGRADE_NOTIFIED_KEY)
++              }
++              setIdent(d)
+@@ -834,0 +932,15 @@ window.__ModuleLoader__.load({
++      // v2.7.4（UI-2）：渲染期派生（兜底双保险）—— /identity 轮询合并是主路径，这里保证
++      // 即使轮询还没回来/标记丢失，渲染结果也正确（数据翻转 needsAssessment true→false→true 不再弹回卡）
++      const assessLocal = ident ? readLocalAssess(ident.machine, capsDigest(ident.caps)) : null
++      const needsAssessEff = !!(ident && ident.needsAssessment && !assessHidden && assessLater !== ident.machine && !assessLocal)
++      const assessedEff = !!(ident && (ident.assessed || assessLocal) && !assessHidden)
++      const assessAtShown = (ident && ident.assessedAt) || (assessLocal && assessLocal.assessedAt) || 0
++      // v2.7.4（UI-1）：四态渲染派生 —— success 与「已评估」共用能力条（success 是评估刚落定的过渡态）
++      // v2.7.4（MC-4）：success 态不再依赖 ident —— /identity 还没回来时也要显示能力条（复核反证 6/P2）
++      const showAssessBar = assessedEff || assessPhase === 'success'
++      // v2.7.4（MC-4 补强）：ident 可能为 null（identity.json 缺失/读取失败）。此时用本次评估返回的 caps 兜底；
++      // 两者都没有就显示占位文案，绝不能让渲染体直接摸 ident.caps（会 TypeError 被 PanelSafe 降级）。
++      const capsForBar = (ident && ident.caps) || assessCaps || null
++
++      // v2.7.4（UI-1）：评估请求带 8s 客户端超时（AbortController）。任何路径都不会永久转圈：
++      // 成功 → success；服务端拒绝/网络错 → error；8s 超时 → error（提示可重试）；点「取消」→ 回 idle。
+@@ -836,2 +948,3 @@ window.__ModuleLoader__.load({
+-        if (assessing) return
+-        setAssessing(true)
++        if (assessPhase === 'loading') return
++        setAssessPhase('loading')
++        setAssessErr('')
+@@ -839 +952,18 @@ window.__ModuleLoader__.load({
+-        fetch(API + '/assess', { method: 'POST', credentials: 'same-origin', headers: Object.assign({}, UI_HEADERS, { 'content-type': 'application/json' }), body: '{}' })
++        assessCancelRequested = false
++        assessAbortCtl = typeof AbortController === 'function' ? new AbortController() : null
++        const timer = setTimeout(() => {
++          if (assessAbortCtl) {
++            try {
++              assessAbortCtl.abort()
++            } catch (e) {
++              /* 已中止 */
++            }
++          }
++        }, ASSESS_TIMEOUT_MS)
++        fetch(API + '/assess', {
++          method: 'POST',
++          credentials: 'same-origin',
++          headers: Object.assign({}, UI_HEADERS, { 'content-type': 'application/json' }),
++          body: '{}',
++          signal: assessAbortCtl ? assessAbortCtl.signal : undefined,
++        })
+@@ -843 +973,2 @@ window.__ModuleLoader__.load({
+-              setNotice('评估未完成：' + ((d && d.error) || '后端返回失败') + '（评估卡保留，可重试）')
++              setAssessPhase('error')
++              setAssessErr('评估未完成：' + ((d && d.error) || '后端返回失败') + '（可点「重试」）')
+@@ -846,0 +978,2 @@ window.__ModuleLoader__.load({
++            setAssessPhase('success')
++            setAssessCaps((d && d.caps) || null)
+@@ -847,0 +981,4 @@ window.__ModuleLoader__.load({
++            // v2.7.4（UI-2）：评估成功 ⇒ 写本机兜底记录（服务端写盘失败时面板据此降级）
++            // v2.7.4（MC-1）：一并记 caps 摘要，供 readLocalAssess 判断硬件是否变过
++            if (d && d.machine)
++              lsSet(ASSESS_DONE_KEY, JSON.stringify({ machine: d.machine, assessedAt: Date.now(), capsDigest: capsDigest(d.caps) }))
+@@ -849 +986,5 @@ window.__ModuleLoader__.load({
+-            return fetch(API + '/identity', { cache: 'no-store', credentials: 'same-origin' }).then((r) => r.json())
++            // v2.7.4（MC-3）：二段 /identity 刷新与「评估是否成功」解耦 —— 它失败不能把
++            // success 态覆盖成 error 卡（复核反证 3/P1）。失败只让本次 ident 刷新作废。
++            return fetch(API + '/identity', { cache: 'no-store', credentials: 'same-origin' })
++              .then((r) => r.json())
++              .catch(() => null)
+@@ -852 +993,4 @@ window.__ModuleLoader__.load({
+-            if (i && i.ok) setIdent(i)
++            if (i && i.ok) {
++              if (!i.needsAssessment) lsDel(ASSESS_DEGRADE_NOTIFIED_KEY)
++              setIdent(i)
++            }
+@@ -855,2 +999,33 @@ window.__ModuleLoader__.load({
+-          .catch((e) => setNotice('评估失败：' + ((e && e.message) || '未知错误')))
+-          .then(() => setAssessing(false))
++          .catch((e) => {
++            const msg = String((e && e.message) || e)
++            const aborted = !!(e && (e.name === 'AbortError' || msg.indexOf('abort') >= 0))
++            if (aborted && assessCancelRequested) {
++              // 用户主动取消：静默回 idle，不进错误卡（cancelAssess 已置 phase=idle）
++              return
++            }
++            setAssessPhase('error')
++            setNotice('')
++            setAssessErr(
++              aborted
++                ? '评估超时（' + Math.round(ASSESS_TIMEOUT_MS / 1000) + ' 秒），本机探测或服务端响应卡住了 —— 可点「重试」再试一次'
++                : '评估失败：' + msg + '（可点「重试」）',
++            )
++          })
++          .then(() => {
++            clearTimeout(timer)
++            assessAbortCtl = null
++          })
++      }
++      const cancelAssess = function () {
++        assessCancelRequested = true
++        if (assessAbortCtl) {
++          try {
++            assessAbortCtl.abort()
++          } catch (e) {
++            /* 无需处理 */
++          }
++        }
++        assessAbortCtl = null
++        setAssessPhase('idle')
++        setAssessErr('')
++        setNotice('')
+@@ -1842 +2017,60 @@ window.__ModuleLoader__.load({
+-        ident && ident.needsAssessment && !assessHidden
++        // v2.7.4（UI-1）：评估卡四态 —— loading / error 两个态有专属卡片，任何路径都不会永久转圈
++        assessPhase === 'loading'
++          ? h(
++              'div',
++              {
++                style: {
++                  border: '1px solid var(--dsb-warn)',
++                  background: 'rgba(var(--dsb-warn-rgb),0.10)',
++                  borderRadius: 8,
++                  padding: '10px 12px',
++                  marginBottom: 10,
++                },
++              },
++              h(
++                'div',
++                { style: { fontWeight: 600, marginBottom: 4 } },
++                '正在评估本机工作能力…（最长 ' + Math.round(ASSESS_TIMEOUT_MS / 1000) + ' 秒，超时会自动停下并提示重试，不会一直转圈）',
++              ),
++              h(
++                'div',
++                { style: { display: 'flex', gap: 8, marginTop: 10 } },
++                h('button', { className: 'dsb-btn dsb-assess-cancel', onClick: cancelAssess }, '取消'),
++              ),
++            )
++          : assessPhase === 'error'
++          ? h(
++              'div',
++              {
++                style: {
++                  border: '1px solid var(--dsb-bad)',
++                  background: 'rgba(var(--dsb-bad-rgb),0.08)',
++                  borderRadius: 8,
++                  padding: '10px 12px',
++                  marginBottom: 10,
++                },
++              },
++              h('div', { style: { fontWeight: 600, marginBottom: 4 } }, '评估没有完成'),
++              h(
++                'div',
++                { style: { opacity: 0.85, lineHeight: 1.7, fontSize: 'calc(var(--dsb-fs) - 1px)' } },
++                assessErr,
++              ),
++              h(
++                'div',
++                { style: { display: 'flex', gap: 8, marginTop: 10 } },
++                h('button', { className: 'dsb-btn dsb-assess-retry', onClick: runAssess }, '重试'),
++                h(
++                  'button',
++                  {
++                    className: 'dsb-btn',
++                    onClick: () => {
++                      setAssessPhase('idle')
++                      setAssessErr('')
++                    },
++                  },
++                  '关闭',
++                ),
++              ),
++            )
++          : needsAssessEff && assessPhase === 'idle'
+@@ -1863,2 +2097,13 @@ window.__ModuleLoader__.load({
+-                h('button', { className: 'dsb-btn', disabled: assessing, onClick: runAssess }, assessing ? '评估中…' : '开始评估'),
+-                h('button', { className: 'dsb-btn', onClick: () => setIdent(Object.assign({}, ident, { needsAssessment: false })) }, '稍后'),
++                h('button', { className: 'dsb-btn', disabled: assessPhase === 'loading', onClick: runAssess }, assessPhase === 'loading' ? '评估中…' : '开始评估'),
++                h(
++                  'button',
++                  {
++                    className: 'dsb-btn',
++                    // v2.7.4（UI-2）：「稍后」按机器记一轮，否则 15s 轮询立刻翻回引导卡（原有缺陷顺带修）
++                    onClick: () => {
++                      setAssessLater(ident.machine)
++                      setIdent(Object.assign({}, ident, { needsAssessment: false }))
++                    },
++                  },
++                  '稍后',
++                ),
+@@ -1867 +2112 @@ window.__ModuleLoader__.load({
+-          : ident && ident.assessed && !assessHidden
++          : showAssessBar
+@@ -1887 +2132 @@ window.__ModuleLoader__.load({
+-                  ident.caps
++                  capsForBar
+@@ -1889,8 +2134,8 @@ window.__ModuleLoader__.load({
+-                        String(ident.caps.os || '').replace('Windows ', 'Win'),
+-                        (ident.caps.cores || '?') + ' 核',
+-                        (ident.caps.memGB || '?') + 'G 内存',
+-                        '余 ' + (ident.caps.freeDiskGB || '?') + 'G',
+-                        ident.caps.features && ident.caps.features.pwsh ? 'pwsh ' + ident.caps.features.pwsh : '无 pwsh',
+-                        ident.caps.features && ident.caps.features.ffmpeg ? 'ffmpeg' : '无 ffmpeg',
+-                        ident.caps.features && ident.caps.features.python ? 'Python ' + ident.caps.features.python : '',
+-                        ident.caps.features && ident.caps.features.gpu ? String(ident.caps.features.gpu).slice(0, 28) : '',
++                        String(capsForBar.os || '').replace('Windows ', 'Win'),
++                        (capsForBar.cores || '?') + ' 核',
++                        (capsForBar.memGB || '?') + 'G 内存',
++                        '余 ' + (capsForBar.freeDiskGB || '?') + 'G',
++                        capsForBar.features && capsForBar.features.pwsh ? 'pwsh ' + capsForBar.features.pwsh : '无 pwsh',
++                        capsForBar.features && capsForBar.features.ffmpeg ? 'ffmpeg' : '无 ffmpeg',
++                        capsForBar.features && capsForBar.features.python ? 'Python ' + capsForBar.features.python : '',
++                        capsForBar.features && capsForBar.features.gpu ? String(capsForBar.features.gpu).slice(0, 28) : '',
+@@ -1900 +2145,3 @@ window.__ModuleLoader__.load({
+-                    : '（清单为空，点右按钮重测）',
++                    : ident
++                      ? '（清单为空，点右按钮重测）'
++                      : '评估完成，能力清单待 /identity 刷新',
+@@ -1902,2 +2149,2 @@ window.__ModuleLoader__.load({
+-                h('span', { style: { opacity: 0.5, marginLeft: 'auto' } }, ident.assessedAt ? '评估于 ' + new Date(ident.assessedAt).toLocaleString() : ''),
+-                h('button', { className: 'dsb-btn', disabled: assessing, onClick: runAssess }, assessing ? '评估中…' : '重新评估'),
++                h('span', { style: { opacity: 0.5, marginLeft: 'auto' } }, assessAtShown ? '评估于 ' + new Date(assessAtShown).toLocaleString() : ''),
++                h('button', { className: 'dsb-btn', disabled: assessPhase === 'loading', onClick: runAssess }, assessPhase === 'loading' ? '评估中…' : '重新评估'),
+diff --git a/lib/index.js b/lib/index.js
+index 7b6646d..5e3c93f 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -36,0 +37,2 @@ import { apply as workerApply } from './worker/index.js'
++// v2.7.4：团队顶层键也要能进 worker（子块优先、顶层兜底）——见 lib/worker/config.js 的 mergeWorkerPayload 注释。
++import { mergeWorkerPayload, normalizeConfig as normalizeWorkerConfig } from './worker/config.js'
+@@ -4349,0 +4352,19 @@ function runStress(mode) {
++        // v2.7.4：维护写通道没开 ⇒ 远程 upgrade / config-set 一律 maint-write-disabled。
++        // 真机踩过：副机装完 2.7.3 后配置被回滚到更早的 .bak，写通道悄悄关掉，
++        // 只有等用户某天点「升级」才会失败。这里提前在面板上报出来，并带上实际 profile 路径
++        // （多 profile 的机器最容易「改了一份、加载另一份」）。
++        try {
++          if (cfg.maintenanceEnabled !== false && cfg.maintenanceWriteEnabled !== true) {
++            let profilePath = ''
++            try {
++              profilePath = path.join(resolveProfileDir(config), 'cordis.patch.yml')
++            } catch {
++              profilePath = ''
++            }
++            add('maint-write-off', 'warn', '维护写通道未开：远程升级 / config-set 会被拒（maint-write-disabled）',
++              '在副机跑 scripts/enable-maint-write.ps1 -PublicKey <主控公钥> 后重启 DSH' +
++              (profilePath ? '；本机加载的配置：' + profilePath : ''))
++          }
++        } catch {
++          /* 只读探测，失败不报 */
++        }
+@@ -5717 +5738 @@ function runStress(mode) {
+-      workerRuntime = workerApply(ctx, {
++      const workerPayload = {
+@@ -5723,2 +5744,15 @@ function runStress(mode) {
+-        worker: cfg.workerConfig,
+-      })
++        // v2.7.4（治本）：顶层与子块合并转发，避免「写在 team 顶层 worker 读不到」的死锁。
++        worker: mergeWorkerPayload(config),
++      }
++      // v2.7.4：把 worker 实际生效的写通道/agent 值打进日志（真机上曾出现
++      // 「配置文件写着 true、worker 里是 false」而没人发现的情况）。
++      try {
++        const eff = normalizeWorkerConfig(workerPayload).config
++        if (cfg.workerMode !== 'off' && eff.maintenanceWriteEnabled !== true) {
++          const patchPath = path.join(resolveProfileDir(config), 'cordis.patch.yml')
++          trace('worker 维护写通道未开：worker 生效值 maintenanceWriteEnabled=false（patch=' + patchPath + '）。远程 upgrade/config-set 会被拒；在副机跑 scripts/enable-maint-write.ps1 后重启 DSH。')
++        }
++      } catch (err) {
++        trace('worker 生效值自检失败：' + String((err && err.message) || err))
++      }
++      workerRuntime = workerApply(ctx, workerPayload)
+diff --git a/lib/worker/config.js b/lib/worker/config.js
+index 9b50aa1..521a339 100644
+--- a/lib/worker/config.js
++++ b/lib/worker/config.js
+@@ -236,0 +237,61 @@ export function readTokenFile(file, opts = {}) {
++/**
++ * v2.7.4（治本）：把团队行（`- id: team`）的 config 合并成 worker 侧认识的形状。
++ *
++ * 背景：宿主的 apply 载荷原本只转交 `config.worker` 子块（lib/index.js:5736-5743），
++ * 于是写在**顶层**的 `maintenanceWriteEnabled` / `maintAuthPublicKeys` / `agentEnabled` /
++ * `allowlist` 等键在进入 worker 之前就被丢掉了 —— worker 只能用默认值（写通道 off、
++ * agent off、allowlist 空），远程写通道因此永远 `maint-write-disabled`，
++ * 而「开写通道」本身又只能走写通道 ⇒ 真机上出现死锁（GT14 2026-11-22）。
++ *
++ * 这里的规则：**子块优先，顶层兜底**，且只转发 worker 真正会读的键（避免把
++ * boardUrl/token 这类宿主键混进来造成歧义）。宿主的 apply 载荷改成
++ * `worker: mergeWorkerPayload(rowConfig)`，两种写法就都能生效，不再依赖缩进位置。
++ */
++export const WORKER_FORWARD_KEYS = Object.freeze([
++  // 执行 / shell
++  'execCwd',
++  'allowlist',
++  'allowedRoots',
++  'allowAllRoots',
++  'approvalMode',
++  'allowInline',
++  'shellTimeoutMs',
++  'maxOutputBytes',
++  'passEnv',
++  // agent
++  'agentEnabled',
++  'agentPreset',
++  'agentCwdRoot',
++  'agentAllowlist',
++  'agentPromptGate',
++  'agentTools',
++  'agentApproval',
++  'agentBudgetMaxPerDay',
++  'agentTimeoutMs',
++  'agentSourceKind',
++  // 维护通道
++  'maintenanceEnabled',
++  'maintenanceOutDir',
++  'maintenancePkgDir',
++  'maintenanceWriteEnabled',
++  'maintenanceAllowRestart',
++  'maintAuthPublicKeys',
++  'dshExePath',
++  'maintAuthKeyFile',
++  // 其它 worker 行为
++  'pollMs',
++  'beatMs',
++  'maxConcurrent',
++  'stateDir',
++  'logLimit',
++])
++
++export function mergeWorkerPayload(raw = {}) {
++  const flat = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
++  const nested = flat.worker && typeof flat.worker === 'object' && !Array.isArray(flat.worker) ? flat.worker : {}
++  const merged = {}
++  for (const key of WORKER_FORWARD_KEYS) {
++    if (flat[key] !== undefined && flat[key] !== null) merged[key] = flat[key]
++  }
++  return { ...merged, ...nested }
++}
+diff --git a/lib/worker/version.js b/lib/worker/version.js
+index fa48bda..8992c46 100644
+--- a/lib/worker/version.js
++++ b/lib/worker/version.js
+@@ -10 +10 @@
+-export const VERSION = '2.7.3'
++export const VERSION = '2.7.4'
+diff --git a/scripts/client-render-smoke.mjs b/scripts/client-render-smoke.mjs
+index dbcfa8e..4cb07b5 100644
+--- a/scripts/client-render-smoke.mjs
++++ b/scripts/client-render-smoke.mjs
+@@ -51,0 +52 @@ function makeReact(states) {
++  let hookIdx = 0
+@@ -80,0 +82,2 @@ function makeReact(states) {
++    // v2.7.4：setter 真实生效（写入 states 槽位），配合 __resetHooks 可重渲染组件 ——
++    // 评估卡超时链路必须「点击 → loading → 超时 → error 卡」全程驱动，布尔桩（()=>{}）做不到。
+@@ -82,3 +85,8 @@ function makeReact(states) {
+-      const v = typeof init === 'function' ? init() : init
+-      states.push(v)
+-      return [v, () => {}]
++      const i = hookIdx++
++      if (i >= states.length) states.push(typeof init === 'function' ? init() : init)
++      return [
++        states[i],
++        (nv) => {
++          states[i] = typeof nv === 'function' ? nv(states[i]) : nv
++        },
++      ]
+@@ -86,0 +95,3 @@ function makeReact(states) {
++    __resetHooks() {
++      hookIdx = 0
++    },
+@@ -91,2 +102,4 @@ function makeReact(states) {
+-/** 宿主全局最小桩：DOM 只做到「不抛错」，Pet 挂载失败会被 bundle 自己 try/catch 掉。 */
+-function makeSandbox(React) {
++/** 宿主全局最小桩：DOM 只做到「不抛错」，Pet 挂载失败会被 bundle 自己 try/catch 掉。
++ * v2.7.4：opts 可控 —— fetch（评估链路桩）、deferTimeouts（超时定时器手动 flush）、
++ * localStorage（needsAssessment 兜底记录种子）、AbortController（vm context 不自带，必须注入）。 */
++function makeSandbox(React, opts = {}) {
+@@ -112,0 +126,2 @@ function makeSandbox(React) {
++  const timers = []
++  const lsStore = Object.assign({}, opts.localStorage || {})
+@@ -115,0 +131 @@ function makeSandbox(React) {
++    AbortController,
+@@ -118,0 +135,4 @@ function makeSandbox(React) {
++      if (opts.deferTimeouts) {
++        timers.push(fn)
++        return timers.length
++      }
+@@ -129 +149 @@ function makeSandbox(React) {
+-    fetch: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' }),
++    fetch: opts.fetch || (async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' })),
+@@ -152 +172,9 @@ function makeSandbox(React) {
+-    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
++    localStorage: {
++      getItem: (k) => (Object.prototype.hasOwnProperty.call(lsStore, k) ? lsStore[k] : null),
++      setItem: (k, v) => {
++        lsStore[k] = String(v)
++      },
++      removeItem: (k) => {
++        delete lsStore[k]
++      },
++    },
+@@ -153,0 +182 @@ function makeSandbox(React) {
++  sandbox.__timers = timers
+@@ -172,0 +202,2 @@ function makeSandbox(React) {
++ * v2.7.4：opts 透传给 makeSandbox（fetch 桩 / deferTimeouts / localStorage 种子）；
++ * 返回值带 rerender()/flushTimers()，供评估卡交互链路用例驱动状态机。
+@@ -173,0 +205 @@ function makeSandbox(React) {
++ * @param {object} opts makeSandbox 选项
+@@ -175 +207 @@ function makeSandbox(React) {
+-function renderOnce(src) {
++function renderOnce(src, opts = {}) {
+@@ -177 +209,2 @@ function renderOnce(src) {
+-  const sandbox = makeSandbox(makeReact(states))
++  const React = makeReact(states)
++  const sandbox = makeSandbox(React, opts)
+@@ -215 +248,22 @@ function renderOnce(src) {
+-  return { tree, states }
++  return {
++    tree,
++    states,
++    sandbox,
++    // 重渲染：hook 按调用序复用 states 槽位（setter 已写入的值生效）
++    rerender() {
++      React.__resetHooks()
++      return main.comp()
++    },
++    // 手动触发 deferTimeouts 模式下排队的定时器（评估 15s 超时就用这条路径）
++    flushTimers() {
++      const queued = sandbox.__timers.splice(0)
++      for (const fn of queued) {
++        try {
++          fn()
++        } catch {
++          /* 定时器回调异常不算渲染失败 */
++        }
++      }
++      return queued.length
++    },
++  }
+@@ -397,0 +452,144 @@ if (askPatched !== RAW) {
++// ── 第 4 轮：评估卡四态 + 15s 超时重试 + needsAssessment 本机兜底（v2.7.4 UI-1/UI-2 + MC-1..4）───
++// 故障 A：2.7.3 runAssess 裸 fetch 无超时（client.js:839 基线），服务端 assess 卡住 ⇒ 永久转圈。
++// 故障 B：服务端 saveIdentity 写盘失败只 trace（index.js:817-827 基线）⇒ needsAssessment 恒 true，
++//         面板重挂（切「对话」再回来）被重新拉回引导卡。
++// 负向门禁：下面 6 条静态断言对旧 bundle（case/lib-client-2.7.0-crash.bak）必须 FAIL。
++check('评估请求有 15s 客户端超时（ASSESS_TIMEOUT_MS=15000）', RAW.includes('const ASSESS_TIMEOUT_MS = 15000'), 'ASSESS_TIMEOUT_MS')
++check('评估 fetch 带 AbortController（signal 传入，超时可中止）', RAW.includes('new AbortController()') && RAW.includes('signal: assessAbortCtl'), 'AbortController')
++check('超时/失败有专属错误卡且给「重试」出口', RAW.includes('dsb-assess-retry') && RAW.includes('评估超时'), 'dsb-assess-retry')
++check('评估成功写本机兜底记录（dsh-assess-done-v1）', RAW.includes("ASSESS_DONE_KEY = 'dsh-assess-done-v1'"), 'dsh-assess-done-v1')
++check('写盘失败降级只提示一次（dsh-assess-degrade-notified-v1 + 「不再重复弹出」）', RAW.includes("ASSESS_DEGRADE_NOTIFIED_KEY = 'dsh-assess-degrade-notified-v1'") && RAW.includes('不再重复弹出'), 'degrade-notified')
++check('评估卡按 phase 四态渲染（idle/loading/success/error）', ["'loading'", "'error'", "'success'", "'idle'"].every((p) => RAW.includes('assessPhase === ' + p)), 'assessPhase 四分支')
++// v2.7.4 主控修订 MC-1/MC-3 的静态锚点（复核反证 1/P1、反证 3/P1）
++check('本机兜底记录有 TTL（ASSESS_DONE_TTL_MS），不再永久压制服务端 needsAssessment', RAW.includes('const ASSESS_DONE_TTL_MS = ') && RAW.includes('Date.now() - rec.assessedAt > ASSESS_DONE_TTL_MS'), 'ASSESS_DONE_TTL_MS')
++check('兜底记录带 caps 摘要（capsDigest），硬件变了即失效', RAW.includes('function capsDigest(caps)') && RAW.includes('rec.capsDigest !== digest'), 'capsDigest')
++check('评估成功后的二段 /identity 刷新失败不翻成 error 卡（解耦）', RAW.includes('.then((r) => r.json())') && RAW.includes('.catch(() => null)'), 'identity-decoupled')
++
++function findButton(node, label) {
++  if (!node || typeof node !== 'object') return null
++  if (node.type === 'button' && flattenText(node).indexOf(label) >= 0) return node
++  const kids = Array.isArray(node) ? node : node.children || []
++  for (const k of kids) {
++    const got = findButton(k, label)
++    if (got) return got
++  }
++  return null
++}
++
++const IDENT_ANCHOR = 'const [ident, setIdent] = React.useState(null)'
++const PHASE_ANCHOR = "const [assessPhase, setAssessPhase] = React.useState('idle')"
++const ERR_ANCHOR = "const [assessErr, setAssessErr] = React.useState('')"
++const fakeIdent = { ok: true, machine: 'GT14', needsAssessment: true, assessed: false, assessedAt: 0, caps: null }
++const identPatched = RAW.replace(IDENT_ANCHOR, 'const [ident, setIdent] = React.useState(' + JSON.stringify(fakeIdent) + ')')
++check('评估卡测试锚点存在（ident 初始 state 可注入）', identPatched !== RAW, IDENT_ANCHOR)
++
++// 4-1 引导态：needsAssessment=true 且无本机兜底 ⇒ 引导卡 + 「开始评估」
++if (identPatched !== RAW) {
++  const t1 = flattenText(renderOnce(identPatched).tree)
++  check('4-1 引导态：needsAssessment=true 且无兜底 ⇒ 「开始评估」引导卡', t1.indexOf('开始评估') >= 0 && t1.some((x) => String(x).includes('还没做过工作能力评估')), '')
++
++  // 4-6 数据翻转（故障 B 主场景）：needsAssessment=true 但本机有兜底记录 ⇒ 按已评估渲染（能力条），不再弹引导卡
++  const marker = JSON.stringify({ machine: 'GT14', assessedAt: Date.now() })  // MC-1：TTL 内才有效，故用当前时间
++  const t6 = flattenText(renderOnce(identPatched, { localStorage: { 'dsh-assess-done-v1': marker } }).tree)
++  check(
++    '4-6 本机兜底：服务端 needsAssessment=true 但有兜底 ⇒ 显示「工作能力」条而非引导卡（重挂不再要求重评）',
++    !t6.some((x) => String(x).includes('还没做过工作能力评估')) && t6.some((x) => String(x).includes('· 工作能力')),
++    '',
++  )
++
++  // 4-7 MC-4 补强（复核三阶段 P0）：ident=null + phase=success 时能力条必须出「占位」而不是崩进 PanelSafe。
++  // 这里不注入 ident（保持默认 null），只把 phase 顶成 success —— 正是反证 f 的可达场景。
++  const nullIdentSuccess = RAW.replace(PHASE_ANCHOR, PHASE_ANCHOR.replace("'idle'", "'success'"))
++  const t7 = flattenText(renderOnce(nullIdentSuccess).tree)
++  check(
++    '4-7 ident=null + 评估成功 ⇒ 能力条显示「清单待 /identity 刷新」占位（不 crash、不降级）',
++    t7.some((x) => String(x).includes('· 工作能力')) && t7.some((x) => String(x).includes('能力清单待 /identity 刷新')),
++    '',
++  )
++
++  const phasePatched = identPatched.replace(PHASE_ANCHOR, PHASE_ANCHOR.replace("'idle'", "'loading'"))
++  check('评估 phase 锚点存在（v2.7.4 才有；旧 bundle 此处必 FAIL）', phasePatched !== identPatched, PHASE_ANCHOR)
++
++  if (phasePatched !== identPatched) {
++    // 4-2 loading 态：明示 8 秒上限 + 可取消 —— 不给「永久转圈」留门
++    const t2 = flattenText(renderOnce(phasePatched, { deferTimeouts: true }).tree)
++    check('4-2 loading 态：明示「最长 15 秒」+ 有「取消」按钮', t2.some((x) => /最长 15 秒/.test(String(x))) && t2.indexOf('取消') >= 0, '')
++
++    // 4-3 error 态：专属错误卡，含原因与「重试」
++    const errPatched = identPatched
++      .replace(PHASE_ANCHOR, PHASE_ANCHOR.replace("'idle'", "'error'"))
++      .replace(ERR_ANCHOR, ERR_ANCHOR.replace("''", "'评估超时（8 秒），可重试'"))
++    const t3 = flattenText(renderOnce(errPatched).tree)
++    check('4-3 error 态：「评估没有完成」卡 + 「重试」按钮', t3.indexOf('评估没有完成') >= 0 && t3.indexOf('重试') >= 0, '')
++
++    // 4-4 交互超时链（故障 A 主场景）：点「开始评估」→ loading；flush 15s 定时器（fetch 永不落定）
++    // → 必须进入 error 卡并给「重试」，绝不永久转圈。旧版这条链永远停在 loading。
++    const timeoutRun = renderOnce(identPatched, {
++      deferTimeouts: true,
++      // 桩必须模拟真 fetch 对 AbortSignal 的行为：abort ⇒ reject(AbortError)。否则这条链测不出超时。
++      fetch: (url, init) => {
++        if (String(url).indexOf('/assess') >= 0) {
++          return new Promise((resolve, reject) => {
++            const abortErr = () => Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })
++            const sig = init && init.signal
++            if (sig) {
++              if (sig.aborted) reject(abortErr())
++              else sig.addEventListener('abort', () => reject(abortErr()))
++            }
++            // 不 resolve：模拟服务端 assess 永不返回（故障 A 场景）
++          })
++        }
++        return Promise.resolve({
++          ok: true,
++          status: 200,
++          json: async () => ({ ok: true, machine: 'GT14', needsAssessment: false, assessed: true, assessedAt: 1, caps: null }),
++          text: async () => '{}',
++        })
++      },
++    })
++    const btnT = findButton(timeoutRun.tree, '开始评估')
++    check('4-4a 交互链起点：能找到「开始评估」按钮', Boolean(btnT), '')
++    if (btnT) {
++      btnT.props.onClick()
++      const loadingTexts = flattenText(timeoutRun.rerender())
++      check('4-4b 点击后进入 loading 态（明示不会一直转圈）', loadingTexts.some((x) => /不会一直转圈/.test(String(x))), '')
++      const flushed = timeoutRun.flushTimers()
++      await new Promise((r) => setTimeout(r, 30)) // 让 abort 的 rejection 走完微任务链
++      const errTexts = flattenText(timeoutRun.rerender())
++      check(
++        '4-4c 8s 定时器触发 ⇒ error 卡 + 「重试」出口（旧版此处永久转圈）',
++        flushed >= 1 && errTexts.indexOf('重试') >= 0 && errTexts.some((x) => /评估超时/.test(String(x))),
++        'flushed=' + flushed,
++      )
++    }
++
++    // 4-5 成功链：assess 返回 ok ⇒ notice 摘要 + 本机兜底记录写入（旧版没有兜底）
++    const okRun = renderOnce(identPatched, {
++      fetch: async (url) => {
++        if (String(url).indexOf('/assess') >= 0) {
++          return { ok: true, status: 200, json: async () => ({ ok: true, machine: 'GT14', summary: '首次评估完成 GT14', caps: {} }), text: async () => '{}' }
++        }
++        return {
++          ok: true,
++          status: 200,
++          json: async () => ({ ok: true, machine: 'GT14', needsAssessment: false, assessed: true, assessedAt: 1763712000000, caps: {} }),
++          text: async () => '{}',
++        }
++      },
++    })
++    const btnO = findButton(okRun.tree, '开始评估')
++    check('4-5a 成功链起点：能找到「开始评估」按钮', Boolean(btnO), '')
++    if (btnO) {
++      btnO.props.onClick()
++      await new Promise((r) => setTimeout(r, 30))
++      const doneTexts = flattenText(okRun.rerender())
++      check('4-5b 评估成功：notice 出现服务端摘要、引导卡消失', doneTexts.some((x) => String(x).indexOf('首次评估完成 GT14') >= 0) && doneTexts.indexOf('开始评估') < 0, '')
++      check(
++        '4-5c 评估成功：本机兜底记录已写入（dsh-assess-done-v1，故障 B 的客户端侧补丁）',
++        String(okRun.sandbox.localStorage.getItem('dsh-assess-done-v1') || '').indexOf('"machine":"GT14"') >= 0,
++        '',
++      )
++    }
++  }
++}
++
+diff --git a/scripts/deploy/upgrade-worker.ps1 b/scripts/deploy/upgrade-worker.ps1
+index e9e7fe9..fe86f39 100644
+--- a/scripts/deploy/upgrade-worker.ps1
++++ b/scripts/deploy/upgrade-worker.ps1
+@@ -294 +294,9 @@ for (`$i = 0; `$i -lt 45; `$i++) {
+-`$text = if (`$ok) { "重启完成：运行版本 v`$ver，GUI 端口 `$port" } else { "重启后 90 秒内没探到 DSH 的 doctor，请手工打开 DSH 并查看版本" }
++`$writeState = ""
++if (`$ok) {
++  try {
++    `$d2 = Invoke-RestMethod ("http://127.0.0.1:" + `$port + '/api/board/ui/doctor') -TimeoutSec 3
++    `$off = @(`$d2.checks | Where-Object { `$_.id -eq 'maint-write-off' })
++    `$writeState = if (`$off.Count -gt 0) { "；写通道未开（远程升级会失败，跑 enable-maint-write.ps1 后重启）" } else { "；写通道已开" }
++  } catch { }
++}
++$text = if (`$ok) { "重启完成：运行版本 v`$ver，GUI 端口 `$port" + `$writeState } else { "重启后 90 秒内没探到 DSH 的 doctor，请手工打开 DSH 并查看版本" }
+diff --git a/scripts/enable-maint-write.ps1 b/scripts/enable-maint-write.ps1
+index 3cf0860..433bc0c 100644
+--- a/scripts/enable-maint-write.ps1
++++ b/scripts/enable-maint-write.ps1
+@@ -62,0 +63,2 @@ if ($PublicKey -notmatch '^[A-Za-z0-9+/=]{40,400}$') { Fail "公钥格式不对
++$allProfileDirs = @()
++if (Test-Path $profilesRoot) { $allProfileDirs = @(Get-ChildItem $profilesRoot -Directory | ForEach-Object { $_.Name }) }
+@@ -63,0 +66,6 @@ $names = @(Get-PluginProfiles)
++if (-not $Profile -and $allProfileDirs.Count -gt 1) {
++  # v2.7.4：多 profile 的机器最容易「改了一份、DSH 加载另一份」——真机上排查过一整轮。
++  # 这里显式把「有哪些 profile / 哪些会被改」打出来，免得又白跑。
++  Say "检测到多个 profile：$($allProfileDirs -join ', ')"
++  Say "其中含本插件/键位的：$($names -join ', ')（将按顺序补键）"
++}$names = @(Get-PluginProfiles)
+@@ -87,0 +96,6 @@ for ($i = $teamIdx + 1; $i -lt $lines.Count; $i++) {
++# 扁平布局兼容（v2.7.4 起）：有些机器把 worker 配置**直接平铺**在 team -> config 下
++# （workerMode / pollMs / allowlist … 没有嵌套 worker: 块）。插件两种布局都读，本脚本也要两种都能写。
++$flatMode = $false
++$insertAt = -1
++$flatConfigIdx = -1
++$flatConfigEnd = -1
+@@ -89 +103,34 @@ if ($workerIdx -lt 0) {
+-  Fail "$patch 的 team 块里没有 worker: 子块。请在 team 行的 config: 下新增：`n  worker:`n    workerMode: 'off'`n再用本脚本。"
++  $configIdx = -1
++  for ($i = $teamIdx + 1; $i -lt $lines.Count; $i++) {
++    if ($lines[$i] -match '^\s*config:\s*$') { $configIdx = $i; break }
++    if ($lines[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $teamIndent) { break }
++  }
++  if ($configIdx -ge 0) {
++    $configIndent = ($lines[$configIdx] -replace '^(\s*).*$', '$1').Length
++    $lastKey = -1
++    $keyIndent = -1
++    for ($i = $configIdx + 1; $i -lt $lines.Count; $i++) {
++      if ($lines[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $configIndent) { break }
++      if ($lines[$i] -match '^(\s*)(workerMode|pollMs|allowlist|allowAllRoots|allowedRoots|shellTimeoutMs|maxOutputBytes|agentEnabled|agentAllowlist|agentPreset|execCwdRoot|approvalMode|allowInline)\s*:') {
++        $lastKey = $i
++        $keyIndent = $Matches[1].Length
++      }
++    }
++    if ($lastKey -ge 0) {
++      $flatMode = $true
++      $workerIdx = $lastKey
++      $workerIndent = $keyIndent
++      # config 块结束行：新键统一追加到 config 末尾（而不是紧贴最后一个 worker 键），
++      # 这样 Get-KeyValue 的扫描区间才能覆盖已有的 maintenance* 键（否则重跑会写重复键）。
++      $cfgEnd = $lines.Count
++      for ($i = $configIdx + 1; $i -lt $lines.Count; $i++) {
++        if ($lines[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $configIndent) { $cfgEnd = $i; break }
++      }
++      $flatConfigIdx = $configIdx
++      $flatConfigEnd = $cfgEnd
++      $insertAt = $cfgEnd
++    }
++  }
++}
++if ($workerIdx -lt 0) {
++  Fail "$patch 的 team 块里既没有 worker: 子块、也没有平铺的 workerMode 等键。请先在 team 的 config: 下建 worker 配置（可跑 scripts/set-team-config.ps1），再用本脚本。"
+@@ -92 +139,2 @@ $workerIndent = ($lines[$workerIdx] -replace '^(\s*).*$', '$1').Length
+-$childIndent = $workerIndent + 2
++$childIndent = if ($flatMode) { $workerIndent } else { $workerIndent + 2 }
++if ($flatMode) { Say "检测到扁平布局：worker 键平铺在 config 下（缩进 $workerIndent），新键按同级追加" }
+@@ -102 +150 @@ if ($inlineEmptyMap) {
+-# worker 子块结束行
++# 插入位置：嵌套布局 = worker 子块结束行；扁平布局 = 最后一个 worker 键的下一行
+@@ -104,3 +152,7 @@ $end = $lines.Count
+-for ($i = $workerIdx + 1; $i -lt $lines.Count; $i++) {
+-  if ($lines[$i] -match '^(\s*)\S') {
+-    if ($Matches[1].Length -le $workerIndent) { $end = $i; break }
++if ($flatMode) {
++  $end = $insertAt
++} else {
++  for ($i = $workerIdx + 1; $i -lt $lines.Count; $i++) {
++    if ($lines[$i] -match '^(\s*)\S') {
++      if ($Matches[1].Length -le $workerIndent) { $end = $i; break }
++    }
+@@ -112 +164,3 @@ function Get-KeyValue($key) {
+-  for ($i = $workerIdx + 1; $i -lt $end; $i++) {
++  $from = if ($flatMode) { $flatConfigIdx + 1 } else { $workerIdx + 1 }
++  $to = if ($flatMode) { $flatConfigEnd } else { $end }
++  for ($i = $from; $i -lt $to; $i++) {
+@@ -173,3 +227,13 @@ foreach ($k in $wanted.Keys) {
+-  for ($i = $wIdx + 1; $i -lt $check.Count; $i++) {
+-    if ($check[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $workerIndent) { break }
+-    if ($check[$i] -match "^\s*$([regex]::Escape($k)):") { $hit = $true; break }
++  if ($flatMode) {
++    $cfgIdx2 = -1
++    for ($i = $teamIdx + 1; $i -lt $check.Count; $i++) { if ($check[$i] -match '^\s*config:\s*$') { $cfgIdx2 = $i; break } }
++    $cfgIndent2 = if ($cfgIdx2 -ge 0) { ($check[$cfgIdx2] -replace '^(\s*).*$', '$1').Length } else { $workerIndent - 2 }
++    for ($i = $cfgIdx2 + 1; $i -lt $check.Count; $i++) {
++      if ($check[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $cfgIndent2) { break }
++      if ($check[$i] -match "^\s*$([regex]::Escape($k)):") { $hit = $true; break }
++    }
++  } else {
++    for ($i = $wIdx + 1; $i -lt $check.Count; $i++) {
++      if ($check[$i] -match '^(\s*)\S' -and $Matches[1].Length -le $workerIndent) { break }
++      if ($check[$i] -match "^\s*$([regex]::Escape($k)):") { $hit = $true; break }
++    }
+@@ -177 +241 @@ foreach ($k in $wanted.Keys) {
+-  if (-not $hit) { $problems += "$k 未落到 worker 子块" }
++  if (-not $hit) { $problems += "$k 未落到 worker 配置里" }
+diff --git a/test/worker/enable-maint-write-script.test.mjs b/test/worker/enable-maint-write-script.test.mjs
+index 10ccc81..52cb145 100644
+--- a/test/worker/enable-maint-write-script.test.mjs
++++ b/test/worker/enable-maint-write-script.test.mjs
+@@ -83,0 +84,19 @@ test('没有 worker: 子块：干净失败，不写坏文件', { skip }, () => {
++
++// v2.7.4：GT14 这类机器把 worker 配置**平铺**在 team -> config 下（没有嵌套 worker: 块）。
++// 脚本必须能识别这种布局、按同级缩进追加、并且重跑幂等（曾经会写重复键）。
++test('扁平布局（无 worker: 子块，键平铺在 config 下）：同级追加 + 幂等', { skip }, () => {
++  const { root, patch } = makeFixture(
++    ['- id: team', '  config:', "    machine: 'gt14'", "    workerMode: 'on'", '    pollMs: 2000', '- id: other', '  config:', '    x: 1', ''].join('\n'),
++  );
++  const first = runScript(root);
++  assert.equal(first.status, 0, first.stdout + first.stderr);
++  const afterFirst = fs.readFileSync(patch, 'utf8');
++  assert.match(afterFirst, /^ {4}maintenanceWriteEnabled: true$/m, '扁平布局必须按同级 4 空格缩进追加');
++  assert.match(afterFirst, /^ {4}maintAuthPublicKeys: \['/m);
++  assert.match(afterFirst, /^ {4}workerMode: 'on'$/m, '既有键必须保留');
++  assert.match(afterFirst, /^- id: other$/m, '后续块必须完好');
++
++  const second = runScript(root);
++  assert.equal(second.status, 0, second.stdout + second.stderr);
++  assert.equal(fs.readFileSync(patch, 'utf8'), afterFirst, '第二次运行不应改动文件（不得写重复键）');
++});
+\ No newline at end of file
+diff --git a/test/worker/worker-payload-merge.test.mjs b/test/worker/worker-payload-merge.test.mjs
+new file mode 100644
+index 0000000..7af041a
+--- /dev/null
++++ b/test/worker/worker-payload-merge.test.mjs
+@@ -0,0 +1,66 @@
++// worker-payload-merge.test.mjs —— v2.7.4 治本回归
++//
++// 真机事故（GT14，2026-11-22）：宿主只把 `config.worker` 子块转发给 worker，
++// 写在团队行**顶层**的 maintenanceWriteEnabled / maintAuthPublicKeys / agentEnabled /
++// allowlist 全部被丢掉 ⇒ worker 用默认值（写通道 off），而「开写通道」又只能走写通道，
++// 形成死锁。这里钉住修法：顶层兜底、子块优先、宿主键不混入。
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { mergeWorkerPayload } from '../../lib/worker/config.js';
++import { normalizeConfig } from '../../lib/worker/config.js';
++
++const ROW = {
++  workerMode: 'on',
++  boardUrl: 'http://192.168.3.40:8965',
++  machine: 'GT14',
++  token: 'tok',
++  timeoutMs: 8000,
++  maintenanceWriteEnabled: true,
++  maintAuthPublicKeys: ['K'],
++  allowlist: ['C:\\tools'],
++  agentEnabled: true,
++  agentAllowlist: [{ id: 'any', matchAll: true }],
++  worker: { pollMs: 2000, beatMs: 30000, agentEnabled: false, allowlist: [] },
++};
++
++function effective(row) {
++  return normalizeConfig({
++    boardUrl: row.boardUrl,
++    machine: row.machine,
++    token: row.token,
++    timeoutMs: row.timeoutMs,
++    workerMode: row.workerMode,
++    worker: mergeWorkerPayload(row),
++  }).config;
++}
++
++test('团队顶层写通道键必须进到 worker 生效值', () => {
++  const cfg = effective(ROW);
++  assert.equal(cfg.maintenanceWriteEnabled, true, '顶层 maintenanceWriteEnabled 必须生效');
++  assert.deepEqual(cfg.maintAuthPublicKeys, ['K']);
++});
++
++test('子块优先：worker 里显式 false 压过顶层 true', () => {
++  const cfg = effective({ ...ROW, worker: { ...ROW.worker, maintenanceWriteEnabled: false } });
++  assert.equal(cfg.maintenanceWriteEnabled, false);
++});
++
++test('子块里已有的 agent 闸门不被顶层覆盖（仍是 false）', () => {
++  const cfg = effective(ROW);
++  assert.equal(cfg.agentEnabled, false, 'worker.agentEnabled=false 必须压过顶层 true');
++  assert.deepEqual(cfg.allowlist, [], 'worker.allowlist=[] 必须压过顶层数组');
++});
++
++test('宿主键不得混进 worker 块（boardUrl/token/machine 不转发）', () => {
++  const m = mergeWorkerPayload(ROW);
++  assert.equal('boardUrl' in m, false);
++  assert.equal('token' in m, false);
++  assert.equal('machine' in m, false);
++  assert.equal(m.pollMs, 2000);
++});
++
++test('完全没有顶层键时行为不变（老配置向后兼容）', () => {
++  const cfg = effective({ workerMode: 'on', worker: { pollMs: 2000 } });
++  assert.equal(cfg.maintenanceWriteEnabled, false);
++  assert.deepEqual(cfg.maintAuthPublicKeys, []);
++});
+\ No newline at end of file

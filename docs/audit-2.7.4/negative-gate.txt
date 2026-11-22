@@ -1,0 +1,45 @@
+# 负向门禁：旧包（2.7.0 崩溃版）必须 FAIL
+# 命令：$env:SMOKE_BUNDLE='C:\review\case\lib-client-2.7.0-crash.bak'; node scripts/client-render-smoke.mjs
+# 实测：exit=1，下表为采集器抓到的尾部输出
+
+ok    渲染不抛错，拿到 dsb-head
+FAIL  标题旁出现「插件 v2.7.4」  — ["插件 v2.7.0"]
+ok    版本 pill 在标题区（排在「待办」之前）  — header 文本序：["多机调度台","插件 v2.7.0","dsh-job-board","待办 ","0","进行 ","0","完成 "]
+FAIL  版本 pill 有 dsb-pill dsb-v 样式钩子  — "插件 v2.7.0"
+ok    标题+版本在同一个 dsb-brand 组里  — ["多机调度台","插件 v2.7.0","dsh-job-board"]
+ok    四个计数 pill 在 dsb-meta 组里  — ["待办 ","0","进行 ","0","完成 ","0","打回 ","0"]
+ok    按钮在 header 内的 dsb-acts 组里（没有丢按钮）  — dsb-btn 数量=9
+ok    派工弹窗有类型选择器（agent/exec/maint）  — taskMode select
+ok    maint 模式有票据输入框  — ticket textarea
+ok    建单请求会带 maint_ticket  — doDispatch maint_ticket
+ok    写动词缺票时前端拦下并提示  — guard
+ok    worker 卡存在（数据源 /worker-status）  — worker card
+ok    worker 卡有 drain / resume 两个按钮  — drain/resume buttons
+ok    enabled=false 时整卡不渲染（workerOn 守卫）  — workerOn guard
+ok    窄屏折叠样式存在（@media ≤980px + dsb-sub 让位）  — media queries
+ok    窄屏 ≤1100px：机器卡改单列纵向堆叠（flex-direction:column + 容器 100%）  — @media (max-width:1100px){.dsb-mach-grid{flex-direction:column;max-height:none!important;overflow:visible!important;width:100%;max-width:100%}.dsb-mach-grid>.ds
+ok    窄屏 ≤900px：隐藏次要列（dsb-col-id 走 display:none，不压字号）  — @media (max-width:900px){.dsb-col-id{display:none}.dsb-row{gap:8px;padding:10px 12px}.dsb-row .dsb-name{flex:1 1 60%;min-width:0;overflow:hidden;text-overflow:e
+ok    doctor 初始 state 可被注入（锚点存在）  — const [doctor, setDoctor] = React.useState(null)
+ok    运行版本用 doctor.version  — "插件 v2.6.12→ 磁盘 v2.6.13↑ v2.6.14"
+ok    磁盘版本不同 ⇒ 显示「→ 磁盘 v2.6.13」  — "插件 v2.6.12→ 磁盘 v2.6.13↑ v2.6.14"
+ok    有新版 ⇒ 显示「↑ v2.6.14」  — "插件 v2.6.12→ 磁盘 v2.6.13↑ v2.6.14"
+ok    提示「重启 DSH 后生效」  — 插件 v2.6.12　·　磁盘已安装 v2.6.13（重启 DSH 后生效）　·　有新版本 v2.6.14　·　角色 owner　·　点击重新自检
+ok    doctor 三态下不再重复渲染版本横幅（自检全绿）
+ok    派工弹窗测试锚点存在（ask/data 初始 state 可注入）  — const [ask, setAsk] = React.useState(false) / const [data, setData] = React.useState(null)
+FAIL  派工弹窗渲染不抛错（2.7.0 此处 #130）  — Minified React error #130: expected a string (for built-in components) or a class/function (for composite components) but got: object（client bundle 把对象当成了节点类型）
+ok    严格假 React 能抓到「元素对象当 type」（#130 同型）  — Minified React error #130: expected a string (for built-in components) or a class/function (for composite components) but got: object（client bundle 把对象当成了节点类型）
+FAIL  评估请求有 15s 客户端超时（ASSESS_TIMEOUT_MS=15000）  — ASSESS_TIMEOUT_MS
+FAIL  评估 fetch 带 AbortController（signal 传入，超时可中止）  — AbortController
+FAIL  超时/失败有专属错误卡且给「重试」出口  — dsb-assess-retry
+FAIL  评估成功写本机兜底记录（dsh-assess-done-v1）  — dsh-assess-done-v1
+FAIL  写盘失败降级只提示一次（dsh-assess-degrade-notified-v1 + 「不再重复弹出」）  — degrade-notified
+FAIL  评估卡按 phase 四态渲染（idle/loading/success/error）  — assessPhase 四分支
+FAIL  本机兜底记录有 TTL（ASSESS_DONE_TTL_MS），不再永久压制服务端 needsAssessment  — ASSESS_DONE_TTL_MS
+FAIL  兜底记录带 caps 摘要（capsDigest），硬件变了即失效  — capsDigest
+FAIL  评估成功后的二段 /identity 刷新失败不翻成 error 卡（解耦）  — identity-decoupled
+ok    评估卡测试锚点存在（ident 初始 state 可注入）  — const [ident, setIdent] = React.useState(null)
+ok    4-1 引导态：needsAssessment=true 且无兜底 ⇒ 「开始评估」引导卡
+FAIL  4-6 本机兜底：服务端 needsAssessment=true 但有兜底 ⇒ 显示「工作能力」条而非引导卡（重挂不再要求重评）
+FAIL  4-7 ident=null + 评估成功 ⇒ 能力条显示「清单待 /identity 刷新」占位（不 crash、不降级）
+FAIL  评估 phase 锚点存在（v2.7.4 才有；旧 bundle 此处必 FAIL）  — const [assessPhase, setAssessPhase] = React.useState('idle')
+FAIL  client-render-smoke：15/40 项不通过
