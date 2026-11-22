@@ -657,8 +657,8 @@ test('restart：成功时传给 spawnImpl 的脚本含校验 + Stop + Start', as
   assert.equal(r.ok, true);
   assert.equal(r.status, 'done');
   assert.equal(r.reason, 'ok');
-  assert.match(r.note, /将在 5 秒后重启/);
-  // detached + stdio ignore
+  assert.match(r.note, /已排入重启助手/);
+  assert.match(r.note, /dsh-maint-restart\.log/);
   assert.equal(spawned.opts.detached, true);
   assert.equal(spawned.opts.stdio, 'ignore');
   // script 含校验（Test-Path dshExe）+ Stop-Process + Start-Process
@@ -838,7 +838,7 @@ test('upgrade：换名成功且已开重启许可 → 自动排入重启（v2.7.
   const r = await v.run('upgrade', { file: fileName, sha256: hash }, { taskId: 't-r' });
   assert.equal(r.ok, true);
   assert.equal(r.queued, true, r.note);
-  assert.match(r.note, /自动重启/);
+  assert.match(r.note, /自动重启|已排入/);
   assert.equal(calls.length, 1);
   const script = calls[0].args[calls[0].args.length - 1];
   assert.match(script, /Stop-Process -Id \d+ -Force/);

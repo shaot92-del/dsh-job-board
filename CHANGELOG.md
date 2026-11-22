@@ -1,3 +1,23 @@
+## v2.7.12 — 2026-11-22（2.7.11 复审修正：重启助手脚本的 P0/P1）
+
+> 2.7.11 的定向复审（`docs/audit-2.7.11/review-2.7.11.md`）判 FAIL：重启助手脚本有三处会在真机上把安装目录搞坏或让日志说谎。本版按复审条目逐条修掉，并把「脚本层」纳入测试。
+
+### 修复
+- **P0-1（换目录失败静默 → 源被挪成目标的子目录）**：`Remove-Item` 加 `-ErrorAction Stop` 并包 try/catch；删不掉立刻记 `$fail`、结束 `exit 1`；再加一道「删后仍在 → `remove-left-target`」；`Move-Item` 同样 `-ErrorAction Stop`。
+- **P1-1（引号上下文错 → `$` 与 `$(...)` 被 PowerShell 展开/执行）**：日志行改为 `L ('swap ' + 'A' + ' -> ' + 'B')` 单引号拼接；路径一律 `q()` 转义（单引号加倍）。
+- **P1-2（回执骗人）**：helper 自证——成功写 `restart-succeeded` + `exit 0`，任何失败写 `restart-failed <原因>` + `exit 1`；`Start-Process` 失败也算失败（不再 spawn 成功后就说「将重启」）。
+- **P2-1（日志路径不在回执里）**：`runRestart`/`upgrade` 的回执 note 写明日志位置（`<stateDir>/restart-<slug>.log` 或 `%TEMP%\dsh-maint-restart.log`），并明确「spawn 成功 ≠ 重启成功，以日志为准」。
+- **P2-2（pid/delayMs 未校验）**：非有限数归一（delay 缺省 6000ms、pid 缺省 0）。
+- **P3-1（死代码）**：删除 `psQuoteStr` / `psQuote`。
+- **P3-2（`trace` 未定义）**：`runUpgrade` 的 `trace(...)` 改 `log.warn(...)`，并把 `ctx` 正确传进 `runUpgrade(payload, ctx)`。
+
+### 新增测试（`test/worker/maint-verbs-restart-script.test.mjs`，6 条）
+- 脚本结构：`Remove-Item … -ErrorAction Stop`、`Move-Item … -ErrorAction Stop`、`restart-failed`、`verify-missing`、`exit 1`、`restart-succeeded`；日志行必须是单引号拼接。
+- **真实执行**（不是只跑 JS 分支）：① 路径里含 `'$(Get-Date -Format yyyy)` 的 exe → 日志原样记录、不被展开；② 换目录失败（目标父级是文件）→ `exit 1` 且源目录仍在。
+- 回执 note 含日志路径；`upgrade` 排入失败走 `log.warn` 不抛 `ReferenceError`。
+
+### 验证
+- `npm run gate`：**489/489**、smoke 65/65、plugcheck 18/28、check-text PASSED、pack-check 109 文件 / 1,529,689 B。
 ## v2.7.11 — 2026-11-22（重启助手改成「按 exe 路径杀 + 全程日志」）
 
 **修复**
