@@ -1,3 +1,19 @@
+## v2.7.14 — 2026-11-23（2.7.13 复审修正：部署脚本 here-doc 展开回归 + EPER 回执补全 + 空断言）
+
+> 2.7.13 的定向复审（`docs/audit-2.7.13/review-2.7.13.md`）判 FAIL：我上一轮加固 `upgrade-worker.ps1` 的重启 here-doc 时，新加的 6 行没做反引号转义（`@"..."@` 是双引号 here-string），生成的重启助手脚本有 7 个解析错误、完全不可执行；`upgrade` 的 EPERM 分支回执漏改；P1-1 用例的「无年份展开」断言是空断言；CHANGELOG 数字抄错。
+
+### 修复
+- **P0（部署脚本 here-doc 展开回归）**：`scripts/deploy/upgrade-worker.ps1` 的重启 here-doc 整段重写——所有运行时变量一律 `` `$ `` 转义、`function L` 里的时间戳改成运行时拼接、结果文件里的日志路径改用 `' | 助手日志：' + `$log`（避免 `` `n `` 在生成期变成真换行）。**生成脚本经 `Parser::ParseInput` 校验：0 解析错误**。
+- **P1（EPERM 分支回执）**：`lib/worker/maint-verbs.js` 的 EPERM+可重启分支，note 追加「spawn 成功 ≠ 安装/重启成功，结果以助手日志为准：<路径>」并回传 `logFile`，与正常路径一致。
+- **P2（空断言）**：`test/worker/maint-verbs-restart-script.test.mjs` 的年份断言改为「取 swap 行（去掉行首时间戳）后，不含当前年份、且两侧路径都保留字面量 `$()`」；原来 `!/[0-9]{4}\.exe/` 对缺陷版本也通过，属空断言。
+- **P2（测试补强）**：`test/worker/maint-verbs.test.mjs` 的 EPERM 用例新增三条断言（note 含日志路径、含「spawn 成功 ≠」、`logFile` 以 `.log` 结尾）。
+- **P3（CHANGELOG 数字）**：本段数字以实跑为准。
+
+### 验证
+- `node --test test/worker/maint-verbs-restart-script.test.mjs` → **8/8**
+- `node --test test/worker/maint-verbs.test.mjs` → **58/58**
+- `npm run gate` → 单测 **491/491**、smoke 65/65、plugcheck 18/28、check-text PASSED、pack-check **109 文件 / 1,533,838 B**
+- 部署脚本重启助手：`Parser::ParseInput` **0 errors**；生成脚本头部变量名完整（`$log = Join-Path $env:TEMP (...)`）
 ## v2.7.13 — 2026-11-23（2.7.12 复审修正：日志落点一致 + 回执补全 + 测试真覆盖）
 
 > 2.7.12 的定向复审（`docs/audit-2.7.12/review-2.7.12.md`）判 FAIL：P2-1 只修了 `runRestart` 一半——`stateDir` 设了以后回执指向 JS 侧标记日志，而 helper 仍写 `%TEMP%`；`upgrade` 两条回执根本没写日志路径；另外两条新测试没有真的覆盖目标代码行（P1-1 的 swap 行、P3-2 的 `log.warn`）。

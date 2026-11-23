@@ -840,6 +840,10 @@ test('upgrade：换名成功且已开重启许可 → 自动排入重启（v2.7.
   assert.equal(r.queued, true, r.note);
   assert.match(r.note, /自动重启|已排入/);
   assert.equal(calls.length, 1);
+  // 2.7.13 复审 P1：EPER 路径的回执必须与正常路径一样，带日志路径 + 「spawn 成功 ≠ 成功」免责
+  assert.match(String(r.note || ''), /助手日志|dsh-maint-restart\.log/, 'EPER 回执必须给日志路径');
+  assert.match(String(r.note || ''), /spawn 成功 ≠/, 'EPER 回执必须写明 spawn 成功不等于安装/重启成功');
+  assert.ok(r.logFile && /\.log$/.test(String(r.logFile)), 'EPER 回执必须回传 logFile');
   const script = calls[0].args[calls[0].args.length - 1];
   assert.match(script, /Stop-Process -Id \d+ -Force/);
   assert.match(script, /Get-Process/);
@@ -886,6 +890,10 @@ test('upgrade：EPERM + 已开重启许可 → 排入安装并 spawn 重启助�
   assert.equal(r.queued, true);
   assert.equal(r.version, '2.7.8');
   assert.equal(calls.length, 1);
+  // 2.7.13 复审 P1：EPER 路径的回执必须与正常路径一样，带日志路径 + 「spawn 成功 ≠ 成功」免责
+  assert.match(String(r.note || ''), /助手日志|dsh-maint-restart\.log/, 'EPER 回执必须给日志路径');
+  assert.match(String(r.note || ''), /spawn 成功 ≠/, 'EPER 回执必须写明 spawn 成功不等于安装/重启成功');
+  assert.ok(r.logFile && /\.log$/.test(String(r.logFile)), 'EPER 回执必须回传 logFile');
   const script = calls[0].args[calls[0].args.length - 1];
   assert.match(script, /Stop-Process -Id \d+ -Force/);
   assert.match(script, /Get-Process/);

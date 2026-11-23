@@ -272,28 +272,27 @@ if (-not $exe) {
 }
 $resultFile = Join-Path $env:USERPROFILE ("dsh-upgrade-result-" + $env:COMPUTERNAME + ".txt")
 $restartScript = @"
-$log = Join-Path $env:TEMP "dsh-upgrade-restart-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
-function L($m) { try { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $m" | Out-File -FilePath $log -Append -Encoding utf8 } catch {} }
+`$log = Join-Path `$env:TEMP ('dsh-upgrade-restart-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+function L(`$m) { try { ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + `$m) | Out-File -FilePath `$log -Append -Encoding utf8 } catch {} }
 L 'helper start'
 Start-Sleep -Seconds 3
-$killFail = ''
-try { Get-Process 'DeepSeek Harness' -ErrorAction Stop | Stop-Process -Force -ErrorAction Stop } catch { $killFail = $_.Exception.Message }
+`$killFail = ''
+try { Get-Process 'DeepSeek Harness' -ErrorAction Stop | Stop-Process -Force -ErrorAction Stop } catch { `$killFail = `$_.Exception.Message }
 Start-Sleep -Seconds 5
-if ($killFail -and -not $killFail.StartsWith('Cannot find')) { L ("kill failed: " + $killFail) }
-$left = @(Get-Process 'DeepSeek Harness' -ErrorAction SilentlyContinue)
-if ($left.Count -gt 0) { L ("still running after kill: " + $left.Count) }
-else { L 'killed ok' }
+if (`$killFail -and -not `$killFail.StartsWith('Cannot find')) { L ('kill failed: ' + `$killFail) }
+`$left = @(Get-Process 'DeepSeek Harness' -ErrorAction SilentlyContinue)
+if (`$left.Count -gt 0) { L ('still running after kill: ' + `$left.Count) } else { L 'killed ok' }
 `$exe = '$exe'
-if ($exe -and (Test-Path -LiteralPath `$exe)) { Start-Process -LiteralPath `$exe }
+if (`$exe -and (Test-Path -LiteralPath `$exe)) { Start-Process -LiteralPath `$exe }
 `$ok = `$false; `$ver = ''; `$port = ''
 for (`$i = 0; `$i -lt 45; `$i++) {
   Start-Sleep -Seconds 2
   try {
     `$ports = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { `$_.LocalPort -gt 1000 } | Where-Object { (Get-Process -Id `$_.OwningProcess -ErrorAction SilentlyContinue).ProcessName -eq 'DeepSeek Harness' } | Sort-Object LocalPort)
-    foreach (`$p in `$ports) {
+    foreach (`$pp in `$ports) {
       try {
-        `$d = Invoke-RestMethod ("http://127.0.0.1:" + `$p.LocalPort + '/api/board/ui/doctor') -TimeoutSec 3
-        if (`$d.version) { `$ok = `$true; `$ver = `$d.version; `$port = `$p.LocalPort; break }
+        `$d = Invoke-RestMethod ("http://127.0.0.1:" + `$pp.LocalPort + '/api/board/ui/doctor') -TimeoutSec 3
+        if (`$d.version) { `$ok = `$true; `$ver = `$d.version; `$port = `$pp.LocalPort; break }
       } catch { }
     }
   } catch { }
@@ -307,8 +306,8 @@ if (`$ok) {
     `$writeState = if (`$off.Count -gt 0) { "；写通道未开（远程升级会失败，跑 enable-maint-write.ps1 后重启）" } else { "；写通道已开" }
   } catch { }
 }
-$text = if (`$ok) { "重启完成：运行版本 v`$ver，GUI 端口 `$port" + `$writeState } else { "重启后 90 秒内没探到 DSH 的 doctor，请手工打开 DSH 并查看版本" }
-`$text = `$text + "`n助手日志：`$log"`
+`$text = if (`$ok) { "重启完成：运行版本 v`$ver，GUI 端口 `$port" + `$writeState } else { "重启后 90 秒内没探到 DSH 的 doctor，请手工打开 DSH 并查看版本" }
+`$text = `$text + ' | 助手日志：' + `$log
 `$text | Out-File -FilePath '$resultFile' -Encoding utf8
 try { (New-Object -ComObject WScript.Shell).Popup(`$text, 12, 'dsh-job-board 升级', 64) | Out-Null } catch { }
 "@

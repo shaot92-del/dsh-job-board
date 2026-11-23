@@ -101,7 +101,13 @@ test('buildRestartScript：目标路径含 $ 与 $() → 真实执行时不展�
   assert.ok(log.includes(fake), 'dshExe 路径必须原样出现在日志里（不被展开）');
   assert.ok(log.includes('swap '), 'swap 行必须真的执行到（否则测不到 P1-1）');
   assert.ok(log.includes('$(Get-Date -Format yyyy)'), '路径里的 $() 必须原样保留在日志里');
-  assert.ok(!/[0-9]{4}\.exe/.test(log), '不应出现被展开成的年份');
+  // P2（2.7.13 复审）：原断言 !/[0-9]{4}\.exe/ 是空断言——年份展开在目录名里、不在 .exe 前。
+  // 改为直接检查「当前年份」没有出现在日志里，且 swap 行两侧路径都保留字面量 $()。
+  const swapRaw = (log.split('\n').find((l) => l.includes('swap ')) || '');
+  // 去掉行首时间戳（时间戳里也有年份，会干扰「未展开」判断）
+  const swapLine = swapRaw.slice(swapRaw.indexOf('swap '));
+  assert.ok(!swapLine.includes(String(new Date().getFullYear())), 'swap 行里的 $() 不能被展开成当前年份');
+  assert.ok((swapLine.match(/\$\(Get-Date -Format yyyy\)/g) || []).length >= 2, 'swap 行两侧路径（from/to）都必须保留 $() 字面量');
   assert.notEqual(code, 0, 'exe 不存在应 exit 1');
 });
 
