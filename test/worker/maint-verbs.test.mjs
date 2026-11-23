@@ -659,7 +659,7 @@ test('restart：成功时传给 spawnImpl 的脚本含校验 + Stop + Start', as
   assert.equal(r.reason, 'ok');
   assert.match(r.note, /已排入重启助手/);
   assert.match(r.note, /dsh-maint-restart\.log/);
-  assert.equal(spawned.opts.detached, true);
+  assert.ok(spawned.opts.detached !== true, 'v2.7.23/v3：Windows 下 detached:true 会让 pwsh 启动即 exit 0（真因）');
   assert.equal(spawned.opts.stdio, 'ignore');
   // script 含校验（Test-Path dshExe）+ Stop-Process + Start-Process
   const script = spawned.args[4];
@@ -849,7 +849,7 @@ test('upgrade：换名成功且已开重启许可 → 自动排入重启（v2.7.
   assert.match(script, /Get-Process/);
   assert.match(script, /Start-Process -FilePath/);
   assert.ok(!/Move-Item/.test(script), '只重启时不该再动目录');
-  assert.equal(calls[0].opts.detached, true);
+  assert.ok(calls[0].opts.detached !== true, 'v2.7.23/v3：Windows 下 detached:true 会让 pwsh 启动即 exit 0（真因）');
 });
 test('upgrade：DSH 占用包目录（EPERM）且未开重启许可 → 明确提示而非裸 EPERM', async () => {
   const pkgDir = tmpDir();
@@ -899,5 +899,5 @@ test('upgrade：EPERM + 已开重启许可 → 排入安装并 spawn 重启助�
   assert.match(script, /Get-Process/);
   assert.match(script, /Move-Item -LiteralPath/);
   assert.match(script, /Start-Process -FilePath/);
-  assert.equal(calls[0].opts.detached, true);
+  assert.ok(calls[0].opts.detached !== true, 'v2.7.23/v3：Windows 下 detached:true 会让 pwsh 启动即 exit 0（真因）');
 });

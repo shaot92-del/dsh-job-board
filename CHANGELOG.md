@@ -1,3 +1,19 @@
+## v2.7.23 — 2026-11-24（远程重启治本：去掉 detached，Windows 下 pwsh 启动即退出）
+
+### 修复
+- `lib/worker/maint-verbs.js`：重启助手发起去掉 `detached: true`，保留 `stdio: 'ignore'` + `windowsHide: true`，并在确认 `'spawn'` 后 `child.unref()`。
+  - 根因：Windows 下 `DETACHED_PROCESS | CREATE_NO_WINDOW` + `stdio:'ignore'` 让 `pwsh.exe` 触发 `'spawn'` 后**立即 exit 0**、`-Command` 零执行 ⇒ 回执 ok 但实例号不变（「假重启」）。
+- 新增 `spawnAndConfirm()`（4 秒超时，等 `'spawn'`/`'error'`）、`resolvePwshCandidates()`（`pwsh.exe` → `%LOCALAPPDATA%\Programs\PowerShell\7\pwsh.exe` → `%ProgramFiles%\PowerShell\7\pwsh.exe` → `powershell.exe`）、`spawnRestartWithFallback()`（全失败返回 `blocked/maint-spawn-failed` + errno + 可操作提示）。
+- 助手脚本首行写 `helper start task=<slug> pid=<pid> delay=<ms>`，与末尾 `restart-succeeded`/`restart-failed` 配对自证。
+- 兼容：`runRestart` / `queueRestartOnly` / `queueInstallThenRestart` 回执保留 `queued: true` 与 `delayMs`，新增 `pwsh` 字段；既有调用方无需改动。
+
+### 测试
+- 新增 `test/worker/maint-verbs-restart-spawn.test.mjs` 9 条（含 1 条 Windows 真实 `cp.spawn` + 真 pwsh 端到端：断言日志先后出现 `helper start` 与 `restart-succeeded`）。
+- 修正 `test/worker/maint-verbs.test.mjs` 三处沿用旧行为的断言（原断言 `opts.detached === true`，现断言 `detached !== true`）。
+
+### 验证
+- `npm run gate`：单测 **525/525**、client-render-smoke **74/74**、plugcheck `tools=18 routes=32`、check-text PASSED、pack-check **113 文件 / 1,567,992 B**。
+- 负向：`worker.pwshPath=C:\nope\pwsh.exe` → `blocked / maint-spawn-failed`，note 含 ENOENT 与修复提示。
 ## v2.7.22 — 2026-11-24（远程重启治本：spawn 确认与 pwsh 兜底；F1 能力知晓）
 
 > 外援交付两批改动，主控验收（apply 干净、单测 524/524、smoke 74/74、负向冒烟旧包 FAIL 30/60）。
