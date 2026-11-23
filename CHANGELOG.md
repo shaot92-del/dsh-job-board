@@ -1,3 +1,22 @@
+## v2.7.24 — 2026-11-24（发布前不变量门禁：把规矩变成可执行检查）
+
+**性质**：只加工具与门禁，不改任何运行时业务逻辑（server/client/worker 行为零变化）。
+
+**新增 `scripts/check-invariants.mjs`（8 项，已进 `npm run gate`）**
+
+- I-1 信任根：`maint-key.json` 的 CLI / 宿主两种格式都必须被复用，文件字节不变；坏文件必须报 `maint-key-unusable` 且**不覆盖**（真跑 key-store，不靠字符串断言）
+- I-2 安装脚本不得出现 `workerMode`（安装只装文件，不碰「是否接活」的总开关）
+- I-3 安装脚本不得删除 `agentAllowlist` / `maintenanceWriteEnabled` / `maintAuthPublicKeys`
+- I-4 零运行时依赖（副机部署是文件复制，不做 npm install）
+- I-5 doctor 必须能自证 `maint-write-off`
+- I-6 config 读动词必须暴露公钥指纹且用 sha256（badsig 唯一排障线索，且短 key 不泄漏）
+- I-7 一键开关脚本必须自带备份 + 写后复核 + 回滚
+- I-8 仓库根目录不得残留一次性补丁脚本
+
+**为什么加**：2026-11-24 连发三起事故（key 被静默轮换、agentAllowlist 被重装冲掉、workerMode 被应急关闭）都不是「代码写错」，而是**同一事实有多个写入者、没有不变量校验**。规矩早已写在 `docs/release-review-procedure.md`，但那是散文；本版把它们编译成 gate 里的可执行断言。
+
+**验证**：`npm run gate` → 单测 525/525、smoke 74/74、plugcheck 18/32、check-text PASSED、pack-check 113 文件。
+
 ## v2.7.23 — 2026-11-24（远程重启治本：去掉 detached，Windows 下 pwsh 启动即退出）
 
 ### 修复
