@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { createAgentRunner, createDshAgentHost, makeSessionId, parseModelRef, MAX_SESSION_ID } from '../../lib/worker/agent-runner.js';
 import { createBoundedMap } from '../../lib/worker/agent-runner.js';
@@ -263,9 +266,6 @@ test('createDshAgentHost：服务缺失时 available 给出可读原因', () => 
 });
 
 // ── 第二轮安全审计：agentCwdRoot 词法校验可绕过（P1）+ available 谎报（P2） ──
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { checkAgentCwd, textFromEvent } from '../../lib/worker/agent-runner.js';
 
 test('checkAgentCwd：`..` 段、root 外目录、不存在目录都被拒', () => {
@@ -512,6 +512,40 @@ test('run：会话目录越过 agentCwdRoot → blocked/agent-cwd-denied，且�
   assert.equal(out.reason, 'agent-cwd-denied');
   assert.equal(calls.length, 0, '准入失败不能开会话');
   assert.equal(runner.budget.peek().used, 0, '准入失败不能烧额度');
+});
+
+// v2.7.15（真机 D3–D7 撞出）：agentCwdRoot 常配成 <家目录>\Documents，
+// 任务不带 cwd 时旧实现回落到 os.homedir() ⇒ 默认 cwd 天然落在根之外，整类任务被拦。
+// 正确默认是「落在 agentCwdRoot 本身」。
+test('run：不给 cwd 时默认落在 agentCwdRoot 内（root=家目录\\Documents 也放行）', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsb-agent-root-'));
+  const sub = path.join(root, 'Documents');
+  fs.mkdirSync(sub, { recursive: true });
+  try {
+    const { host, calls } = makeFakeHost({ text: 'ok' });
+    const runner = createAgentRunner({ host, config: withAgent({ agentCwdRoot: sub }) });
+    const out = await runner.run({ goal: '只回答:OK', model: 'deepseek-account/deepseek-flash' }, { taskId: 'a-cwd-default' });
+    assert.notEqual(out.reason, 'agent-cwd-denied', '默认 cwd 不应落在根外');
+    assert.equal(out.status, 'done');
+    assert.ok(calls.some((c) => c[0] === 'start'), '应当真的开会话');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('run：agentCwdRoot 含 %VAR% 时，默认 cwd 用展开后的根比较', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsb-agent-var-'));
+  process.env.DSB_AGENT_ROOT_PROBE = root;
+  try {
+    const { host } = makeFakeHost({ text: 'ok' });
+    const runner = createAgentRunner({ host, config: withAgent({ agentCwdRoot: '%DSB_AGENT_ROOT_PROBE%' }) });
+    const out = await runner.run({ goal: '只回答:OK', model: 'deepseek-account/deepseek-flash' }, { taskId: 'a-cwd-var' });
+    assert.notEqual(out.reason, 'agent-cwd-denied');
+    assert.equal(out.status, 'done');
+  } finally {
+    delete process.env.DSB_AGENT_ROOT_PROBE;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('textFromEvent：真实形状 data.message.content（GT14 实测）', () => {

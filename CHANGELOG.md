@@ -1,3 +1,17 @@
+## v2.7.15 — 2026-11-23（agent 默认 cwd 落在 agentCwdRoot：修「配了根反而全被拦」）
+
+### 修什么
+- `lib/worker/agent-runner.js`：任务没带 `cwd` 时，旧实现回落到 `os.homedir()`；而 `agentCwdRoot` 常配成 `<家目录>\Documents` ⇒ 默认 cwd 天然落在根之外，所有 agent 任务都在 cwd 门被判 `agent-cwd-denied why=outside`（真机 2.7.14 的 D3–D7 就是这样被拦的）。
+- 新默认：先取 `agentCwdRoot` 本身（`expandPathSpec` 展开后），取不到才回落到家目录；任务显式给了 `cwd` 时行为不变。
+- cwd 门比较与回执里的 `root=` 一并改用展开后的根。
+
+### 新增测试
+- `test/worker/agent-runner.test.mjs`：① 不给 cwd 时默认落在 `agentCwdRoot` 内；② `agentCwdRoot` 含 `%VAR%` 时用展开后的根比较。
+
+### 怎么验证
+- `node --test test/worker/agent-runner.test.mjs` → 36/36；
+- `npm run gate` → 单测 493/493、smoke 65/65、plugcheck 18/28、check-text PASSED、pack-check 109 文件；
+- 真机：GT14 配 `agentCwdRoot: '%USERPROFILE%\Documents'` 后派 agent 任务，不应再出现 `agent-cwd-denied why=outside`。
 ## v2.7.14 — 2026-11-23（2.7.13 复审修正：部署脚本 here-doc 展开回归 + EPER 回执补全 + 空断言）
 
 > 2.7.13 的定向复审（`docs/audit-2.7.13/review-2.7.13.md`）判 FAIL：我上一轮加固 `upgrade-worker.ps1` 的重启 here-doc 时，新加的 6 行没做反引号转义（`@"..."@` 是双引号 here-string），生成的重启助手脚本有 7 个解析错误、完全不可执行；`upgrade` 的 EPERM 分支回执漏改；P1-1 用例的「无年份展开」断言是空断言；CHANGELOG 数字抄错。
