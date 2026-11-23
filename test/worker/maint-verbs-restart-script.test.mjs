@@ -34,7 +34,7 @@ async function makeTgzFixture(version = '9.9.9') {
 
 function hasPwsh() {
   try {
-    execFileSync('pwsh.exe', ['-NoProfile', '-Command', 'exit 0'], { stdio: 'ignore' });
+    execFileSync('pwsh.exe', ['-NoProfile', '-Command', 'exit 0'], { stdio: 'ignore', windowsHide: true });
     return true;
   } catch {
     return false;
@@ -92,7 +92,7 @@ test('buildRestartScript：目标路径含 $ 与 $() → 真实执行时不展�
   });
   let code = 0;
   try {
-    execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', s], { stdio: 'ignore', timeout: 20000 });
+    execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', s], { stdio: 'ignore', windowsHide: true, timeout: 20000 });
   } catch (err) {
     code = err.status;
   }
@@ -138,7 +138,7 @@ test('buildRestartScript：换目录失败时不动源目录（P0-1 真实执行
   });
   let code = 0;
   try {
-    execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', s], { stdio: 'ignore', timeout: 20000 });
+    execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', s], { stdio: 'ignore', windowsHide: true, timeout: 20000 });
   } catch (err) {
     code = err.status;
   }

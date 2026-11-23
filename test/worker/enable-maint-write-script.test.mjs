@@ -18,6 +18,7 @@ const PUB = 'MCowBQYDK2VwAyEA7fw8lk+evVdGhDRat78skzmejq/bQJQ71MKqDCe1b+k=';
 function hasPwsh() {
   const r = spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-Command', '$PSVersionTable.PSEdition'], {
     encoding: 'utf8',
+    windowsHide: true,
   });
   return r.status === 0 && String(r.stdout).includes('Core');
 }
@@ -39,7 +40,7 @@ function runScript(root) {
   return spawnSync(
     'pwsh',
     ['-NoLogo', '-NoProfile', '-File', SCRIPT, '-Profile', 'desktop', '-PublicKey', PUB, '-Force'],
-    { cwd: root, encoding: 'utf8', env: { ...process.env, USERPROFILE: root, HOME: root } },
+    { cwd: root, encoding: 'utf8', windowsHide: true, env: { ...process.env, USERPROFILE: root, HOME: root } },
   );
 }
 
