@@ -1,3 +1,26 @@
+## v2.7.19 — 2026-11-24（修 2.7.18 面板按钮 403 + 提示不显示 + 连点重复派工）
+
+> 现象：2.7.18 的机器卡上能看到「安装更新 / 重启 DSH」，点了没反应、看板也没有新任务。
+
+### 根因（两条）
+1. DSH 的 UI 守卫对所有非 GET 请求要求 `x-dsh-team-ui: 1`（`lib/index.js:5666`，缺失即 403 `why=token`），
+   而新按钮的 `fetch` 只带了 `content-type` ⇒ 请求被拒；
+2. 失败信息写进了 `nodeMsg`，但机器卡**没有渲染这个状态** ⇒ 界面上一点反馈都没有，看起来像「按钮没接线」。
+
+### 修什么
+- `lib/client.js` 的 `nodeOp`：改用项目既有写法 `headers: Object.assign({}, UI_HEADERS, { 'content-type': 'application/json' })`
+  并补 `credentials: 'same-origin'`（`UI_HEADERS = { 'x-dsh-team-ui': '1' }`，见 `lib/client.js:292`）。
+- 机器卡在「重启 DSH」按钮之后、重命名输入框之前渲染一行提示：`nodeMsg` 非空时显示
+  `h('div', { className: 'dsb-note', ... }, nodeMsg)`，成功显示 taskId / 版本，失败显示 `why`。
+- **连点防重**：`setNodeBusy` 是异步渲染，快速连点会进第二次；新增同步 `nodeLock`（`React.useRef({})`），
+  进入 `nodeOp` 先判同机锁、`finally` 释放，按钮 `disabled` 仍保留作界面反馈。
+
+### 新增冒烟
+- `N1` `nodeOp` 的 fetch 带 `UI_HEADERS`；`N2` 带 `credentials: 'same-origin'`；`N3` 机器卡渲染 `nodeMsg` 提示行。
+
+### 怎么验证
+- `npm run gate`（smoke 应由 65 项涨到 68 项）；
+- 真机：面板点「安装更新」→ 看板出现 `mode=maint verb=upgrade` 任务，卡片下方出现「已派安装任务 …」。
 ## v2.7.18 — 2026-11-24（主机面板一键「安装更新 / 重启 DSH」副机）
 
 > 背景：维护通道的 `upgrade` / `restart` 动词早已可用，但只能在命令行签票派工；

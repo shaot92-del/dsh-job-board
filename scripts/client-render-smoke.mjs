@@ -50,6 +50,8 @@ const ELEMENT_TAG = Symbol.for('react.element')
  */
 function makeReact(states) {
   let hookIdx = 0
+  let refIdx = 0
+  const refs = []
   const React = {
     createElement(type, props, ...children) {
       if (strictValidate) {
@@ -92,7 +94,16 @@ function makeReact(states) {
       ]
     },
     useEffect() {},
+    // v2.7.19：client 里用 useRef 做「同步锁」（防连点重复派工）。
+    // 假实现按引用持久化一份，语义与真 React 对齐：同一组件实例跨渲染拿同一个 current 对象。
+    useRef(init) {
+      const i = refIdx++
+      if (i >= refs.length) refs.push({ current: init })
+      return refs[i]
+    },
     __resetHooks() {
+      hookIdx = 0
+      refIdx = 0
       hookIdx = 0
     },
   }
@@ -675,6 +686,16 @@ const U1_ANCHOR = 'const [doctor, setDoctor] = React.useState(null)'
   check('U1-f checks 非数组 ⇒ 横幅不渲染、不崩（:1547 Array.isArray 守卫）', !hasText(tBad, '自检：') && !hasText(tBad, '调度台渲染出错'), '')
 }
 
+// v2.7.19：面板「安装更新 / 重启 DSH」的 POST 必须带 UI 守卫要求的 header。
+// 漏了会被服务端 403（lib/index.js:5666），而且失败信息此前没有渲染点 ⇒ 点了像没反应。
+{
+  const src = fs.readFileSync(path.join(root, 'lib', 'client.js'), 'utf8')
+  const i = src.indexOf("const nodeOp = async (kind, id)")
+  const seg = i >= 0 ? src.slice(i, i + 900) : ''
+  check('N1 nodeOp 的 fetch 带 UI_HEADERS（x-dsh-team-ui）', /Object\.assign\(\{\},\s*UI_HEADERS/.test(seg), '')
+  check('N2 nodeOp 的 fetch 带 credentials same-origin', /credentials:\s*'same-origin'/.test(seg), '')
+  check('N3 机器卡渲染 nodeMsg 提示行', /nodeMsg\s*\n\s*\?\s*h\('div'/.test(src), '')
+}
 const failed = results.filter((r) => !r.cond)
 console.log(
   failed.length
