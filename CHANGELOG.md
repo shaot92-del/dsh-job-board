@@ -1,3 +1,16 @@
+## v2.7.16 — 2026-11-24（%USERPROFILE% 兜底 + 根不可解析时给出可操作原因）
+
+### 修什么
+- `lib/worker/config.js` 的 `expandPath()`：`%USERPROFILE%` / `$env:USERPROFILE` / `%HOME%` 在进程环境里取不到时，回落到 `os.homedir()`。真机 GT14 的 DSH 进程就没有这个变量 ⇒ 旧实现原样保留字面量，根不是绝对路径，cwd 门报 `outside` 且回执显示 `%USERPROFILE%\Documents`，看着像「没展开」。
+- `lib/worker/agent-runner.js`：`agentCwdRoot` 展开后仍含 `%VAR%`/`$env:` 或不是绝对路径时，直接 `blocked / agent-cwd-root-unresolved`，note 说明「请写绝对路径，或确认该环境变量在副机 DSH 进程里存在」——不再伪装成 `why=outside` 的越界。
+
+### 新增测试
+- `worker-payload-merge.test.mjs`：删掉 `USERPROFILE` 后 `%USERPROFILE%\Documents` 仍解析成 `os.homedir()\Documents`。
+- `agent-runner.test.mjs`：`agentCwdRoot='%DSB_NO_SUCH_VAR%\Documents'` → `agent-cwd-root-unresolved`，且不建会话。
+
+### 怎么验证
+- `npm run gate`（单测 / smoke / plugcheck / check-text / pack-check）；
+- 真机（2.7.15 已验证）：`agentCwdRoot=%USERPROFILE%\Documents` + 任务不带 cwd → `done`；显式 `C:\Windows` → `blocked agent-cwd-denied why=outside`（fail-closed 不变）。
 ## v2.7.15 — 2026-11-23（agent 默认 cwd 落在 agentCwdRoot：修「配了根反而全被拦」）
 
 ### 修什么

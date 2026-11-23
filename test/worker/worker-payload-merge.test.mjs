@@ -6,6 +6,8 @@
 // 形成死锁。这里钉住修法：顶层兜底、子块优先、宿主键不混入。
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import { buildWorkerPayload, maintWriteWarning, mergeWorkerPayload } from '../../lib/worker/config.js';
 import { normalizeConfig } from '../../lib/worker/config.js';
 
@@ -137,7 +139,25 @@ test('v2.7.9：路径配置展开 %VAR% 与 ~（agentCwdRoot / execCwdRoot）', 
   }
 });
 
+test('v2.7.16：%USERPROFILE% 不在进程环境里时回落到 os.homedir()（真机 GT14 复现）', () => {
+  const prev = process.env.USERPROFILE;
+  delete process.env.USERPROFILE;
+  try {
+    const out = normalizeConfig({
+      worker: { agentCwdRoot: '%USERPROFILE%\\Documents' },
+      agentApproval: 'auto',
+    });
+    assert.equal(
+      out.config.agentCwdRoot,
+      path.join(os.homedir(), 'Documents'),
+      '进程里没有 USERPROFILE 时也应当解析成真实家目录',
+    );
+  } finally {
+    if (prev === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prev;
+  }
+});
+
 test('v2.7.9：agentApproval 缺省为 auto（与加通讯插件前的派工体验对齐）', () => {
-  const out = normalizeConfig({ worker: { agentEnabled: true, agentCwdRoot: 'C:\\work' } });
-  assert.equal(out.config.agentApproval, 'auto');
+  const out = normalizeConfig({ worker: { agentEnabled: true, agentCwdRoot: 'C:\\work' } });  assert.equal(out.config.agentApproval, 'auto');
 });

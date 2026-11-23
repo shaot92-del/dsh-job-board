@@ -533,8 +533,17 @@ test('run：不给 cwd 时默认落在 agentCwdRoot 内（root=家目录\\Docume
   }
 });
 
-test('run：agentCwdRoot 含 %VAR% 时，默认 cwd 用展开后的根比较', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsb-agent-var-'));
+test('v2.7.16：agentCwdRoot 展开后仍非绝对路径 → blocked/agent-cwd-root-unresolved（可操作）', async () => {
+  const { host, calls } = makeFakeHost({ text: 'x' });
+  const runner = createAgentRunner({ host, config: withAgent({ agentCwdRoot: '%DSB_NO_SUCH_VAR%\\Documents' }) });
+  const out = await runner.run({ goal: '只回答:OK' }, { taskId: 'a-cwd-root-bad' });
+  assert.equal(out.status, 'blocked');
+  assert.equal(out.reason, 'agent-cwd-root-unresolved');
+  assert.match(out.note, /agentCwdRoot/);
+  assert.equal(calls.length, 0, '根不可解析时不能开会话');
+});
+
+test('run：agentCwdRoot 含 %VAR% 时，默认 cwd 用展开后的根比较', async () => {  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsb-agent-var-'));
   process.env.DSB_AGENT_ROOT_PROBE = root;
   try {
     const { host } = makeFakeHost({ text: 'ok' });
