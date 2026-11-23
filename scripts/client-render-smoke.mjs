@@ -694,7 +694,7 @@ const U1_ANCHOR = 'const [doctor, setDoctor] = React.useState(null)'
   const seg = i >= 0 ? src.slice(i, i + 900) : ''
   check('N1 nodeOp 的 fetch 带 UI_HEADERS（x-dsh-team-ui）', /Object\.assign\(\{\},\s*UI_HEADERS/.test(seg), '')
   check('N2 nodeOp 的 fetch 带 credentials same-origin', /credentials:\s*'same-origin'/.test(seg), '')
-  check('N3 机器卡渲染 nodeMsg 提示行', /nodeMsg\s*\n\s*\?\s*h\('div'/.test(src), '')
+  check('N3 机器卡渲染 nodeMsg 提示行', /nodeMsg\[String\(m\.id\)\]\s*\n\s*\?\s*h\('div'/.test(src), '')
 }
 const failed = results.filter((r) => !r.cond)
 console.log(

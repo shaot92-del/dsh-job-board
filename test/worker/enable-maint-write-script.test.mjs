@@ -101,3 +101,23 @@ test('扁平布局（无 worker: 子块，键平铺在 config 下）：同级追
   assert.equal(second.status, 0, second.stdout + second.stderr);
   assert.equal(fs.readFileSync(patch, 'utf8'), afterFirst, '第二次运行不应改动文件（不得写重复键）');
 });
+test('信任锚替换：已有 maintAuthPublicKeys（顶层 + worker 子块各一处）且值不同 ⇒ 备份后替换两处，且键值可解析', { skip }, () => {
+  const OLD = 'MCowBQYDK2VwAyEA7fw8lk+evVdGhDRat78skzmejq/bQJQ71MKqDCe1b+k=';
+  const NEW = 'MCowBQYDK2VwAyEA7NuG9QojJjbUpMvuY9a8eJ8D6ZSdb9Lj7yTBBlIgPpQ=';
+  const { root, patch } = makeFixture(
+    '- id: team\n  config:\n    boardUrl: \'http://127.0.0.1:8965\'\n    machine: \'gt14\'\n    maintAuthPublicKeys: [\'' + OLD + '\']\n    worker:\n      pollMs: 2000\n      maintAuthPublicKeys: [\'' + OLD + '\']\n- id: other\n  config: {}\n',
+  );
+  const r = spawnSync(
+    'pwsh',
+    ['-NoLogo', '-NoProfile', '-File', SCRIPT, '-Profile', 'desktop', '-PublicKey', NEW, '-Force'],
+    { cwd: root, encoding: 'utf8', windowsHide: true, env: { ...process.env, USERPROFILE: root, HOME: root } },
+  );
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const after = fs.readFileSync(patch, 'utf8');
+  assert.equal((after.match(/maintAuthPublicKeys/g) || []).length, 2, '仍是两处，不新增第三处');
+  assert.equal(after.includes(OLD), false, '旧公钥必须被替换掉');
+  assert.equal((after.match(/maintAuthPublicKeys: \['/g) || []).length, 2);
+  assert.match(after, /maintenanceWriteEnabled: true/m, '其它键照常补上');
+  const bak = fs.readdirSync(path.dirname(patch)).filter((n) => n.includes('.bak-maint-'));
+  assert.equal(bak.length, 1, '替换前必须留一份备份');
+});

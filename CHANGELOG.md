@@ -1,3 +1,27 @@
+## v2.7.21 — 2026-11-24（节点操作「自证」+ 信任锚替换 + 按钮可用性）
+
+修什么：
+
+- **假重启**：`node-restart` / `node-upgrade` 派发后不再只报「已排入」。宿主等任务终态（最多 25s），
+  再用读动词 `version` 回查实例号与 `plugin`：重启返回 `verified` / `before` / `after` / `note`，
+  面板直接显示「已重启：gt14/31324 → gt14/40122（plugin 2.7.15 → 2.7.20）」或
+  「已派发但实例号未变……副机可能跑的是旧版本助手，需手动重启一次」。
+- **信任锚永不替换的 bug**：`scripts/enable-maint-write.ps1` 的 `-PublicKey` 原先是「键存在就保留现值」，
+  换了公钥也永不生效（只能一直 `maint-ticket-badsig`）。现在值不同 ⇒ 备份 `.bak-maint-<ts>` 后
+  **替换顶层与 `worker:` 子块两处**，并打印「旧尾 8 位 → 新尾 8 位」。
+- **按钮可用性**：机器卡的「安装更新 / 重启 DSH」从小按钮行移出，单独一行大按钮
+  （`min-height:30px`、`padding:6px 12px`、主色/警示色），busy 文案带预计耗时；结果按机器分别显示
+  （`nodeMsg` 从单条字符串改为 `{machine: text}`）。
+
+改了哪些文件：`lib/index.js`、`lib/client.js`、`scripts/enable-maint-write.ps1`、
+`scripts/client-render-smoke.mjs`、`test/worker/enable-maint-write-script.test.mjs`、版本三处、本文件。
+
+怎么验证：
+
+- `npm run gate`（单测 505、smoke 68、plugcheck 18/31、check-text、pack-check）
+- 负向门禁：`SMOKE_BUNDLE=<2.7.0 崩溃包> node scripts/client-render-smoke.mjs` 必须 FAIL
+- 新测试：`node --test test/worker/enable-maint-write-script.test.mjs`（含「信任锚替换」用例）
+- 真机：GT14 面板点「重启 DSH」→ 回执出现实例号变化；点「安装更新」→ 装完若运行版本未变则明确提示「需重启」
 ## v2.7.20 — 2026-11-24（信任根保护：两种 key 格式兼容，绝不静默轮换）
 
 - 修复：新增 `lib/worker/maint-key-store.js` 统一密钥读取/生成策略。旧 `ensureMaintKeyPair()` 只认宿主格式

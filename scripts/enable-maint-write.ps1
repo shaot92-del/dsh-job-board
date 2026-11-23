@@ -231,20 +231,32 @@ $wanted['maintAuthPublicKeys'] = "['" + $PublicKey + "']"
 
 $adds = @()
 $skips = @()
+$replaceKey = $false
 foreach ($k in $wanted.Keys) {
   $cur = Get-KeyValue $k
   $want = $wanted[$k]
   if ($null -eq $cur) { $adds += ($pad + $k + ': ' + $want) }
-  elseif ($cur -ne $want) { $skips += "$k 现值 $(($cur -replace '\s+', ' ')) != 目标 $(($want -replace '\s+', ' '))（保留现值）" }
+  elseif ($cur -ne $want) {
+    # v2.7.21：maintAuthPublicKeys 是信任锚——「已存在但值不同」必须替换，
+    # 不能像普通配置那样「保留现值」（旧行为导致换了公钥也永不生效 ⇒ 一直 badsig）。
+    if ($k -eq 'maintAuthPublicKeys') {
+      $replaceKey = $true
+      $oldTail = if ($cur.Length -gt 8) { $cur.Substring($cur.Length - 8) } else { $cur }
+      $newTail = if ($want.Length -gt 8) { $want.Substring($want.Length - 8) } else { $want }
+      $skips += "replace $k 旧 …$oldTail → 新 …$newTail"
+    } else {
+      $skips += "$k 现值 $(($cur -replace '\s+', ' ')) != 目标 $(($want -replace '\s+', ' '))（保留现值）"
+    }
+  }
   else { $skips += "$k 已存在（保留现值）" }
 }
 
 Say "profile : $Profile"
 Say "patch   : $patch"
 Say "team    : 第 $($teamIdx + 1) 行；worker: 第 $($workerIdx + 1) 行（子键缩进 $childIndent）"
-foreach ($s in $skips) { Say "  skip  $s" }
+foreach ($s in $skips) { Say "  $s" }
 foreach ($a in $adds) { Say "  add   $($a.TrimStart())" }
-if ($adds.Count -eq 0) { Say "配置无需改动。"; exit 0 }
+if ($adds.Count -eq 0 -and -not $replaceKey) { Say "配置无需改动。"; exit 0 }
 if ($DryRun) { Say "（DryRun，不写盘）"; exit 0 }
 
 # DSH 在跑时不写（热重载会 duplicate route），除非 -Force
@@ -258,11 +270,19 @@ $backup = "$patch.bak-maint-$stamp"
 Copy-Item $patch $backup -Force
 Say "备份：$backup"
 
-# 插入到 worker 子块末尾（保持已有键顺序，不挤动后续行）
+# 插入到 worker 子块末尾（保持已有键顺序，不挤动后续行）；v2.7.21：顺手替换已有的 maintAuthPublicKeys 行
 $new = New-Object System.Collections.Generic.List[string]
-$new.AddRange([string[]]$lines[0..($end - 1)])
-foreach ($a in $adds) { $new.Add($a) }
-if ($end -lt $lines.Count) { $new.AddRange([string[]]$lines[$end..($lines.Count - 1)]) }
+$replacedKeys = 0
+for ($i = 0; $i -lt $lines.Count; $i++) {
+  if ($i -eq $end) { foreach ($a in $adds) { $new.Add($a) } }
+  $ln = $lines[$i]
+  if ($replaceKey -and $ln -match '^(\s*)maintAuthPublicKeys:\s*') {
+    $new.Add($Matches[1] + 'maintAuthPublicKeys: ' + $wanted['maintAuthPublicKeys'])
+    $replacedKeys++
+  } else { $new.Add($ln) }
+}
+if ($end -ge $lines.Count) { foreach ($a in $adds) { $new.Add($a) } }
+if ($replaceKey) { Say "替换 maintAuthPublicKeys 行：$replacedKeys 处" }
 
 $text = ($new -join "`n")
 $utf8 = New-Object System.Text.UTF8Encoding($false)
