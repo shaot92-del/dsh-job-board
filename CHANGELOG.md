@@ -1,3 +1,15 @@
+## v2.7.20 — 2026-11-24（信任根保护：两种 key 格式兼容，绝不静默轮换）
+
+- 修复：新增 `lib/worker/maint-key-store.js` 统一密钥读取/生成策略。旧 `ensureMaintKeyPair()` 只认宿主格式
+  `publicKey/privateKey`；遇到 `scripts/maint-ticket.mjs keygen` 写出的 `publicKeyB64/privateKeyB64` 时把它当成
+  「没有钥匙」，**静默生成新的一对并覆盖文件** ⇒ 宿主机私钥被销毁、副机 `maintAuthPublicKeys` 全部失效
+  （GT14 `maint-ticket-badsig` 事故的根因）。
+- 现在：两种历史格式都认；文件存在但不可用（JSON 坏 / 字段缺 / 材质非法）返回 `maint-key-unusable`，
+  **不覆盖、不轮换**；只有文件确实不存在才生成，且以 0600 落盘。签名改用 `loadPrivateKey()`，同样双格式。
+- 测试：`test/worker/maint-key-store.test.mjs` 7 条（CLI 格式复用且文件字节不变 / 宿主格式复用 / 坏 JSON 不覆盖 /
+  缺字段不覆盖 / 缺失才生成 / 两种格式都能签出可验票据 / 公钥字段被改坏时以私钥派生公钥为准）。
+- 验证：`node --check lib/index.js`；`node --test test/worker/maint-key-store.test.mjs` 7/7。
+
 ## v2.7.19 — 2026-11-24（修 2.7.18 面板按钮 403 + 提示不显示 + 连点重复派工）
 
 > 现象：2.7.18 的机器卡上能看到「安装更新 / 重启 DSH」，点了没反应、看板也没有新任务。
