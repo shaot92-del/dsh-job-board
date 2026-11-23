@@ -12,7 +12,7 @@
 ### 验证
 - `node --test test/worker/maint-verbs-restart-script.test.mjs` → **8/8**
 - `node --test test/worker/maint-verbs.test.mjs` → **58/58**
-- `npm run gate` → 单测 **491/491**、smoke 65/65、plugcheck 18/28、check-text PASSED、pack-check **109 文件 / 1,533,838 B**
+- `npm run gate` → 单测 **491/491**、smoke 65/65、plugcheck 18/28、check-text PASSED、pack-check **109 文件**（包体积与 sha256 记在发布记录，不在本文档内自指）
 - 部署脚本重启助手：`Parser::ParseInput` **0 errors**；生成脚本头部变量名完整（`$log = Join-Path $env:TEMP (...)`）
 ## v2.7.13 — 2026-11-23（2.7.12 复审修正：日志落点一致 + 回执补全 + 测试真覆盖）
 
