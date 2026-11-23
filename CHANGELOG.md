@@ -1,3 +1,19 @@
+## v2.7.18 — 2026-11-24（主机面板一键「安装更新 / 重启 DSH」副机）
+
+> 背景：维护通道的 `upgrade` / `restart` 动词早已可用，但只能在命令行签票派工；
+> 用户要的是「在主机面板上点一下，副机就冷升级/重启」。
+
+### 新增
+- 宿主路由（`lib/index.js`）：
+  - `POST /api/board/ui/node-upgrade {machine}`：在共享目录里按语义化版本取**最新** `wfcj-dsh-job-board-*.tgz`，现算 sha256，用本机私钥签一次性票据，把 `{verb:'upgrade',file,sha256}` 投到板子；
+  - `POST /api/board/ui/node-restart {machine}`：同套票据，`{verb:'restart'}`；
+  - `POST /api/board/ui/node-version {machine}`：读动词不需要票据，按需派 `{verb:'version'}` 探测。
+  - 三条路由都拒绝对本机派维护任务（`machine-is-self`），机器名统一小写。
+- 面板机器卡（`lib/client.js`）：在线非本机卡片新增「安装更新」「重启 DSH」两个按钮；派发中显示「派发中…」，回执/失败在卡片下方提示（含 taskId、版本号、失败原因）。
+
+### 怎么验证
+- `npm run gate`（plugcheck 路由数 28 → 31）；
+- 真机：面板点「安装更新」→ 任务出现在列表 `mode=maint verb=upgrade`；点「重启 DSH」→ 实例号变化。
 ## v2.7.17 — 2026-11-24（重启助手自证「进程真的没了」+ logs 支持读重启日志）
 
 > 背景：GT14 上两次 `maint restart` 回执都是「已排入重启助手」，但实例号/p版本没变（2026-11-23 真机）。
