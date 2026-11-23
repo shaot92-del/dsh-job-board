@@ -37,8 +37,7 @@ test('parseMaintenanceGoal：裸动词与大小写归一', () => {
 });
 
 test('parseMaintenanceGoal：JSON 形态给 logs 带行数', () => {
-  assert.deepEqual(parseMaintenanceGoal('{"verb":"logs","lines":80}').spec, { verb: 'logs', lines: 80 });
-  // 纯数字字符串是自然写法（工具参数常被序列化成字符串），照收
+  assert.deepEqual(parseMaintenanceGoal('{"verb":"logs","lines":80}').spec, { verb: 'logs', lines: 80 });  // 纯数字字符串是自然写法（工具参数常被序列化成字符串），照收
   assert.equal(parseMaintenanceGoal('{"verb":"logs","lines":"120"}').spec.lines, 120);
 });
 
@@ -375,4 +374,29 @@ test('executor：没装配维护执行器 → blocked/maint-unavailable（不是
   assert.equal(out.status, 'blocked');
   assert.equal(out.reason, 'maint-unavailable');
   assert.equal(out.stage, 'maint');
+});
+
+// ── v2.7.17：logs 支持 file=restart（读重启助手日志，解决「回执说排入了、实际没重启」不可取证）──
+test('parseMaintenanceGoal：logs 支持 file=restart / worker，其它值拒绝', () => {
+  assert.deepEqual(parseMaintenanceGoal('{"verb":"logs","file":"restart"}').spec, { verb: 'logs', lines: DEFAULT_LOG_LINES, file: 'restart' });
+  assert.deepEqual(parseMaintenanceGoal('{"verb":"logs","file":"WORKER","lines":5}').spec, { verb: 'logs', lines: 5, file: 'worker' });
+  const bad = parseMaintenanceGoal('{"verb":"logs","file":"../etc/passwd"}');
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /worker \/ restart/);
+});
+
+test('logs file=restart：读 stateDir 下的 restart-*.log（不读任意路径）', async () => {
+  const os = await import('node:os');
+  const fs = await import('node:fs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsb-restart-log-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'restart-a.log'), 'helper start\nkill path pid=1\nrestart-succeeded\n', 'utf8');
+    const runner = makeRunner({ stateDir: dir });
+    const out = await runner.run({ verb: 'logs', file: 'restart', lines: 10 }, { taskId: 'm-log-r' });
+    const text = out.payload.data.lines.join('\n');
+    assert.match(text, /restart-a\.log/);
+    assert.match(text, /restart-succeeded/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

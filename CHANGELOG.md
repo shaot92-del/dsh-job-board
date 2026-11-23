@@ -1,3 +1,21 @@
+## v2.7.17 — 2026-11-24（重启助手自证「进程真的没了」+ logs 支持读重启日志）
+
+> 背景：GT14 上两次 `maint restart` 回执都是「已排入重启助手」，但实例号/p版本没变（2026-11-23 真机）。
+> 旧 helper 杀进程失败时静默继续、照样写「已排入」，且助手日志在副机 TEMP 里、维护通道读不到 ⇒ 无法远程取证。
+
+### 修什么
+- `lib/worker/maint-verbs.js` 的 `buildRestartScript()`：`Stop-Process` 之后等待 800ms，用 `Get-Process -Id <pid>` 与按 `Path` 重扫复核；**只要还有活着的目标进程**就写 `restart-failed kill-failed:<pids>` 并 `exit 1`，不再继续装包/拉起新实例（避免「旧进程没死 + 新进程又起」）。
+- `lib/worker/maintenance.js` 的 `logs` 动词新增 `file` 参数（只允许 `worker` / `restart`）：
+  - `restart` 读 `%TEMP%\dsh-maint-restart.log` 与 `<stateDir>/restart-*.log`（最多 3 个最新），逐行加文件名前缀返回；
+  - 仍然**不接受任意路径**，参数取值走白名单正则。
+
+### 新增测试
+- `maintenance.test.mjs`：`file=restart`/`WORKER` 解析通过、`file=../etc/passwd` 被拒；用临时 `stateDir` 造 `restart-a.log` 并断言返回行含 `restart-succeeded`。
+- `maint-verbs` 既有 66 条回归全过（restart 脚本结构断言未破坏）。
+
+### 怎么验证
+- `npm run gate`；
+- 真机：`maint restart` 若失败，回执/日志应出现 `kill-failed`；`{"verb":"logs","file":"restart"}` 能读到助手日志。
 ## v2.7.16 — 2026-11-24（%USERPROFILE% 兜底 + 根不可解析时给出可操作原因）
 
 ### 修什么
