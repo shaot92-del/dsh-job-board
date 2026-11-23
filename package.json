@@ -8,7 +8,7 @@
     "prepublishOnly": "node scripts/check-text.mjs",
     "test": "node --test \"test/worker/*.test.mjs\"",
     "test:worker": "node --test test/worker/",
-    "gate": "node scripts/check-text.mjs && node scripts/plugcheck.mjs && node scripts/client-render-smoke.mjs && npm test && node scripts/worker/pack-check.mjs",
+    "gate": "node scripts/check-text.mjs && node scripts/plugcheck.mjs && node scripts/check-ui-post-headers.mjs && node scripts/client-render-smoke.mjs && npm test && node scripts/worker/pack-check.mjs",
     "smoke:client": "node scripts/client-render-smoke.mjs"
   },
   "engines": {
