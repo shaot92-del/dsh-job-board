@@ -24,3 +24,11 @@
 `up-2712b-073248` → `已安装 v2.7.12（约 6 秒后自动重启）`，但 `maint version` 仍 `plugin=2.7.10`、实例号未变。
 原因：**执行升级的是 GT14 上正在跑的 2.7.10**，它的重启助手还是「只按 pid 杀」（2.7.11 才改成按 exe 路径枚举）→ 被拒后静默失败。
 ⇒ bootstrap 问题，非 2.7.12 缺陷：**GT14 手动重启一次 DSH 即可**，之后远程升级才会用上新的助手。
+
+## 追加：GT14 重启后（进程 2.7.12，inst `gt14/19452-630268a4`）
+
+- `maint version` → **`plugin=2.7.12`**、`workerMode=on approvalMode=manual allowlist=0 agent=on agentAllowlist=1`。
+- **D5 复跑 PASS**：`deepseek-account/deepseek-flash` → `answer="收到"`、`remote_id` 空、2.8s。
+- **D3 复跑**：仍是 `has no provider/model`（空模型时的缺省行为，`remote_id` 空）→ P3 待改文案。
+- **D4 复跑**：`503 connect-refused 127.0.0.1:8080` —— GT14 的 llama.cpp 没启动（基础设施，非插件）。
+- D2/D6 未变（GT14 `allowlist=0`；PC2 仍 2.7.10）。
