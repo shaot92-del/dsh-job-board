@@ -29,7 +29,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $HERE = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-if (-not $Tarball) { $Tarball = Join-Path $HERE 'wfcj-dsh-job-board-2.7.13.tgz' }
+if (-not $Tarball) { $Tarball = Join-Path $HERE 'wfcj-dsh-job-board-2.7.14.tgz' }
 if (-not (Test-Path -LiteralPath $Tarball)) {
   $zip = [IO.Path]::ChangeExtension($Tarball, '.zip')
   if (Test-Path -LiteralPath $zip) { $Tarball = $zip } else { Write-Host "找不到安装包：$Tarball" -ForegroundColor Red; exit 1 }
