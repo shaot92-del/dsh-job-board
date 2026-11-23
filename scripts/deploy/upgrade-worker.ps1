@@ -272,9 +272,17 @@ if (-not $exe) {
 }
 $resultFile = Join-Path $env:USERPROFILE ("dsh-upgrade-result-" + $env:COMPUTERNAME + ".txt")
 $restartScript = @"
+$log = Join-Path $env:TEMP "dsh-upgrade-restart-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+function L($m) { try { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $m" | Out-File -FilePath $log -Append -Encoding utf8 } catch {} }
+L 'helper start'
 Start-Sleep -Seconds 3
-Get-Process 'DeepSeek Harness' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+$killFail = ''
+try { Get-Process 'DeepSeek Harness' -ErrorAction Stop | Stop-Process -Force -ErrorAction Stop } catch { $killFail = $_.Exception.Message }
 Start-Sleep -Seconds 5
+if ($killFail -and -not $killFail.StartsWith('Cannot find')) { L ("kill failed: " + $killFail) }
+$left = @(Get-Process 'DeepSeek Harness' -ErrorAction SilentlyContinue)
+if ($left.Count -gt 0) { L ("still running after kill: " + $left.Count) }
+else { L 'killed ok' }
 `$exe = '$exe'
 if ($exe -and (Test-Path -LiteralPath `$exe)) { Start-Process -LiteralPath `$exe }
 `$ok = `$false; `$ver = ''; `$port = ''
@@ -300,6 +308,7 @@ if (`$ok) {
   } catch { }
 }
 $text = if (`$ok) { "重启完成：运行版本 v`$ver，GUI 端口 `$port" + `$writeState } else { "重启后 90 秒内没探到 DSH 的 doctor，请手工打开 DSH 并查看版本" }
+`$text = `$text + "`n助手日志：`$log"`
 `$text | Out-File -FilePath '$resultFile' -Encoding utf8
 try { (New-Object -ComObject WScript.Shell).Popup(`$text, 12, 'dsh-job-board 升级', 64) | Out-Null } catch { }
 "@

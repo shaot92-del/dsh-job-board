@@ -1,3 +1,20 @@
+## v2.7.13 — 2026-11-23（2.7.12 复审修正：日志落点一致 + 回执补全 + 测试真覆盖）
+
+> 2.7.12 的定向复审（`docs/audit-2.7.12/review-2.7.12.md`）判 FAIL：P2-1 只修了 `runRestart` 一半——`stateDir` 设了以后回执指向 JS 侧标记日志，而 helper 仍写 `%TEMP%`；`upgrade` 两条回执根本没写日志路径；另外两条新测试没有真的覆盖目标代码行（P1-1 的 swap 行、P3-2 的 `log.warn`）。
+
+### 修复
+- **P1（日志落点不一致）**：新增 `restartLogPath(stateDir, taskSlug)`，helper 与回执、JS 侧标记日志**三者用同一路径**（`<stateDir>/restart-<slug>.log` 或 `%TEMP%\dsh-maint-restart.log`）；helper 先 `New-Item -Force` 建目录再写日志。
+- **P1（upgrade 回执缺日志与免责）**：`upgrade` 成功排入重启时，note 追加「spawn 成功 ≠ 重启成功，结果以助手日志为准：<路径>」并回传 `logFile`；未排入时明确「未排入自动重启；可手动重启或开 `maintenanceAllowRestart`」。
+- **P2（测试覆盖）**：P1-1 真实执行用例补 `moveFrom/moveTo`（swap 行真的生成并执行，断言日志里 `$()` 原样保留、无年份展开）；P3-2 用例改为「合法包 → 装包成功 → spawn 抛错 → `log.warn('排入重启失败')`」真正覆盖目标行。
+- **P2（部署脚本）**：`scripts/deploy/upgrade-worker.ps1` 的重启 here-doc 增加「杀进程后复核 + 结果写日志 + 失败在结果文件里明说」，不再静默。
+
+### 新增测试（`test/worker/maint-verbs-restart-script.test.mjs`，8 条）
+- 新增：`stateDir` 下回执 hint ↔ helper 日志路径一致；`upgrade` 回执含日志路径与免责声明；`upgrade` 排入失败真的走 `log.warn`。
+
+### 验证
+- `npm run gate`：单测 **491/491**、smoke 65/65、plugcheck 18/28、check-text PASSED、pack-check 109 文件 / 1,532,596 B。
+- 负向门禁不变（UI 崩溃包 FAIL、修复版 PASS；`SMOKE_BUNDLE` 版本 0/29 照旧）。
+
 ## v2.7.12 — 2026-11-22（2.7.11 复审修正：重启助手脚本的 P0/P1）
 
 > 2.7.11 的定向复审（`docs/audit-2.7.11/review-2.7.11.md`）判 FAIL：重启助手脚本有三处会在真机上把安装目录搞坏或让日志说谎。本版按复审条目逐条修掉，并把「脚本层」纳入测试。

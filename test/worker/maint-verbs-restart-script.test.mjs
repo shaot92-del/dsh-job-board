@@ -7,11 +7,30 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 
-import { buildRestartScript, createMaintVerbs } from '../../lib/worker/maint-verbs.js';
+import { buildRestartScript, createMaintVerbs, restartLogPath } from '../../lib/worker/maint-verbs.js';
+import { createTarGz } from '../../lib/worker/tar.js';
 
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mv-rs-'));
 const quietLog = { info() {}, warn() {}, error() {}, debug() {} };
+
+// 造一个真实 tgz（npm pack 结构：package/package.json），放在 maintenancePkgDir 里当升级包。
+async function makeTgzFixture(version = '9.9.9') {
+  const src = tmpDir();
+  const pkg = path.join(src, 'package');
+  fs.mkdirSync(pkg, { recursive: true });
+  fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ name: '@wfcj/dsh-job-board', version }), 'utf8');
+  const pkgRoot = tmpDir();
+  const tgzPath = path.join(pkgRoot, 'pkg.tgz');
+  const entries = [
+    { name: 'package/', dir: true },
+    { name: 'package/package.json', data: fs.readFileSync(path.join(pkg, 'package.json')) },
+  ];
+  await createTarGz(tgzPath, entries);
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(tgzPath)).digest('hex');
+  return { pkgRoot, tgzPath, hash };
+}
 
 function hasPwsh() {
   try {
@@ -54,11 +73,23 @@ test('buildRestartScript：pid/delayMs 非有限数 → 归一（P2-2）', () =>
 
 test('buildRestartScript：目标路径含 $ 与 $() → 真实执行时不展开（P1-1 实证）', { skip: !hasPwsh() }, () => {
   const dir = tmpDir();
+  const stage = path.join(dir, "stage'$(Get-Date -Format yyyy)");
+  const install = path.join(dir, "install'$(Get-Date -Format yyyy)");
+  fs.mkdirSync(stage, { recursive: true });
+  fs.mkdirSync(install, { recursive: true });
+  fs.writeFileSync(path.join(stage, 'new.txt'), 'new');
+  // 必须传 moveFrom/moveTo —— 否则 swap 行根本不生成，测不到 P1-1 那条双引号拼接。
   const fake = path.join(dir, "dsh'$(Get-Date -Format yyyy).exe");
-  // 不存在的 exe：脚本会走 fallback pid=0 失败 → 最后 Start-Process 失败 → exit 1
-  const s = buildRestartScript({ delayMs: 0, dshExe: fake, pid: 0, taskSlug: 't-2' });
-  const logFile = path.join(process.env.TEMP || os.tmpdir(), 'dsh-maint-restart.log');
-  try { fs.rmSync(logFile, { force: true }); } catch {}
+  const logFile = path.join(dir, 'restart-test.log');
+  const s = buildRestartScript({
+    delayMs: 0,
+    dshExe: fake,
+    pid: 0,
+    taskSlug: 't-2',
+    moveFrom: stage,
+    moveTo: install,
+    logFile,
+  });
   let code = 0;
   try {
     execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', s], { stdio: 'ignore', timeout: 20000 });
@@ -66,8 +97,10 @@ test('buildRestartScript：目标路径含 $ 与 $() → 真实执行时不展�
     code = err.status;
   }
   const log = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
-  assert.ok(log.length > 0, '必须写日志');
-  assert.ok(log.includes(fake), '路径必须原样出现在日志里（不被展开）');
+  assert.ok(log.length > 0, '必须写日志到指定文件');
+  assert.ok(log.includes(fake), 'dshExe 路径必须原样出现在日志里（不被展开）');
+  assert.ok(log.includes('swap '), 'swap 行必须真的执行到（否则测不到 P1-1）');
+  assert.ok(log.includes('$(Get-Date -Format yyyy)'), '路径里的 $() 必须原样保留在日志里');
   assert.ok(!/[0-9]{4}\.exe/.test(log), '不应出现被展开成的年份');
   assert.notEqual(code, 0, 'exe 不存在应 exit 1');
 });
@@ -128,25 +161,69 @@ test('runRestart：回执 note 带日志路径（P2-1）', async () => {
   assert.equal(calls.length, 1);
 });
 
-test('upgrade：排入重启失败时不抛 trace is not defined（P3-2）', async () => {
-  const pkgDir = tmpDir();
-  const installDir = tmpDir();
-  fs.writeFileSync(path.join(installDir, 'old.txt'), 'old');
+test('runRestart：stateDir 设了时 hint 与 helper 实际日志路径一致（复审 P1）', async () => {
+  const stateDir = tmpDir();
+  const calls = [];
   const v = createMaintVerbs({
-    config: { maintenanceAllowRestart: true, dshExePath: process.execPath },
+    config: { maintenanceAllowRestart: true, dshExePath: process.execPath, stateDir },
     log: quietLog,
     fs,
-    spawnImpl: () => {
-      throw new Error('boom');
+    spawnImpl: (exe, args) => { calls.push(args); return { pid: 1 }; },
+    pkgDir: tmpDir(),
+    profileDir: tmpDir(),
+    now: () => Date.now(),
+  });
+  const r = await v.run('restart', { delayMs: 3000 }, { taskId: 't-hint' });
+  assert.equal(r.ok, true);
+  const expectLog = path.join(path.resolve(stateDir), 'restart-t-hint.log');
+  assert.ok(r.note.includes(expectLog), `note 必须给出与 helper 一致的日志路径，实际：${r.note}`);
+  const script = calls[0][calls[0].length - 1];
+  assert.ok(script.includes(expectLog), 'helper 脚本必须写同一个日志文件');
+});
+
+test('upgrade：回执带日志路径与「spawn 成功 ≠ 重启成功」免责（复审 P2）', async () => {
+  const { pkgRoot, tgzPath, hash } = await makeTgzFixture();
+  const installDir = tmpDir();
+  const stateDir = tmpDir();
+  fs.writeFileSync(path.join(installDir, 'old.txt'), 'old');
+  const v = createMaintVerbs({
+    config: {
+      maintenanceAllowRestart: true,
+      dshExePath: process.execPath,
+      maintenancePkgDir: pkgRoot,
+      stateDir,
     },
+    log: quietLog,
+    fs,
+    spawnImpl: () => ({ pid: 1 }),
     pkgDir: installDir,
     profileDir: tmpDir(),
     now: () => Date.now(),
   });
-  // 走「upgrade 校验失败」分支即可覆盖 log.warn 调用（trace → log.warn）
-  const r = await v.run('upgrade', { file: '../escape.tgz', sha256: 'a'.repeat(64) }, { taskId: 't-trace' });
-  assert.equal(r.ok, false);
-  assert.equal(r.status, 'blocked');
-  assert.ok(String(r.note).length > 0);
-  assert.ok(pkgDir.length > 0);
+  const r = await v.run('upgrade', { file: 'pkg.tgz', sha256: hash }, { taskId: 't-up-note' });
+  assert.equal(r.ok, true, '实际 note='+r.note);
+  assert.match(r.note, /助手日志/, 'note 必须指向助手日志');
+  assert.match(r.note, /spawn 成功 ≠ 重启成功/, 'note 必须说明 spawn 成功不等于重启成功');
+  assert.ok(r.note.includes(path.join(path.resolve(stateDir), 'restart-t-up-note.log')));
+  assert.ok(fs.existsSync(tgzPath));
+});
+
+test('upgrade：排入重启失败时走 log.warn（真的覆盖目标行，P3-2）', async () => {
+  const { pkgRoot, hash } = await makeTgzFixture();
+  const installDir = tmpDir();
+  fs.writeFileSync(path.join(installDir, 'old.txt'), 'old');
+  const warns = [];
+  const v = createMaintVerbs({
+    config: { maintenanceAllowRestart: true, dshExePath: process.execPath, maintenancePkgDir: pkgRoot },
+    log: { info() {}, warn: (m) => warns.push(String(m)), error() {}, debug() {} },
+    fs,
+    spawnImpl: () => { throw new Error('boom'); },
+    pkgDir: installDir,
+    profileDir: tmpDir(),
+    now: () => Date.now(),
+  });
+  const r = await v.run('upgrade', { file: 'pkg.tgz', sha256: hash }, { taskId: 't-warn' });
+  assert.equal(r.ok, true, '装包本身成功，只是重启没排上；实际 note='+r.note);
+  assert.match(r.note, /需重启/);
+  assert.ok(warns.some((m) => m.includes('排入重启失败')), `应记录 log.warn，实际：${JSON.stringify(warns)}`);
 });
