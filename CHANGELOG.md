@@ -1,3 +1,25 @@
+## v2.7.22 — 2026-11-24（远程重启治本：spawn 确认与 pwsh 兜底；F1 能力知晓）
+
+> 外援交付两批改动，主控验收（apply 干净、单测 524/524、smoke 74/74、负向冒烟旧包 FAIL 30/60）。
+
+### 修复：远程「重启 DSH」假成功（根因：spawn 异步 error 被吞 + 副机 PATH 无 PowerShell 7）
+- 三处重启入口统一走 `spawnRestartWithFallback`：先等 child `'spawn'`/`'error'`（4s 超时，`SPAWN_CONFIRM_TIMEOUT_MS`），确认后才回 ok；
+- `pwsh` 解析兜底：`pwsh.exe` → `%LOCALAPPDATA%\Programs\PowerShell\7\pwsh.exe` → `%ProgramFiles%\PowerShell\7\pwsh.exe` → `powershell.exe`；显式 `worker.pwshPath` 时只用它（坏路径必须明确 ENOENT）；
+- 全部候选失败 → `blocked / maint-spawn-failed`，note 带 errno、「已尝试 N 个候选均失败」、「安装 PowerShell 7 或配置 `worker.pwshPath`」；
+- 回执与日志带 `shell=<命中路径>`；助手脚本第一行写 `helper start task=… pid=… delay=…` 自证；
+- 保留 2.7.13 P1 的免责口径：upgrade 两条回执仍写「spawn 成功 ≠ 安装/重启成功」。
+
+### 新增：F1 能力知晓（机器性能感知 / 适配分 / ETA）
+- `/api/board/ui/summary` 的 `machines[].perf`：核数 / 内存与磁盘余量 / GPU / 模型数 / ffmpeg / pwsh；缺失一律 `null`；
+- 适配分 `fit(taskProfile, machine, nodeModels)`（0..100，纯函数，离线/无模型/缺 GPU·ffmpeg·pwsh 一律 0，附 `reasons` 人话）；
+- 历史 P50 → ETA（同 mode + 同 model + 同 machine 的 done 任务；样本 < 3 返回 null）；
+- 面板：机器卡显示「适配 N · 约 X」，悬浮列 reasons；派工弹窗给推荐机器加「（推荐 N）」+ 推荐理由；**不改 create 提交字段**。
+
+### 验证
+- `npm run gate`：单测 **524/524**、smoke **74/74**、plugcheck 18/31、check-text PASSED、pack-check 113 文件；
+- 负向冒烟：2.7.0 崩溃包 `SMOKE_BUNDLE` → **FAIL 30/60（exit 1）**；
+- 真机（待重启后）：GT14 点「重启 DSH」→ 实例号与 `plugin` 必须变化；坏 `pwshPath` → `blocked/maint-spawn-failed`。
+
 ## v2.7.21 — 2026-11-24（节点操作「自证」+ 信任锚替换 + 按钮可用性）
 
 修什么：

@@ -696,6 +696,108 @@ const U1_ANCHOR = 'const [doctor, setDoctor] = React.useState(null)'
   check('N2 nodeOp 的 fetch 带 credentials same-origin', /credentials:\s*'same-origin'/.test(seg), '')
   check('N3 机器卡渲染 nodeMsg 提示行', /nodeMsg\[String\(m\.id\)\]\s*\n\s*\?\s*h\('div'/.test(src), '')
 }
+// ── 第 5 轮：F1 能力知晓三态渲染（perf=null / 有历史与无历史 / 仅一台在线）─────────
+{
+  const findAllByClass = (node, cls, acc = []) => {
+    if (!node || typeof node !== 'object') return acc
+    const cn = String((node.props && node.props.className) || '')
+    if (cn.split(/\s+/).includes(cls)) acc.push(node)
+    for (const c of node.children || []) findAllByClass(c, cls, acc)
+    return acc
+  }
+  const hasSub = (arr, sub) => arr.some((x) => String(x).indexOf(sub) >= 0)
+  const safeRender = (code) => {
+    try { return { run: renderOnce(code), err: '' } } catch (e) { return { run: null, err: String((e && e.message) || e) } }
+  }
+
+  // 形态 1：perf=null（老机器未跑 assess）→ 渲染不崩，缺失显示「未知」，无历史显示「约 ?」
+  const sumNullPerf = {
+    ok: true,
+    counts: { queued: 0, running: 0, done: 0, bad: 0, stale: 0 },
+    machines: [
+      { id: 'GT14', name: 'GT14', online: true, busy: 0, caps: null, live: null, perf: null, etaSec: null },
+    ],
+    nodeModels: {},
+    etaByKey: {},
+    tasks: [],
+    nodeMap: {},
+  }
+  const nullRes = safeRender(RAW.replace(DATA_ANCHOR, 'const [data, setData] = React.useState(' + JSON.stringify(sumNullPerf) + ')'))
+  const nullTexts = nullRes.run ? flattenText(nullRes.run.tree) : []
+  const nullFitRows = nullRes.run ? findAllByClass(nullRes.run.tree, 'dsb-fit-row') : []
+  const nullPerfRows = nullRes.run ? findAllByClass(nullRes.run.tree, 'dsb-perf-row') : []
+  check('F1-1a perf=null 渲染不崩且显示「未知」（不伪造 0）', Boolean(nullRes.run) && nullPerfRows.length > 0 && hasSub(nullTexts, 'CPU 未知') && hasSub(nullTexts, '内存余 未知') && hasSub(nullTexts, '磁盘余 未知'), nullRes.err || JSON.stringify(nullPerfRows.map((n) => flattenText(n).join(''))))
+  check('F1-1b perf=null 无历史显示「约 ?」且悬浮含「样本不足」', Boolean(nullRes.run) && nullFitRows.length > 0 && hasSub(nullTexts, '约 ?') && String(nullFitRows[0].props.title || '').includes('样本不足'), nullRes.err || String(nullFitRows[0] && nullFitRows[0].props && nullFitRows[0].props.title))
+
+  // 形态 2：有历史（372s = 6 分 12 秒）+ 无历史（null）+ 派工弹窗推荐后缀与推荐理由
+  const sumHist = {
+    ok: true,
+    counts: { queued: 1, running: 0, done: 5, bad: 0, stale: 0 },
+    machines: [
+      {
+        id: 'GT14',
+        name: 'GT14',
+        online: true,
+        busy: 0,
+        perf: { cores: 12, memFreeGb: 23.4, memTotalGb: 32, diskFreeGb: 180, gpu: 'NVIDIA GeForce RTX 3070 Ti', models: 4, ffmpeg: true, pwsh: true },
+        fit: { machine: 'GT14', score: 87, reasons: ['12 核 / 内存余 23.4G / 磁盘余 180G / GPU RTX 3070 Ti', '当前空闲'] },
+        etaSec: 372,
+        etaSamples: 5,
+      },
+      {
+        id: 'PC2',
+        name: 'PC2',
+        online: true,
+        busy: 1,
+        perf: { cores: 8, memFreeGb: 12, memTotalGb: 16, diskFreeGb: 90, gpu: 'NVIDIA GeForce GTX 1080', models: 2, ffmpeg: true, pwsh: true },
+        fit: { machine: 'PC2', score: 48, reasons: ['8 核 / 内存余 12G / 磁盘余 90G / GPU GTX 1080', '正在跑 1 个任务 ⇒ 排后'] },
+        etaSec: null,
+        etaSamples: 1,
+      },
+    ],
+    nodeModels: {
+      gt14: { models: [{ provider: 'deepseek-account', model: 'deepseek-flash', name: 'DeepSeek Flash', location: 'cloud' }] },
+      pc2: { models: [{ provider: 'deepseek-account', model: 'deepseek-flash', name: 'DeepSeek Flash', location: 'cloud' }] },
+    },
+    etaByKey: { 'gt14|agent|': { p50Sec: 372, samples: 5 } },
+    tasks: [{ id: 't-run', status: 'running', machine: 'PC2' }],
+    nodeMap: {},
+  }
+  const histRes = safeRender(
+    RAW
+      .replace(ASK_ANCHOR, 'const [ask, setAsk] = React.useState(true)')
+      .replace(DATA_ANCHOR, 'const [data, setData] = React.useState(' + JSON.stringify(sumHist) + ')'),
+  )
+  const histTexts = histRes.run ? flattenText(histRes.run.tree) : []
+  const histFitRows = histRes.run ? findAllByClass(histRes.run.tree, 'dsb-fit-row') : []
+  const recRows = histRes.run ? findAllByClass(histRes.run.tree, 'dsb-rec-reason') : []
+  check('F1-2a 机器卡显示「适配 87 · 约 6 分 12 秒」与无历史「约 ?」', Boolean(histRes.run) && hasSub(histTexts, '约 6 分 12 秒') && hasSub(histTexts, '约 ?') && hasSub(histTexts, '87'), histRes.err || JSON.stringify(histFitRows.map((n) => flattenText(n).join(''))))
+  check('F1-2b 机器卡悬浮 title 列出 reasons', Boolean(histRes.run) && histFitRows.some((n) => String((n.props && n.props.title) || '').includes('RTX 3070 Ti')), histRes.err || JSON.stringify(histFitRows.map((n) => n.props && n.props.title)))
+  check('F1-2c 派工弹窗推荐机器后缀「（推荐 87）」+ 一行「推荐理由：」', Boolean(histRes.run) && hasSub(histTexts, '（推荐 87）') && recRows.length > 0 && hasSub(flattenText(recRows[0]), '推荐理由：'), histRes.err || JSON.stringify(recRows.map((n) => flattenText(n).join(''))))
+
+  // 形态 3：仅一台在线（GT14 在线，PC2 离线）→ 仅推荐在线机，离线机适配 0
+  const sumSingle = {
+    ok: true,
+    counts: { queued: 0, running: 0, done: 0, bad: 0, stale: 0 },
+    machines: [
+      { id: 'GT14', name: 'GT14', online: true, busy: 0, perf: { cores: 12, memFreeGb: 16, memTotalGb: 32, diskFreeGb: 100, gpu: 'Arc', models: 2, ffmpeg: true, pwsh: true }, etaSec: null },
+      { id: 'PC2', name: 'PC2', online: false, busy: 0, perf: { cores: 16, memFreeGb: 32, memTotalGb: 64, diskFreeGb: 400, gpu: 'GTX 1080', models: 3, ffmpeg: true, pwsh: true }, etaSec: null },
+    ],
+    nodeModels: {},
+    etaByKey: {},
+    tasks: [],
+    nodeMap: {},
+  }
+  const singleRes = safeRender(
+    RAW
+      .replace(ASK_ANCHOR, 'const [ask, setAsk] = React.useState(true)')
+      .replace(DATA_ANCHOR, 'const [data, setData] = React.useState(' + JSON.stringify(sumSingle) + ')'),
+  )
+  const singleTexts = singleRes.run ? flattenText(singleRes.run.tree) : []
+  const singleFitRows = singleRes.run ? findAllByClass(singleRes.run.tree, 'dsb-fit-row') : []
+  check('F1-3 仅一台在线：在线机获「（推荐 …）」，离线机适配 0 且 title 含「离线」', Boolean(singleRes.run) && singleTexts.some((t) => /GT14（推荐 \d+）/.test(String(t))) && singleFitRows.some((n) => String((n.props && n.props.title) || '').includes('离线') && flattenText(n).join('').includes('适配 0')), singleRes.err || JSON.stringify(singleFitRows.map((n) => ({ t: flattenText(n).join(''), title: n.props && n.props.title }))))
+}
+
 const failed = results.filter((r) => !r.cond)
 console.log(
   failed.length
